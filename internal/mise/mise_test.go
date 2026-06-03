@@ -20,7 +20,7 @@ func TestDesiredParsesToolsTable(t *testing.T) {
 	content := `
 [tools]
 go = "1.26.3"
-"npm:pnpm" = { version = "11.1.2", os = ["macos"] }
+"npm:pnpm" = "11.1.2"
 # ignored = "commented"
 
 [settings]

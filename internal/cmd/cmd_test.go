@@ -284,6 +284,13 @@ func TestShouldRunInteractiveRequiresTextAndTTYUnlessForced(t *testing.T) {
 	if shouldRunUpdevInteractive(strings.NewReader(""), &bytes.Buffer{}, "text", true, true) {
 		t.Fatal("expected disabled interactive mode to win over force")
 	}
+	t.Setenv("CI", "1")
+	if shouldRunUpdevInteractive(strings.NewReader(""), &bytes.Buffer{}, "text", false, false) {
+		t.Fatal("expected CI to skip automatic interactive mode")
+	}
+	if !shouldRunUpdevInteractive(strings.NewReader(""), &bytes.Buffer{}, "text", true, false) {
+		t.Fatal("expected force to win over CI for explicit interactive mode")
+	}
 }
 
 func TestShouldRunListHubSkipsExplicitFocusedOutput(t *testing.T) {
@@ -769,10 +776,24 @@ func TestMutationReportHoldsAmbiguousBareName(t *testing.T) {
 func TestMutationReportSurfacesValidationError(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	t.Setenv("HOME", t.TempDir())
+	binDir := t.TempDir()
+	fakeMise := filepath.Join(binDir, "mise")
+	if err := os.WriteFile(fakeMise, []byte("#!/bin/sh\nexit 0\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "Brewfile.tmpl"), []byte(`{{ if has "personal" .profiles }}
 {{ end }}
 `), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	miseDir := filepath.Join(root, "dot_config", "mise")
+	if err := os.MkdirAll(miseDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	const scannerOverflowTokenBytes = 70 * 1024 // bufio.Scanner default token limit is 64 KiB.
+	if err := os.WriteFile(filepath.Join(miseDir, "config.toml"), []byte("[tools]\n"+strings.Repeat("a", scannerOverflowTokenBytes)+" = \"1\"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	report := buildMutationReport(context.Background(), mutationOptions{
