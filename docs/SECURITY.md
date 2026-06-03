@@ -94,6 +94,27 @@ Daily update does not run project-native audits, OSV-Scanner, gitleaks, zizmor,
 Trivy, Grype, SBOM generation, cloud/SaaS posture checks, or agent-assisted web
 research. Those belong to explicit scan/review commands.
 
+## Network And Privacy Boundaries
+
+`updev` security commands collect package metadata and local manifest evidence.
+They should not collect secrets, account credentials, license keys, shell
+history, browser data, or private document contents.
+
+Network behavior depends on the command and available tools:
+
+| Source | When used | Data sent |
+|--------|-----------|-----------|
+| Homebrew metadata and taps | Homebrew update/gate/scan paths | Formula/cask names, versions, tap/source URLs. |
+| VS Code Marketplace | VS Code extension checks when opted in | Extension publisher/name and installed/current versions. |
+| OSV and GitHub Advisory APIs | Security scan/gate when package identity is available | Ecosystem, package name, version, and repository/source identifiers where available. |
+| Registry APIs such as npm, crates.io, PyPI | Registry posture checks | Package name and version. |
+| External scanners | Explicit scan paths or configured scanner mode | The files each scanner normally inspects; keep slow or broad scanners opt-in. |
+
+Local reports, caches, and policy files live under the configured updev state
+and config paths. JSON output may contain package names, versions, source URLs,
+local paths to manifests, and advisory identifiers. Redact or avoid sharing
+reports if those values are sensitive in your environment.
+
 ## Cache Model
 
 Cache raw evidence, not final decisions. Policy changes must take effect
