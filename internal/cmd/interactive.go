@@ -34,7 +34,7 @@ const (
 )
 
 func shouldRunUpdevInteractive(input io.Reader, output io.Writer, format string, force bool, disabled bool) bool {
-	if disabled || os.Getenv(updevInteractiveEnv) == updevInteractiveDisable || os.Getenv("CI") != "" {
+	if disabled || os.Getenv(updevInteractiveEnv) == updevInteractiveDisable {
 		return false
 	}
 	if format != "" && format != "text" {
@@ -42,6 +42,9 @@ func shouldRunUpdevInteractive(input io.Reader, output io.Writer, format string,
 	}
 	if force {
 		return true
+	}
+	if os.Getenv("CI") != "" {
+		return false
 	}
 	if configured := loadUpdevConfig().UI.Interactive; configured != nil {
 		switch *configured {
