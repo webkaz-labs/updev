@@ -6,12 +6,11 @@ lives in [CLI.md](CLI.md); data shape lives in [DATA-MODEL.md](DATA-MODEL.md).
 
 ## Package Layout
 
-The root of `tools/updev/` should stay small: `main.go`, `go.mod`, docs, and
-tool-local support files such as `mise.toml`. Implementation belongs under
-`internal/`.
+The module root should stay small: `main.go`, `go.mod`, docs, and tool-local
+support files such as `mise.toml`. Implementation belongs under `internal/`.
 
 ```text
-tools/updev/
+updev/
   main.go
   mise.toml
   internal/
@@ -43,7 +42,7 @@ Provider responsibilities:
 | `Name` | Stable provider id such as `brew`, `mise`, `npm`, `uv`, `cargo`, `apt`, `flatpak`, `external`. |
 | `Supported` | Whether the provider is available on the current OS/profile. |
 | `ListLive` / `Live` | Read installed/live state. |
-| `ListDesired` / `Desired` | Read desired state from chezmoi-managed manifests. |
+| `ListDesired` / `Desired` | Read desired state from configured manifests. |
 | `Validate` | Validate desired definitions where implemented. |
 | `Check` | Compare desired vs live state. |
 | `Plan` | Build install/remove/update actions without mutating. |
@@ -60,7 +59,7 @@ Initial providers:
 
 | Provider | OS | Desired source | Notes |
 |----------|----|----------------|-------|
-| `brew` | macOS | `Brewfile.tmpl` or rendered `~/Brewfile` for the default root | Formulae, casks, taps. VS Code entries are opt-in. Explicit formula detection should avoid treating dependencies as drift. Tap drift is explicit-only unless `tap "owner/tap"` is desired. |
+| `brew` | macOS | `Brewfile`, `Brewfile.tmpl`, or rendered `~/Brewfile` for the default root | Formulae, casks, taps. VS Code entries are opt-in. Explicit formula detection should avoid treating dependencies as drift. Tap drift is explicit-only unless `tap "owner/tap"` is desired. |
 | `mise` | macOS/Linux | `mise ls --current --json --cd <dir>` over the source root and project manifest dirs; TOML files for hygiene/fix evidence | Cross-platform runtimes and tools. Native mise config inheritance is authoritative for inventory; raw TOML is used only when file/line/version evidence is required. Prefer exact versions; see [RELEASE.md](RELEASE.md#mise-manifest-hygiene). |
 | language globals | macOS/Linux | future `~/.config/updev/manifests/*` | npm/pnpm/bun/uv/cargo/global tool snapshots. |
 | `manual` / `external` | macOS/Linux | scan state plus overrides | Manual apps and vendor/external installers; see [EXTERNAL-MANAGEMENT.md](EXTERNAL-MANAGEMENT.md). |
@@ -73,8 +72,8 @@ fake runners that fix stdout/stderr/exit status. Avoid embedding shell parsing
 in providers when structured provider output is available.
 
 Tests that run the real `mise` command while overriding `HOME` must preserve
-trust for `tools/updev/mise.toml` through `MISE_TRUSTED_CONFIG_PATHS`; otherwise
-tool-local config trust can make unrelated tests fail.
+trust for the repository-local `mise.toml` through `MISE_TRUSTED_CONFIG_PATHS`;
+otherwise tool-local config trust can make unrelated tests fail.
 
 Known direct subprocess exceptions:
 
@@ -109,16 +108,16 @@ exit code after successful encoding.
 ## Shared Internal Extraction
 
 Do not create a broad shared framework before two tools need the same behavior.
-Potential shared packages under `tools/internal/` are `runner`, `platform`,
-`status`, `plan`, `snapshot`, `textui`, and future `winconfig`.
+Potential shared packages are `runner`, `platform`, `status`, `plan`,
+`snapshot`, `textui`, and future platform helpers.
 
-Extract only when both `updev` and `macos-settings` have the same tested API
-need. Do not share package-manager-specific logic, macOS setting catalogs,
-whole command trees, localized UI prose, or config schemas.
+Extract only when `updev` and another maintained tool have the same tested API
+need. Do not share package-manager-specific logic, OS setting catalogs, whole
+command trees, localized UI prose, or config schemas.
 
 ## Cross-Tool Relation
 
-`updev` and `macos-settings` share patterns, not ownership:
+`updev` can share patterns with adjacent tools without sharing ownership:
 
 - provider/backend boundaries;
 - validate/check/plan/apply/rollback flow;
@@ -128,6 +127,5 @@ whole command trees, localized UI prose, or config schemas.
 - TTY helper patterns.
 
 Package managers such as Homebrew, mise, apt, Flatpak, winget, Scoop, and
-Chocolatey belong to `updev`. OS/system settings belong to `macos-settings` or
-a future OS settings provider. Shell/editor/terminal config files remain
-chezmoi-owned.
+Chocolatey belong to `updev`. OS/system settings belong to adjacent OS settings
+tools. Shell/editor/terminal config files remain outside `updev`.

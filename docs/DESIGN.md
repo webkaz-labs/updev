@@ -1,10 +1,9 @@
 # updev design
 
 `updev` is the package and developer-tool update and inventory layer. It should
-be portable outside this dotfiles repository, but it is intentionally smaller
-than a full OS package manager: provider tools still install and update
-packages, while `updev` orchestrates daily updates, desired-state validation,
-drift review, security policy, and reproducible manifests.
+stay smaller than a full OS package manager: provider tools still install and
+update packages, while `updev` orchestrates daily updates, desired-state
+validation, drift review, security policy, and reproducible manifests.
 
 ## Document Map
 
@@ -17,37 +16,28 @@ drift review, security policy, and reproducible manifests.
 | [SECURITY.md](SECURITY.md) | Security scan/gate/review/policy behavior, evidence model, remaining security backlog. |
 | [ROADMAP.md](ROADMAP.md) | Current state and later release ordering. |
 | [RELEASE.md](RELEASE.md) | Active release scope, non-goals, blockers, and release-ready criteria. |
-| [VALIDATION.md](VALIDATION.md) | Smoke and regression checklist. |
 | [EXTERNAL-MANAGEMENT.md](EXTERNAL-MANAGEMENT.md) | External/manual package and installer direction. |
 
-## Mission
+## Design Scope
 
-`updev` owns package, runtime, command-line tool, package-like app, and
-provider inventory state. Its primary daily workflow is:
+README.md is the user-facing overview, install path, and quick start. This
+document defines the product boundaries and stability criteria that keep the CLI
+small enough to be predictable.
 
-1. run one command to update development tools and packages;
-2. apply provider-specific safety gates;
-3. show compact update, drift, skipped, and warning summaries;
-4. keep desired package/tool state reproducible through chezmoi-managed
-   manifests.
+`updev` owns package, runtime, command-line tool, package-like app, and provider
+inventory state. Provider-native tools still own installation mechanics;
+`updev` owns orchestration, policy checks, explanations, and reproducible
+desired-state review.
 
-The command must stay useful for humans who want a simple daily update and a
-guided review surface, and for agents that need stable JSON and explicit action
-boundaries.
+## v1 Completion Goal
 
-## Go v1 Completion Goal
-
-The first complete Go `updev` milestone is the point where the normal
-package/tool workflow no longer depends on the legacy Python command.
-
-The public v1 contract should stay narrower than the full internal command
-surface. The product goal is a general-purpose package/tool orchestration CLI,
-but the first stable scope is the daily package/tool workflow around Homebrew,
+The public v1 contract should stay narrower than the full command surface. The
+first stable scope is the daily package/tool workflow around Homebrew,
 Brewfile-derived desired state, mise, focused security gates, and reproducible
 inventory/check reports. Experimental provider expansion, manual/vendor app
 scans, backend migration advice, and agent-assisted review may exist before v1,
-but they do not become part of the public stable contract until their data model
-and failure modes are proven.
+but they do not become part of the stable contract until their data model and
+failure modes are proven.
 
 The v1 core surface is:
 
@@ -67,7 +57,7 @@ The v1 core surface is:
 - top-level `updev add` and `updev remove` guide writes to the current desired
   manifests, choose or explain the provider/backend, validate after writing,
   and show the resulting diff/state. Lower-level `updev brewfile ...` commands
-  remain compatibility/internal surfaces.
+  remain compatibility surfaces.
 - `updev edit` snapshots first, opens the relevant manifest, validates after
   exit, and leaves enough state for `updev rollback` to restore the latest
   package/tool manifest snapshot.
@@ -83,14 +73,14 @@ The v1 stretch surface is:
 Done for v1 means:
 
 - documented smoke commands for update, list, sync, add/remove,
-  edit/rollback, security, and backend convergence run on this repository with
-  expected exit-code semantics;
+  edit/rollback, security, and backend convergence run with expected exit-code
+  semantics;
 - text output is compact enough for daily use, and JSON output is stable enough
   for agents;
 - every manifest mutation has a previewable diff, validation result, and
   snapshot/rollback path;
-- legacy Python remains only for comparison or explicitly named legacy
-  commands, not for the default daily workflow.
+- compatibility commands remain clearly labeled and do not replace the default
+  daily workflow.
 
 Stable JSON reports include `schema_version`. Report names include
 `syncReport`, `mutationReport`, `rollbackReport`, and `backendPlanReport`.
@@ -100,22 +90,18 @@ should remain stable once introduced.
 ## Public Release Readiness
 
 `updev v1.0.0` is reserved for the first public-ready release. Reaching it
-requires more than the Go migration being functionally useful in this repository:
+requires a stable install and support contract, not only feature completeness:
 
 1. **Scope freeze**: document which commands, config keys, cache/report files,
    and JSON report fields are stable, and mark the rest as experimental,
-   provider-specific, or repository-local integration.
+   provider-specific, or integration-local.
 2. **Install path**: provide a reproducible install/update path such as a
    release binary, Homebrew formula, or `go install` command, plus uninstall
    guidance.
-3. **Repository model**: choose an in-repo, split/mirror, or standalone
-   repository model using the cross-tool
-   [repository publication model](../../../docs/tooling-roadmap.md#repository-publication-model).
-   If a standalone repo is created, keep this dotfiles repository as an
-   integration smoke consumer so real Homebrew/mise dogfood remains cheap.
-4. **Repo assumptions**: make chezmoi integration, macOS, Homebrew, mise, cache
-   paths, and desired-state root assumptions explicit; avoid hidden hardcoded
-   paths in the portable mode.
+3. **Repository model**: keep development, release tags, and issue tracking in
+   the public repository once public distribution becomes primary.
+4. **Repo assumptions**: make macOS, Homebrew, mise, cache paths, and
+   desired-state root assumptions explicit; avoid hidden hardcoded paths.
 5. **Docs for first use**: provide a public README path from installation to
    dry-run, daily update, list/check, configuration, and rollback/recovery.
 6. **Privacy and security**: document what metadata is scanned, where reports
@@ -126,18 +112,18 @@ requires more than the Go migration being functionally useful in this repository
 8. **Platform promise**: state the supported platform set. A narrow macOS-first
    promise is acceptable; broad Linux/Windows package management should stay
    out of scope until explicitly implemented.
-9. **Legacy boundary**: remove or clearly label legacy Python and compatibility
-   wrappers so public users do not depend on private migration surfaces.
+9. **Compatibility boundary**: remove or clearly label compatibility wrappers
+   so public users do not depend on implementation history.
 
 ## Product Boundaries
 
 | Layer | Owner | Rule |
 |-------|-------|------|
-| Dotfiles and file-backed app config | chezmoi | Keep normal files as source of truth. Do not move dotfiles into `updev`. |
+| Shell/editor/app config files | adjacent config manager | Keep normal configuration files as source of truth. Do not move them into `updev`. |
 | Packages, runtimes, global CLIs, package-like apps | `updev` | Daily update, inventory, desired manifests, provider policy, security gates, backend convergence. |
-| macOS OS settings | `macos-settings` / `macset` | macOS defaults, network preferences, Wi-Fi metadata, previews, rollback, gated apply. |
+| OS settings | adjacent OS settings tools | Defaults, network preferences, Wi-Fi metadata, previews, rollback, gated apply. |
 | Organization device management | Apple Business built-in MDM / external MDM | Device enrollment, managed accounts, enforced profiles, app assignment, certificates, OS update/security policy, fleet compliance. |
-| Non-dotfile machine state | adjacent docs/tools | Secrets, auth, services, backups, hardware, project bootstrap, app runtime state. Track explicitly, but do not fold into `updev` without a narrow provider. |
+| Other machine state | adjacent docs/tools | Secrets, auth, services, backups, hardware, project bootstrap, app runtime state. Track explicitly, but do not fold into `updev` without a narrow provider. |
 
 ## Operating Principles
 
@@ -153,7 +139,7 @@ requires more than the Go migration being functionally useful in this repository
   backends when available, then well-supported mise external backends, and keep
   native package managers for bootstrap tools, GUI apps, platform integration,
   stronger provider evidence, or packages intentionally owned by that provider.
-- Trial/local-only state must not leak into `work` / `personal` deployment.
+- Trial/local-only state must not leak into shared desired-state manifests.
 - Every important human flow needs a stable non-TTY/JSON path.
 - Do not absorb all machine state: MDM, app runtime state, secrets, backups,
   hardware, privacy permissions, and project bootstrap stay adjacent.
@@ -162,8 +148,8 @@ requires more than the Go migration being functionally useful in this repository
 
 Go `updev` owns the default daily workflow, rich list/inventory, read-only
 sync, guided add/remove/edit, rollback, security v1, and read-only backend
-convergence reports. `updev brewfile ...`, `brewfile`, and legacy Python remain
-compatibility or comparison surfaces only.
+convergence reports. `updev brewfile ...` and `brewfile` remain compatibility or
+low-level surfaces only.
 
 Long-term ordering lives in [ROADMAP.md](ROADMAP.md). The current and next
 release targets live in [RELEASE.md](RELEASE.md).

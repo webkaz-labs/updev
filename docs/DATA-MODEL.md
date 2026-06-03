@@ -11,7 +11,7 @@ dimensions:
 
 | Dimension | Examples | Purpose |
 |-----------|----------|---------|
-| Scope/profile | `work`, `personal`, OS/arch selectors | Where a desired entry may deploy. `personal` includes the `work` baseline and adds personal-only entries. |
+| Scope/profile | environment labels, OS/arch selectors | Where a desired entry may deploy. |
 | Lifecycle | `adopted`, `trial`, `candidate`, `local-only`, `deprecated` | Whether an entry is reproducible desired state or being evaluated. |
 | Provider/distribution | `mise`, `brew`, `manual`, `mas`, `external`, `vendor` | How the tool/app is installed or tracked. |
 | Safety decision | `allow`, `hold`, `review`, `block`, `unknown` | Whether a candidate can be installed/updated now. |
@@ -21,15 +21,15 @@ dimensions:
 
 | Source | Owner |
 |--------|-------|
-| `Brewfile.tmpl` | Homebrew formulae, casks, taps, and opt-in VS Code extension entries. |
-| rendered `~/Brewfile` | Active-profile Homebrew desired state for the default source root. |
-| `dot_config/mise/config.toml` | Global runtime/tool definitions, interpreted through `mise` for inventory desired state. |
+| `Brewfile` or `Brewfile.tmpl` | Homebrew formulae, casks, taps, and opt-in VS Code extension entries. |
+| rendered `~/Brewfile` | Homebrew desired state when a rendered user Brewfile is the active source. |
+| `${XDG_CONFIG_HOME:-~/.config}/mise/config.toml` | Global runtime/tool definitions, interpreted through `mise` for inventory desired state. |
 | `mise.toml`, `.mise.toml` | Project-local runtime/tool definitions. Inventory uses `mise ls --current --json --cd <dir>` for the source root and manifest directories so parent-directory config inheritance matches mise behavior. |
 | `/Applications`, `~/Applications` | macOS-only opt-in manual/vendor live app evidence for `updev list --provider manual`. App bundle paths are read-only evidence and do not become desired state by themselves. |
 | future `~/.config/updev/manifests/*` | Language/global package snapshots. |
 | future config such as `~/.config/updev/inventory.toml` | Enabled scan sources, override paths, generated report destinations, provider render settings. |
 | `${XDG_STATE_HOME:-~/.local/state}/updev/` | Local-only trial inventory, snapshots, cached reports, security decisions, raw evidence caches. |
-| `docs/apps.md` | Current manual/non-provider app report bridge. Long term it should be generated from scan output plus structured overrides. |
+| generated app reports | Optional manual/non-provider app report bridge. Long term these should be generated from scan output plus structured overrides. |
 
 For temporary or alternate roots, providers read source files under that root
 instead of the user's live rendered files. This keeps smoke tests and agent
@@ -115,8 +115,8 @@ error
 unavailable
 ```
 
-Keep meanings aligned with `macos-settings` where possible so a future
-dotfiles-wide review can combine package/tool state and OS-setting state.
+Keep meanings stable enough that adjacent tools can combine package/tool state
+with OS-setting or project-bootstrap state later.
 
 ## Inventory And Cache
 
@@ -125,10 +125,9 @@ enough, because provider discovery can be slow. Text output should show cache
 age when relevant; `--refresh` forces a live read and mutation-oriented commands
 should collect fresh inventory after mutation.
 
-During migration, reuse legacy cache files such as `desc_ja.tsv`, `meta.json`,
-`rows_cache.json`, and `brew_state.json` so accumulated descriptions and
-Japanese translations are not lost. New machine cache files should be compact
-JSON unless intended for direct human editing.
+Machine cache files should be compact JSON unless intended for direct human
+editing. Migration-only cache readers must stay clearly labeled and should not
+become part of the stable public contract.
 
 Update safety evidence uses `update-safety-v1` cache entries. Homebrew
 `brew outdated --json=v2` success output is cached for a short TTL to keep
@@ -156,8 +155,7 @@ Use TOML for user-editable updev configuration and policy. Embedded data that
 is shipped with the tool, such as long remediation guidance or generated
 catalog-style text, may use JSON when it is easier to validate and test. Short
 fixed labels belong in `internal/i18n` Go tables; data-like long guidance should
-follow the macset pattern of structured embedded resources with English and
-Japanese text side by side.
+use structured embedded resources with English and Japanese text side by side.
 
 `dependencyContractReport` records local dependency checks as structured
 evidence:
@@ -213,7 +211,7 @@ managed_by = "vendor"
 `lifecycle = "local-only"` marks installed apps that should remain local and
 suppresses repeated live-only review without counting them as desired state.
 
-Repo-relative paths resolve from the chezmoi source root. Absolute and `~`
+Repo-relative paths resolve from the configured source root. Absolute and `~`
 paths are allowed for local-only files. Generated files should be clearly
 marked or checked by `updev` so manual edits do not silently become canonical.
 
