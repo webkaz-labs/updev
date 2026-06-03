@@ -11,10 +11,13 @@ stays an integer schema contract.
 
 ## Current Release
 
-The current implemented release is `updev v0.5.0`. `updev version`,
+The current implemented release is `updev v0.5.1`. `updev version`,
 `updev --version`, and `updev -v` report this command contract.
 
-`updev v0.5.0` completes the manual/vendor inventory decision slice. It keeps
+`updev v0.5.1` is a public release maintenance patch on the `v0.5.0` CLI
+scope. It updates GitHub Actions workflows to Node 24 action runtimes and keeps
+release asset publishing rerunnable. The command behavior remains the
+manual/vendor inventory decision slice: it keeps
 manual rows out of the default daily update table while adding focused
 plan/check actions, explicit override write actions, a daily human selector
 entry point, and gated vendor guidance.
