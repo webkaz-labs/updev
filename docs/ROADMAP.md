@@ -25,9 +25,8 @@ history in git log, and keep the current/next release target in
   plan/check decision views, daily human entry points, gated vendor guidance,
   generated report previews, and structured finding codes for localized human
   guidance.
-- `updev brewfile ...`, `brewfile`, and legacy Python remain compatibility or
-  comparison surfaces, not the primary human workflow.
-- [VALIDATION.md](VALIDATION.md) is the regression checklist.
+- `updev brewfile ...` and `brewfile` remain compatibility or low-level
+  surfaces, not the primary human workflow.
 
 ## Near-Term Order
 
@@ -67,7 +66,7 @@ history in git log, and keep the current/next release target in
   [DESIGN.md](DESIGN.md#public-release-readiness) is satisfied.
 - Make manual-app and provider-generated reports agent-maintained only after
   the scan/override model is stable.
-- Extract shared internals only after both updev and macos-settings need the
-  same tested API.
-- Consider future OS settings providers only after the macset release baseline
-  and updev provider lessons are stable.
+- Extract shared internals only after updev and another maintained tool need
+  the same tested API.
+- Consider future OS settings providers only after updev provider lessons are
+  stable.
