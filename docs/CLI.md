@@ -66,12 +66,12 @@ Global flags:
   invocation. It is equivalent to setting `UPDEV_CONFIG` before running updev.
 - `--no-color` disables ANSI color for human text output by setting the
   standard `NO_COLOR` behavior at the CLI boundary.
-- `updev v0.5.0` does not add global `--verbose` or `--quiet`. Current diagnostic
+- `updev v0.5.x` does not add global `--verbose` or `--quiet`. Current diagnostic
   affordances are command-specific `--details`, `updev last --section ...`,
   and `--format json`; add global verbosity only when a concrete cross-command
   diagnostic need appears.
 - `updev version`, `updev --version`, and `updev -v` report the current
-  implemented release contract, currently `updev v0.5.0`. `updev version
+  implemented release contract, currently `updev v0.5.1`. `updev version
   --format json` includes SemVer parts and the stable/pre-stable contract
   label.
 - Read-only aliases are supported for common daily commands: `ls` for `list`,
