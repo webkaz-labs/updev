@@ -52,7 +52,7 @@ summarizes, and records reviewable decisions.
 Recommended with mise:
 
 ```bash
-mise use -g github:webkaz-labs/updev@v0.5.1
+mise use -g github:webkaz-labs/updev
 updev version
 ```
 
@@ -60,27 +60,40 @@ This writes the following entry to your global mise config:
 
 ```toml
 [tools]
-"github:webkaz-labs/updev" = "v0.5.1"
+"github:webkaz-labs/updev" = "latest"
 ```
+
+To pin a specific release, add a tag such as
+`github:webkaz-labs/updev@vX.Y.Z`.
 
 To try `updev` without changing your mise config:
 
 ```bash
-mise x github:webkaz-labs/updev@v0.5.1 -- updev version
+mise x github:webkaz-labs/updev -- updev version
 ```
 
 You can also download a release archive from
 [GitHub Releases](https://github.com/webkaz-labs/updev/releases), unpack it,
 and place `updev` on your `PATH`.
 
-macOS Apple Silicon example:
+macOS example:
 
 ```bash
-archive=updev_v0.5.1_darwin_arm64.tar.gz
+version=$(curl --fail --location --silent --show-error \
+  https://api.github.com/repos/webkaz-labs/updev/releases/latest |
+  sed -nE 's/.*"tag_name": *"([^"]+)".*/\1/p')
+test -n "$version"
+case "$(uname -m)" in
+  arm64|aarch64) arch=arm64 ;;
+  x86_64) arch=amd64 ;;
+  *) echo "unsupported architecture: $(uname -m)" >&2; exit 1 ;;
+esac
+archive="updev_${version}_darwin_${arch}.tar.gz"
+base_url="https://github.com/webkaz-labs/updev/releases/download/${version}"
 curl --fail --location --output "$archive" \
-  "https://github.com/webkaz-labs/updev/releases/download/v0.5.1/$archive"
+  "${base_url}/${archive}"
 curl --fail --location --output checksums.txt \
-  https://github.com/webkaz-labs/updev/releases/download/v0.5.1/checksums.txt
+  "${base_url}/checksums.txt"
 grep " ./${archive}$" checksums.txt | shasum -a 256 -c -
 tar -xzf "$archive"
 mkdir -p ~/.local/bin
@@ -91,7 +104,7 @@ updev version
 You can also install from source with Go:
 
 ```bash
-go install github.com/webkaz-labs/updev@v0.5.1
+go install github.com/webkaz-labs/updev@latest
 ```
 
 ## Quick Start

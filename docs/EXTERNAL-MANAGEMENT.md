@@ -63,9 +63,9 @@ fields.
 Store only non-obvious classification in overrides. Scan output should remain
 generated state, not hand-edited desired state.
 
-The `updev v0.3.0` baseline supports a narrow override file configured by
-`~/.config/updev/config.toml`; `updev v0.4.0` extends this into read-only scan,
-reconciliation, review-candidate, and generated-report preview flows:
+Manual/vendor inventory uses a narrow override file configured by
+`~/.config/updev/config.toml`; read-only scan, reconciliation,
+review-candidate, and generated-report preview flows all use this path:
 
 ```toml
 [inventory]

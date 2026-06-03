@@ -11,20 +11,18 @@ history in git log, and keep the current/next release target in
   `backends doctor/plan` run in Go.
 - `updev sync` uses the shared inventory cache by default, supports
   `--refresh`, and reports cache age in human text output.
-- `updev v0.1.0` and `updev v0.2.0` UX work is complete for compact update dashboards,
-  `updev last`, list/update selector hubs, expandable detail rows, keyboard and
-  opt-in mouse navigation, filters, Japanese human labels, provider log
-  streaming, updated/deferred summaries, profile mismatch filtering, VS Code
-  opt-in defaults, manual-app guidance, and non-destructive smoke coverage.
-- `updev v0.3.0` hardening is implemented for TOML policy/config, update safety
-  timeout/cache behavior, dependency contract checks, backend convergence
-  evidence, mise manifest hygiene/fix, inventory override foundations, and Go
-  CLI standard convergence.
-- `updev v0.5.0` implements read-only manual/vendor app scans, normalized
-  identity reconciliation, review candidates, override write actions, manual
-  plan/check decision views, daily human entry points, gated vendor guidance,
-  generated report previews, and structured finding codes for localized human
-  guidance.
+- Compact update dashboards, `updev last`, list/update selector hubs,
+  expandable detail rows, keyboard and opt-in mouse navigation, filters,
+  Japanese human labels, provider log streaming, updated/deferred summaries,
+  profile mismatch filtering, VS Code opt-in defaults, manual-app guidance, and
+  non-destructive smoke coverage are implemented.
+- TOML policy/config, update safety cache behavior, dependency contract checks,
+  backend convergence evidence, mise manifest hygiene/fix, and inventory
+  override foundations are implemented.
+- Manual/vendor app scans, normalized identity reconciliation, review
+  candidates, override write actions, manual plan/check decision views, daily
+  human entry points, gated vendor guidance, generated report previews, and
+  structured finding codes are implemented.
 - `updev brewfile ...` and `brewfile` remain compatibility or low-level
   surfaces, not the primary human workflow.
 
@@ -34,8 +32,8 @@ history in git log, and keep the current/next release target in
    cross-platform fixtures, Linux read-only scanners, provider promotion
    suggestions, and a Windows evidence spike that remains experimental until a
    real Windows runner or machine is available.
-2. Continue provider evidence quality after `updev v0.5.0` with richer source
-   URLs and ownership confidence where provider metadata is cheap and reliable.
+2. Continue provider evidence quality with richer source URLs and ownership
+   confidence where provider metadata is cheap and reliable.
 3. Broaden Homebrew release-age and advisory confidence beyond GitHub
    release/tag/ref URL paths.
 4. Add provider-native audit paths where package identity is reliable.
@@ -50,11 +48,10 @@ history in git log, and keep the current/next release target in
 9. Keep Go CLI standard checks as part of future release reviews; direct
    subprocess exceptions, JSON encoding, and verbosity policy are documented for
    the current tool surface.
-10. Prepare a macOS/Homebrew/mise public preview before broad provider support
-    if installation docs, privacy boundaries, and the experimental status of
-    Linux/Windows providers are explicit. Reserve `updev v1.0.0` for the first
-    stable public contract after that scope is deliberately narrowed and
-    documented.
+10. Maintain the macOS/Homebrew/mise public preview with installation docs,
+    privacy boundaries, and explicit experimental status for Linux/Windows
+    providers. Reserve `updev v1.0.0` for the first stable public contract after
+    that scope is deliberately narrowed and documented.
 
 ## Later Targets
 
