@@ -140,8 +140,8 @@ scanner/API failures use longer TTLs only when the candidate set is unchanged.
 
 Stable JSON reports include `schema_version`. Report names include
 `syncReport`, `mutationReport`, `rollbackReport`, `backendPlanReport`, and
-`dependencyContractReport`. `miseManifestFixReport` is the `updev v0.3.0` dry-run/apply
-report for `updev fix mise`.
+`dependencyContractReport`. `miseManifestFixReport` is the dry-run/apply report
+for `updev fix mise`.
 
 Findings should not use human prose as the only machine key. Safety, posture,
 scanner, validation, and review findings should carry stable codes such as
@@ -175,11 +175,11 @@ mise specs when known, and OS selectors from those specs. This lets reviewers
 preserve `os = [...]` conditions before moving a Homebrew entry to mise or
 rewriting a mise backend.
 
-Inventory config is intentionally narrow in `updev v0.3.0`. `state_dir` changes where
-updev stores inventory scan/cache state, and `overrides` points to a structured
-TOML file for non-obvious manual/vendor app identity and alias metadata. In
-`updev v0.4.0`, this model expands into read-only manual/vendor app scans, identity
-reconciliation, review candidates, and generated report previews.
+Inventory config is intentionally narrow. `state_dir` changes where updev stores
+inventory scan/cache state, and `overrides` points to a structured TOML file for
+non-obvious manual/vendor app identity and alias metadata. Manual/vendor app
+scans use the same model for read-only evidence, identity reconciliation, review
+candidates, and generated report previews.
 
 Manual inventory JSON can include `review_candidates[]` for live-only or
 ambiguous app rows. Candidates carry `provider`, `kind`, `name`, stable

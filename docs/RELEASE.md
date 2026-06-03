@@ -4,23 +4,19 @@ This document tracks the current implemented release and the next release
 target. Keep longer-term ordering in [ROADMAP.md](ROADMAP.md), implementation
 history in git log, and detailed design in [DESIGN.md](DESIGN.md).
 
-Version labels follow the shared
-[Go CLI release standard](../../../docs/go-cli/RELEASE.md#version-numbering):
-tool releases use `<tool> vMAJOR.MINOR.PATCH`, while JSON `schema_version`
-stays an integer schema contract.
+Version labels use `<tool> vMAJOR.MINOR.PATCH`, while JSON `schema_version`
+stays an integer schema contract. `v0.x` releases are public preview releases;
+`v1.0.0` is reserved for the first stable public contract.
 
 ## Current Release
 
-The current implemented release is `updev v0.5.1`. `updev version`,
+The current implemented release is `updev v0.5.2`. `updev version`,
 `updev --version`, and `updev -v` report this command contract.
 
-`updev v0.5.1` is a public release maintenance patch on the `v0.5.0` CLI
-scope. It updates GitHub Actions workflows to Node 24 action runtimes and keeps
-release asset publishing rerunnable. The command behavior remains the
-manual/vendor inventory decision slice: it keeps
-manual rows out of the default daily update table while adding focused
-plan/check actions, explicit override write actions, a daily human selector
-entry point, and gated vendor guidance.
+`updev v0.5.2` is a public documentation and release hygiene patch on the
+`v0.5.x` CLI scope. It keeps the command behavior unchanged while making public
+README/docs standalone, safer for binary installation, and clearer about
+security/privacy boundaries.
 
 The `v0.5.x` polish gate is folded into this current release state: real TTY
 dogfood, override duplicate/update/list/remove ergonomics, plan detail text,
@@ -29,7 +25,7 @@ policy, backend convergence UX from `updev` / `updev list`, Japanese/human copy,
 and safe accept/edit/ignore write-flow smoke are complete. Keep regression
 commands in local test plans, not as a permanent release log here.
 
-### v0.5.0 Scope
+### v0.5.x Scope
 
 1. **Read-only app scan**: `updev inventory scan --provider manual` reports
    evidence from `/Applications`, `~/Applications`, bundle `Info.plist`, Mac
@@ -62,7 +58,7 @@ commands in local test plans, not as a permanent release log here.
     `command_preview` fields for review; vendor installer commands are never
     executed from inventory output.
 
-### v0.5.0 Non-Goals
+### v0.5.x Non-Goals
 
 - automatic installation of paid, privileged, vendor-account, or
   checksum-missing apps;
@@ -71,7 +67,7 @@ commands in local test plans, not as a permanent release log here.
 - making manual/vendor rows part of the default daily `updev` inventory;
 - claiming public `v1.0.0` readiness.
 
-### v0.5.0 Release Criteria
+### v0.5.x Release Criteria
 
 - read-only scan, reconciliation, plan/check, review, and render paths have
   focused tests with fake filesystem / command evidence;
@@ -128,22 +124,20 @@ Longer-term priorities live in [ROADMAP.md](ROADMAP.md). The short version:
 5. Prepare for public `updev v1.0.0` only after the stable macOS/Homebrew/mise
    scope is deliberately narrowed and documented.
 
-## Path Toward Public Release
+## Public Preview Maintenance
 
-The public path should stay narrow and incremental:
+The public preview should stay narrow and incremental:
 
-1. **macOS public preview** may publish the current macOS/Homebrew/mise workflow
-   before broad Linux/Windows support if the README, install path, privacy
-   boundaries, and support statement clearly label provider expansion as
+1. **macOS-first support** remains the stable preview path while
+   Linux/Windows binaries and provider expansion are clearly labeled
    experimental.
 2. **Pre-v1 hardening** freezes the stable command/config/JSON surface for the
    macOS/Homebrew/mise daily workflow, labels experimental provider surfaces,
    removes or clearly hides compatibility-only paths, and keeps
    compatibility tests for exit codes, JSON shape, no-color/non-TTY output, and
    config parsing.
-3. **Distribution readiness** adds a reproducible install/update path
-   (`go install`, release binary, or Homebrew formula), uninstall guidance,
-   release notes, and a clear source-of-truth repository decision.
+3. **Distribution maintenance** keeps the mise GitHub backend install path,
+   release binaries, checksums, source install path, and release notes in sync.
 4. **`updev v1.0.0`** is the first stable public release. Its stable promise is
    macOS-first daily package/tool orchestration for Homebrew, Brewfile-derived
    desired state, mise, focused security gates, inventory, sync,
