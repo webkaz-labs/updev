@@ -10,7 +10,7 @@ The module root should stay small: `main.go`, `go.mod`, docs, and tool-local
 support files such as `mise.toml`. Implementation belongs under `internal/`.
 
 ```text
-updev/
+.
   main.go
   mise.toml
   internal/

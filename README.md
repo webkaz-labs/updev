@@ -76,10 +76,15 @@ and place `updev` on your `PATH`.
 macOS Apple Silicon example:
 
 ```bash
-curl -L -o updev.tar.gz \
-  https://github.com/webkaz-labs/updev/releases/download/v0.5.1/updev_v0.5.1_darwin_arm64.tar.gz
-tar -xzf updev.tar.gz
-install -m 0755 updev_v0.5.1_darwin_arm64/updev ~/.local/bin/updev
+archive=updev_v0.5.1_darwin_arm64.tar.gz
+curl --fail --location --output "$archive" \
+  "https://github.com/webkaz-labs/updev/releases/download/v0.5.1/$archive"
+curl --fail --location --output checksums.txt \
+  https://github.com/webkaz-labs/updev/releases/download/v0.5.1/checksums.txt
+grep " ./${archive}$" checksums.txt | shasum -a 256 -c -
+tar -xzf "$archive"
+mkdir -p ~/.local/bin
+install -m 0755 "${archive%.tar.gz}/updev" ~/.local/bin/updev
 updev version
 ```
 
