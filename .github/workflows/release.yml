@@ -34,10 +34,10 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Setup Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
           cache: true
@@ -72,7 +72,7 @@ jobs:
             -exec cp {} upload/ \;
 
       - name: Upload artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: updev-${{ matrix.goos }}-${{ matrix.goarch }}
           path: dist/upload/*
@@ -84,7 +84,7 @@ jobs:
     needs: release
     steps:
       - name: Download artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           path: dist
           merge-multiple: true
@@ -100,7 +100,11 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          gh release create "${GITHUB_REF_NAME}" dist/* \
-            --repo "${GITHUB_REPOSITORY}" \
-            --title "updev ${GITHUB_REF_NAME}" \
-            --notes "Public preview release. macOS/Homebrew/mise is the supported preview scope; Linux and Windows binaries are experimental."
+          if gh release view "${GITHUB_REF_NAME}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
+            gh release upload "${GITHUB_REF_NAME}" dist/* --repo "${GITHUB_REPOSITORY}" --clobber
+          else
+            gh release create "${GITHUB_REF_NAME}" dist/* \
+              --repo "${GITHUB_REPOSITORY}" \
+              --title "updev ${GITHUB_REF_NAME}" \
+              --notes "Public preview release. macOS/Homebrew/mise is the supported preview scope; Linux and Windows binaries are experimental."
+          fi
