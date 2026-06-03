@@ -1,49 +1,152 @@
 # updev
 
-`updev` is the package and developer-tool update and inventory command. It owns
-Homebrew, mise, global developer tools, package-like apps, update safety gates,
-and reproducible package/tool manifests.
+`updev` is a developer-machine update and inventory CLI. It gives one daily
+entry point for package managers and tool runtimes, then explains what changed,
+what is unmanaged, and what needs review.
 
-`updev` is currently pre-stable. The product direction is a portable CLI, while
-public `v1.0.0` readiness is tracked separately from the current implemented
-version. The first public stable scope is expected to stay narrow around the
-macOS/Homebrew/mise daily workflow before broader providers are promised. A
-macOS-only public preview can ship earlier if installation, privacy boundaries,
-and experimental provider labels are explicit.
+The current public preview is intentionally narrow: macOS, Homebrew, mise, and
+manual/vendor app inventory are the supported focus. Linux and Windows binaries
+are published for early testing, but broad package-provider support is still
+experimental.
 
-It does not manage OS settings or normal dotfiles. macOS settings live in
-[`../macos-settings`](../macos-settings), and file-backed app configuration
-stays with chezmoi.
+## Why updev?
+
+Developer machines often drift because each tool has its own update command,
+desired-state file, safety model, and review output. `updev` sits above those
+providers and keeps the daily workflow readable:
+
+- run one update/check command instead of remembering provider-specific flows;
+- compare desired manifests with live installed state;
+- show compact human output for daily use and JSON for automation;
+- identify unmanaged or manually installed apps without immediately adopting
+  them;
+- add safety gates for risky package, cask, and extension updates;
+- recommend provider/backend improvements, such as moving suitable CLI tools
+  toward mise when appropriate.
+
+`updev` does not replace Homebrew, mise, or other package managers. Provider
+tools still perform installation and updates; `updev` orchestrates, validates,
+summarizes, and records reviewable decisions.
+
+## Features
+
+- **Daily dashboard**: `updev` and `updev --dry-run` summarize updates, drift,
+  skipped work, warnings, and next actions.
+- **Grouped inventory**: `updev list` shows desired/live package and runtime
+  state by provider, category, and status.
+- **Desired-state checks**: `updev check`, `updev sync`, and `updev status`
+  find missing, extra, drifted, blocked, and unavailable entries.
+- **mise hygiene**: `updev fix mise` previews rewrites for unsafe `latest` pins
+  while keeping Node `lts` as the only allowed LTS shortcut.
+- **Security review**: `updev security scan`, `gate`, `review`, and `policy`
+  provide explicit safety decisions and machine-readable findings.
+- **Manual/vendor app inventory**: `updev inventory scan|plan|review
+  --provider manual` finds macOS `.app` bundles, Mac App Store evidence,
+  Homebrew cask ownership, and local-only apps that need a decision.
+- **Interactive or scriptable UX**: TTY runs can open compact selectors and
+  detail views; scripts can use `--format json`, `--no-color`, and focused
+  filters.
+
+## Install
+
+Recommended with mise:
+
+```bash
+mise use -g github:webkaz-labs/updev@v0.5.1
+updev version
+```
+
+This writes the following entry to your global mise config:
+
+```toml
+[tools]
+"github:webkaz-labs/updev" = "v0.5.1"
+```
+
+To try `updev` without changing your mise config:
+
+```bash
+mise x github:webkaz-labs/updev@v0.5.1 -- updev version
+```
+
+You can also download a release archive from
+[GitHub Releases](https://github.com/webkaz-labs/updev/releases), unpack it,
+and place `updev` on your `PATH`.
+
+macOS Apple Silicon example:
+
+```bash
+curl -L -o updev.tar.gz \
+  https://github.com/webkaz-labs/updev/releases/download/v0.5.1/updev_v0.5.1_darwin_arm64.tar.gz
+tar -xzf updev.tar.gz
+install -m 0755 updev_v0.5.1_darwin_arm64/updev ~/.local/bin/updev
+updev version
+```
+
+You can also install from source with Go:
+
+```bash
+go install github.com/webkaz-labs/updev@v0.5.1
+```
+
+## Quick Start
+
+Preview the daily workflow:
+
+```bash
+updev --dry-run
+```
+
+Inspect inventory:
+
+```bash
+updev list
+updev list --status attention
+updev list --provider mise
+```
+
+Run consistency checks:
+
+```bash
+updev check
+updev sync
+updev doctor dependencies
+```
+
+Review manual/vendor macOS apps:
+
+```bash
+updev inventory scan --provider manual
+updev inventory plan --provider manual
+updev inventory review --provider manual
+```
+
+Use JSON for automation:
+
+```bash
+updev list --format json
+updev security gate --format json
+updev inventory plan --provider manual --format json
+```
 
 ## Common Commands
 
-```bash
-updev                         # daily update workflow
-updev --dry-run               # preview daily update behavior
-updev -h                      # help
-updev --config ./updev.toml check --format json
-updev --no-color list
-updev list                    # inventory hub / grouped package list
-updev ls                      # list alias
-updev list --provider mise
-updev list --status attention
-updev last                    # inspect the cached last update report
-updev sync                    # read-only desired vs live reconciliation
-updev check                   # package/tool consistency checks
-updev ck                      # check alias
-updev st                      # status alias
-updev fix mise                # dry-run rewrite plan for mise latest pins
-updev check --dependencies    # local dependency CLI/JSON contract checks
-updev doctor dependencies     # focused dependency contract report
-updev security scan           # explicit broad security scan
-updev security gate           # pending update safety gate
-updev version                 # current implemented tool release
-updev -v
-updev version --format json
-```
-
-Human TTY output opens compact review surfaces where useful. Agent and script
-paths should use `--format json` or focused flags.
+| Command | Purpose |
+|---------|---------|
+| `updev` | Run the daily update workflow. |
+| `updev --dry-run` | Preview the daily workflow without applying updates. |
+| `updev list` / `updev ls` | Show grouped desired/live inventory. |
+| `updev status` / `updev st` | Show compact current state. |
+| `updev check` / `updev ck` | Validate manifests and provider consistency. |
+| `updev sync` | Compare desired and live state without mutating. |
+| `updev last` | Re-open the cached last update report. |
+| `updev fix mise` | Preview or apply safe mise manifest pin fixes. |
+| `updev security scan` | Run explicit broad security checks. |
+| `updev security gate` | Evaluate pending update safety. |
+| `updev security review` | Inspect findings that require a decision. |
+| `updev security policy` | List or edit safety policy overrides. |
+| `updev inventory plan --provider manual` | Group manual app decisions. |
+| `updev version` / `updev -v` | Print the current CLI version. |
 
 ## Configuration
 
@@ -63,7 +166,7 @@ Environment variables remain one-off overrides for CI, tests, debugging,
 endpoints, and secrets. `--config <path>` is the CLI equivalent of
 `UPDEV_CONFIG` for one command. Do not put tokens or API secrets in TOML.
 
-Common `config.toml` settings:
+Example `config.toml`:
 
 ```toml
 [security.homebrew]
@@ -92,15 +195,29 @@ state_dir = "~/.local/state/updev/inventory"
 overrides = "~/.config/updev/inventory-overrides.toml"
 ```
 
+## Support Status
+
+- Supported preview path: macOS with Homebrew and mise.
+- Experimental: Linux/Windows binaries, future Linux package scanners, broader
+  provider adoption suggestions, and Windows package evidence.
+- Not managed by `updev`: OS settings, shell/editor configuration, secrets,
+  account setup, backups, and device-management policy.
+
 ## Development
 
 ```bash
-mise -C tools/updev run check
+go mod verify
+go vet ./...
+go test ./...
+go build ./...
 git diff --check
 ```
 
-Run `chezmoi apply --dry-run` from the repository root when wrapper, config, or
-dotfiles integration changes.
+If you use mise, the local task runner wraps the same checks:
+
+```bash
+mise run check
+```
 
 ## Documentation
 
@@ -111,9 +228,6 @@ dotfiles integration changes.
 | [docs/DATA-MODEL.md](docs/DATA-MODEL.md) | Desired state, config, cache, reports, status vocabulary. |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Provider model, package layout, runner/test seams. |
 | [docs/SECURITY.md](docs/SECURITY.md) | Security scan/gate/review/policy behavior. |
-| [docs/PUBLISHING.md](docs/PUBLISHING.md) | Public preview naming, export, repository creation, and release gate. |
 | [docs/ROADMAP.md](docs/ROADMAP.md) | Current state and later target ordering. |
 | [docs/RELEASE.md](docs/RELEASE.md) | Active release scope, non-goals, blockers, and release-ready criteria. |
-| [docs/VALIDATION.md](docs/VALIDATION.md) | Smoke and regression checklist. |
 | [docs/EXTERNAL-MANAGEMENT.md](docs/EXTERNAL-MANAGEMENT.md) | Manual/external app and installer direction. |
-

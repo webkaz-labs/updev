@@ -27,7 +27,7 @@ dogfood, override duplicate/update/list/remove ergonomics, plan detail text,
 vendor URL evidence, provider adoption evidence, provider/backend preference
 policy, backend convergence UX from `updev` / `updev list`, Japanese/human copy,
 and safe accept/edit/ignore write-flow smoke are complete. Keep regression
-commands in [VALIDATION.md](VALIDATION.md), not as a permanent release log here.
+commands in local test plans, not as a permanent release log here.
 
 ### v0.5.0 Scope
 
@@ -80,9 +80,9 @@ commands in [VALIDATION.md](VALIDATION.md), not as a permanent release log here.
   install hints, review URLs, and command previews without ANSI color or
   localization;
 - manual/vendor inventory stays opt-in;
-- `mise -C tools/updev run check`, touched smoke paths in
-  [VALIDATION.md](VALIDATION.md), `git diff --check`, and
-  `chezmoi apply --dry-run` pass.
+- `go mod verify`, `go vet ./...`, `go test ./...`, `go build ./...`, and
+  `git diff --check` pass. Repository-local integration smoke checks may add
+  extra gates before mirroring a release.
 
 ## Next Release: v0.6.0
 
@@ -138,14 +138,12 @@ The public path should stay narrow and incremental:
    experimental.
 2. **Pre-v1 hardening** freezes the stable command/config/JSON surface for the
    macOS/Homebrew/mise daily workflow, labels experimental provider surfaces,
-   removes or clearly hides legacy Python/private migration paths, and keeps
+   removes or clearly hides compatibility-only paths, and keeps
    compatibility tests for exit codes, JSON shape, no-color/non-TTY output, and
    config parsing.
 3. **Distribution readiness** adds a reproducible install/update path
    (`go install`, release binary, or Homebrew formula), uninstall guidance,
-   release notes, and a repository publication decision. A split or standalone
-   repository can be chosen only if this dotfiles repository remains an
-   integration smoke consumer.
+   release notes, and a clear source-of-truth repository decision.
 4. **`updev v1.0.0`** is the first stable public release. Its stable promise is
    macOS-first daily package/tool orchestration for Homebrew, Brewfile-derived
    desired state, mise, focused security gates, inventory, sync,

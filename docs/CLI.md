@@ -56,9 +56,9 @@ Backend findings expose `recommended_tier` and `preference_rank`: reliable
 store/native package evidence, native package managers, and vendor/manual
 ownership when those are stronger for the item.
 
-Unlike `macos-settings`, bare `updev` is not a read-only hub. The valuable
-existing behavior is the no-argument update command, so preserve it unless the
-user explicitly opts into another mode.
+Bare `updev` is not a read-only hub. The valuable existing behavior is the
+no-argument update command, so preserve it unless the user explicitly opts into
+another mode.
 
 Global flags:
 
@@ -103,7 +103,7 @@ The TTY experience should feel like a review tool, not a long log:
 - never enter a selector for non-TTY, CI, `--format json`, or explicit
   non-interactive modes.
 
-Navigation follows the `macset` pattern:
+Navigation uses a predictable review stack:
 
 - maintain a stack for `hub -> filter menu -> section -> detail`;
 - preserve focus, scroll position, expanded rows, and active filters when
@@ -273,9 +273,9 @@ hub/detail surfaces. JSON remains English.
 Machine-readable findings should use stable codes and params rather than
 English prose as localization keys. Human output can render those codes through
 `internal/i18n` tables or embedded guidance data; provider names, package names,
-versions, command strings, and JSON tokens stay untranslated. This mirrors the
-macset split: short UI labels in Go i18n tables, data-like long guidance in
-structured embedded resources, and user-editable configuration in TOML.
+versions, command strings, and JSON tokens stay untranslated. Keep short UI
+labels in Go i18n tables, data-like long guidance in structured embedded
+resources, and user-editable configuration in TOML.
 
 Slow human-mode startup work uses a delayed TTY-only spinner on stderr for
 provider discovery, update safety checks, security scans/reviews, sync inventory
