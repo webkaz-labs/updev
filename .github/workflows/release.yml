@@ -6,6 +6,7 @@ on:
       - "v*"
 
 permissions:
+  actions: read
   contents: write
 
 jobs:
@@ -84,10 +85,16 @@ jobs:
     needs: release
     steps:
       - name: Download artifacts
-        uses: actions/download-artifact@v8
-        with:
-          path: dist
-          merge-multiple: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          gh run download "${GITHUB_RUN_ID}" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --dir dist
+          find dist -mindepth 2 -type f -exec mv {} dist/ \;
+          find dist -mindepth 1 -type d -empty -delete
 
       - name: Combine checksums
         run: |

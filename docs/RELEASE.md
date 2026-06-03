@@ -10,13 +10,14 @@ stays an integer schema contract. `v0.x` releases are public preview releases;
 
 ## Current Release
 
-The current implemented release is `updev v0.5.2`. `updev version`,
+The current implemented release is `updev v0.5.3`. `updev version`,
 `updev --version`, and `updev -v` report this command contract.
 
-`updev v0.5.2` is a public documentation and release hygiene patch on the
+`updev v0.5.3` is a public documentation and release hygiene patch on the
 `v0.5.x` CLI scope. It keeps the command behavior unchanged while making public
 README/docs standalone, safer for binary installation, and clearer about
-security/privacy boundaries.
+security/privacy boundaries. It also keeps the release workflow on current
+GitHub Actions runtimes while avoiding deprecated artifact download behavior.
 
 The `v0.5.x` polish gate is folded into this current release state: real TTY
 dogfood, override duplicate/update/list/remove ergonomics, plan detail text,
