@@ -284,6 +284,13 @@ func TestShouldRunInteractiveRequiresTextAndTTYUnlessForced(t *testing.T) {
 	if shouldRunUpdevInteractive(strings.NewReader(""), &bytes.Buffer{}, "text", true, true) {
 		t.Fatal("expected disabled interactive mode to win over force")
 	}
+	t.Setenv("CI", "1")
+	if shouldRunUpdevInteractive(strings.NewReader(""), &bytes.Buffer{}, "text", false, false) {
+		t.Fatal("expected CI to skip automatic interactive mode")
+	}
+	if !shouldRunUpdevInteractive(strings.NewReader(""), &bytes.Buffer{}, "text", true, false) {
+		t.Fatal("expected force to win over CI for explicit interactive mode")
+	}
 }
 
 func TestShouldRunListHubSkipsExplicitFocusedOutput(t *testing.T) {
@@ -785,7 +792,8 @@ func TestMutationReportSurfacesValidationError(t *testing.T) {
 	if err := os.MkdirAll(miseDir, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(miseDir, "config.toml"), []byte("[tools]\n"+strings.Repeat("a", 70*1024)+" = \"1\"\n"), 0o600); err != nil {
+	const scannerOverflowTokenBytes = 70 * 1024 // bufio.Scanner default token limit is 64 KiB.
+	if err := os.WriteFile(filepath.Join(miseDir, "config.toml"), []byte("[tools]\n"+strings.Repeat("a", scannerOverflowTokenBytes)+" = \"1\"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	report := buildMutationReport(context.Background(), mutationOptions{
