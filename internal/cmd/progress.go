@@ -129,6 +129,13 @@ func safetyProgressMessage(lang string) string {
 	)
 }
 
+func descriptionTranslationProgressMessage(lang string) string {
+	return i18n.Pick(lang,
+		"Refreshing translated descriptions...",
+		"説明の翻訳 cache を更新中...",
+	)
+}
+
 func securityScanProgressMessage(lang string) string {
 	return i18n.Pick(lang,
 		"Collecting security evidence...",

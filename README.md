@@ -52,6 +52,9 @@ review queue, and JSON output for automation.
 
 - `updev list` is designed for scanning: grouped sections, concise status text,
   focused filters, and `--details` when a row needs investigation.
+- Japanese terminals can get cached Japanese tool descriptions in `updev list`.
+  The cache updates automatically during TTY `updev`/`updev list` when
+  Codex is available, and missing Codex never breaks the main workflow.
 - Safety gates explain *why* an update is allowed, held, blocked, or needs
   review instead of only hiding it behind a generic failure.
 - Manual/vendor app inventory is review-first. It can surface local-only apps,
@@ -149,6 +152,7 @@ authenticated where needed, and visible on `PATH`.
 | macOS preview | Homebrew and mise installed locally. |
 | Homebrew provider | `brew` must support JSON output such as `brew outdated --json=v2`; package mutation still runs through Homebrew. |
 | mise provider | `mise` must support `mise ls --current --json --cd <dir>` for inventory and the GitHub backend for the managed install example. `updev` currently validates exact pins and rejects unsafe `latest` entries; it does not require, add, or enforce a mise-native age setting. |
+| Description translation | Optional. `codex` on `PATH` enables Japanese description-cache updates for `updev list`; without it, `updev` keeps running with English descriptions. |
 | Manual app inventory | macOS `.app` bundle metadata is read locally; Mac App Store evidence is used only when receipts or `mas` evidence are available. |
 | Security gates | Network evidence is best-effort and provider-scoped. Strict mode can hold Homebrew updates and opt-in VS Code extension updates when required evidence is missing. |
 
@@ -281,7 +285,16 @@ security = "strict"
 
 [ui]
 language = "ja"
+description_translation = "manual" # auto | manual | off
 ```
+
+`description_translation` controls only `updev list` description-cache updates.
+`auto` is the built-in default for Japanese TTY output, `manual` runs
+translation only when `updev list --translate-now` or `--retranslate-all` is
+used, and `off` disables both automatic and explicit translation attempts.
+Codex is optional; when it is missing, `updev` leaves English descriptions in
+place and `updev doctor dependencies` reports the optional backend as
+unavailable.
 
 ## Support Status
 

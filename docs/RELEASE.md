@@ -10,17 +10,16 @@ stays an integer schema contract. `v0.x` releases are public preview releases;
 
 ## Current Release
 
-The current implemented release is `updev v0.5.5`. `updev version`,
+The current implemented release is `updev v0.5.6`. `updev version`,
 `updev --version`, and `updev -v` report this command contract.
 
-`updev v0.5.5` is a mise diagnostics, agent guidance, and documentation
-source-of-truth patch on the `v0.5.x` CLI scope. It keeps the main update
-workflow stable while reporting mise native `minimum_release_age` evidence in
-dependency diagnostics and `updev fix mise`, adding canonical agent guidance,
-and adding a focused `docs-check` task for high-value documentation drift. It
-builds on the `v0.5.4` public installation and README polish: checksum-verifying
-shell install, current GitHub Actions runtimes, release notes generated from
-tag-specific files, and optional config defaults.
+`updev v0.5.6` is a Japanese description-translation UX patch on the `v0.5.x`
+CLI scope. It keeps the main update workflow stable while letting Japanese
+TTY `updev` / `updev list` refresh cached `updev list` descriptions
+through the optional Codex CLI, exposing `[ui].description_translation` to
+choose `auto`, `manual`, or `off`, and reporting the optional Codex backend in
+dependency diagnostics. It builds on the `v0.5.5` mise diagnostics, agent
+guidance, and documentation source-of-truth patch.
 
 The `v0.5.x` polish gate is folded into this current release state: real TTY
 dogfood, override duplicate/update/list/remove ergonomics, plan detail text,
@@ -71,6 +70,11 @@ commands in local test plans, not as a permanent release log here.
     agent guidance tree, `docs/release-notes/<tag>.md` is the GitHub Release
     body source, and `mise run docs-check` covers release-note presence,
     README links, agent guidance files, and mise/CI validation parity.
+14. **Description translation UX**: Japanese TTY `updev` and
+    `updev list` can best-effort refresh cached `updev list` descriptions via
+    the optional Codex CLI, `[ui].description_translation` can switch between
+    `auto`, `manual`, and `off`, missing Codex remains non-fatal, and
+    `updev doctor dependencies` reports the optional backend.
 
 ### v0.5.x Non-Goals
 
