@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/webkaz-labs/updev/internal/i18n"
 	"github.com/webkaz-labs/updev/internal/plan"
 	"github.com/webkaz-labs/updev/internal/runner"
 	"github.com/webkaz-labs/updev/internal/textui"
@@ -133,6 +134,7 @@ func buildDependencyContractReport(ctx context.Context, opts dependencyOptions, 
 		}
 	}
 	checks = append(checks, dependencyMiseMinimumReleaseAgeCheck(ctx, commandRunner, opts.root))
+	checks = append(checks, dependencyCodexTranslationCheck(commandRunner))
 	sort.SliceStable(checks, func(i, j int) bool {
 		if checks[i].Required != checks[j].Required {
 			return checks[i].Required
@@ -149,6 +151,31 @@ func buildDependencyContractReport(ctx context.Context, opts dependencyOptions, 
 		Root:          opts.root,
 		Checks:        checks,
 	}
+}
+
+func dependencyCodexTranslationCheck(commandRunner runner.Runner) dependencyContractCheck {
+	mode := descriptionTranslationMode()
+	active := mode == descriptionTranslationAuto && i18n.IsJapanese(defaultLanguage())
+	check := dependencyContractCheck{
+		Tool:     "codex",
+		Feature:  "description-translation",
+		Required: false,
+		Command:  []string{"codex", "exec", "--skip-git-repo-check", "--output-last-message", "<tempfile>", "-"},
+		Status:   plan.StatusOK,
+		Value:    mode,
+		Active:   &active,
+	}
+	if mode == descriptionTranslationOff {
+		check.Reason = "description translation disabled by configuration"
+		return check
+	}
+	if _, err := commandRunner.LookPath("codex"); err != nil {
+		check.Status = plan.StatusUnavailable
+		check.Reason = "Codex CLI not found on PATH"
+		check.Remediation = "install codex for description translation, use updev list --translate-now after installation, or set [ui].description_translation = \"off\""
+		return check
+	}
+	return check
 }
 
 func dependencyMiseMinimumReleaseAgeCheck(ctx context.Context, commandRunner runner.Runner, root string) dependencyContractCheck {

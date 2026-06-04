@@ -12,12 +12,19 @@ import (
 	"strings"
 	"time"
 
+	"github.com/webkaz-labs/updev/internal/i18n"
 	"github.com/webkaz-labs/updev/internal/plan"
 	"github.com/webkaz-labs/updev/internal/reviewui"
 	"github.com/webkaz-labs/updev/internal/textui"
 )
 
 const inventoryCacheMaxAge = 10 * time.Minute
+
+const (
+	descriptionTranslationAuto   = "auto"
+	descriptionTranslationManual = "manual"
+	descriptionTranslationOff    = "off"
+)
 
 type listOptions struct {
 	format         string
@@ -32,6 +39,7 @@ type listOptions struct {
 	refresh        bool
 	translateNow   bool
 	retranslateAll bool
+	autoTranslate  bool
 	details        bool
 	includeVSCode  bool
 	tui            bool
@@ -54,6 +62,12 @@ type listReport struct {
 
 type toolSection = reviewui.Section
 type toolRow = reviewui.Row
+
+type listTranslationUpdate struct {
+	Attempted bool
+	Changed   bool
+	Message   string
+}
 
 func parseListOptions(args []string) (listOptions, error) {
 	opts := listOptions{format: "text", root: defaultRoot(), title: "updev inventory"}
@@ -109,13 +123,25 @@ func runList(opts listOptions) int {
 			return code
 		}
 	} else {
+		opts.autoTranslate = isTerminal(os.Stdin) && isTerminal(os.Stdout)
+		translationProgress := startupProgress{}
+		if shouldAutoUpdateListTranslations(opts) {
+			translationProgress = newStartupProgress(os.Stdin, os.Stderr, opts.format, descriptionTranslationProgressMessage(defaultLanguage()))
+		}
+		translationProgress.Start()
+		translation := maybeUpdateListTranslations(opts, report)
+		translationProgress.Done()
+		if translation.Changed {
+			report = buildListReport(result, opts)
+		}
 		if shouldRunListHub(opts, os.Stdin, os.Stdout) {
 			runListHub(report)
 		} else {
 			printListText(os.Stdout, report, opts.title, textui.ColorEnabled())
 		}
-		if opts.translateNow || opts.retranslateAll {
-			translateListDescriptions(opts, report)
+		if translation.Message != "" {
+			fmt.Println()
+			fmt.Println(translation.Message)
 		}
 	}
 	if report.Status == plan.StatusError {
@@ -141,22 +167,53 @@ func shouldRunListHub(opts listOptions, input io.Reader, output io.Writer) bool 
 	return shouldRunUpdevInteractive(input, output, opts.format, false, opts.noTUI)
 }
 
-func translateListDescriptions(opts listOptions, report listReport) {
+func shouldAutoUpdateListTranslations(opts listOptions) bool {
+	if opts.translateNow || opts.retranslateAll {
+		return false
+	}
+	return opts.autoTranslate && descriptionTranslationMode() == descriptionTranslationAuto && i18n.IsJapanese(defaultLanguage())
+}
+
+func maybeUpdateListTranslations(opts listOptions, report listReport) listTranslationUpdate {
+	mode := descriptionTranslationMode()
+	explicit := opts.translateNow || opts.retranslateAll
+	if mode == descriptionTranslationOff {
+		if explicit {
+			return listTranslationUpdate{Attempted: true, Message: "translations: disabled by [ui].description_translation"}
+		}
+		return listTranslationUpdate{}
+	}
+	if !explicit {
+		if !shouldAutoUpdateListTranslations(opts) {
+			return listTranslationUpdate{}
+		}
+	}
+	if _, err := exec.LookPath("codex"); err != nil {
+		if explicit {
+			return listTranslationUpdate{Attempted: true, Message: "translations: Codex CLI not found; install codex or set [ui].description_translation = \"off\""}
+		}
+		return listTranslationUpdate{}
+	}
 	cache := loadLegacyCache()
 	pending := pendingTranslations(report, cache, opts.retranslateAll)
 	if len(pending) == 0 {
-		fmt.Println()
-		fmt.Println("translations: up to date")
-		return
+		if explicit {
+			return listTranslationUpdate{Attempted: true, Message: "translations: up to date"}
+		}
+		return listTranslationUpdate{Attempted: true}
 	}
 	translated, err := translateBatch(pending)
 	if err != nil {
-		fmt.Printf("\ntranslations: %d pending, but Codex translation failed: %s\n", len(pending), err)
-		return
+		if explicit {
+			return listTranslationUpdate{Attempted: true, Message: fmt.Sprintf("translations: %d pending, but Codex translation failed: %s", len(pending), err)}
+		}
+		return listTranslationUpdate{Attempted: true}
 	}
 	if len(translated) == 0 {
-		fmt.Printf("\ntranslations: %d pending, but Codex translation returned no updates\n", len(pending))
-		return
+		if explicit {
+			return listTranslationUpdate{Attempted: true, Message: fmt.Sprintf("translations: %d pending, but Codex translation returned no updates", len(pending))}
+		}
+		return listTranslationUpdate{Attempted: true}
 	}
 	for key, en := range pending {
 		cache.en[key] = en
@@ -165,7 +222,31 @@ func translateListDescriptions(opts listOptions, report listReport) {
 		}
 	}
 	saveTranslationCache(cache.en, cache.ja)
-	fmt.Printf("\ntranslations: updated %d entries; rerun updev list to view them\n", len(translated))
+	message := ""
+	if explicit {
+		message = fmt.Sprintf("translations: updated %d entries", len(translated))
+	}
+	return listTranslationUpdate{Attempted: true, Changed: true, Message: message}
+}
+
+func descriptionTranslationMode() string {
+	mode := descriptionTranslationAuto
+	if configured := loadUpdevConfig().UI.DescriptionTranslation; configured != nil && validDescriptionTranslationMode(*configured) {
+		mode = strings.ToLower(strings.TrimSpace(*configured))
+	}
+	if value := strings.TrimSpace(os.Getenv("UPDEV_DESCRIPTION_TRANSLATION")); value != "" && validDescriptionTranslationMode(value) {
+		mode = strings.ToLower(value)
+	}
+	return mode
+}
+
+func validDescriptionTranslationMode(value string) bool {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case descriptionTranslationAuto, descriptionTranslationManual, descriptionTranslationOff:
+		return true
+	default:
+		return false
+	}
 }
 
 func pendingTranslations(report listReport, cache legacyCache, force bool) map[string]string {

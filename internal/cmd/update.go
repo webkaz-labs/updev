@@ -213,6 +213,16 @@ func runUpdate(opts updateOptions, commandRunner commandRunner) int {
 		report.Inventory = collectInventoryWithOptions(ctx, opts.root, runner.Local{}, inventoryOptions{IncludeVSCode: updateIncludesVSCode(opts)})
 		progress.Done()
 	}
+	if opts.format == "text" && !opts.dryRun && report.Inventory.Status != plan.StatusError && isTerminal(os.Stdin) && isTerminal(os.Stdout) {
+		translationOpts := listOptions{format: "text", root: opts.root, autoTranslate: true}
+		if shouldAutoUpdateListTranslations(translationOpts) {
+			progress := newStartupProgress(os.Stdin, os.Stderr, opts.format, descriptionTranslationProgressMessage(defaultLanguage()))
+			inventory := buildListReport(inventoryResult{Report: report.Inventory}, translationOpts)
+			progress.Start()
+			_ = maybeUpdateListTranslations(translationOpts, inventory)
+			progress.Done()
+		}
+	}
 	if report.Status != plan.StatusError && report.Inventory.Status == plan.StatusError {
 		report.Status = plan.StatusError
 	}
