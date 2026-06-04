@@ -86,6 +86,9 @@ jobs:
       actions: read
       contents: write
     steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
       - name: Download artifacts
         env:
           GH_TOKEN: ${{ github.token }}
@@ -104,16 +107,31 @@ jobs:
           cat dist/checksums-*.txt | sort -k2 > dist/checksums.txt
           rm dist/checksums-*.txt
 
+      - name: Prepare release notes
+        run: |
+          set -euo pipefail
+          notes_file="docs/release-notes/${GITHUB_REF_NAME}.md"
+          if [[ ! -f "${notes_file}" ]]; then
+            echo "::error file=${notes_file}::Release notes are required for ${GITHUB_REF_NAME}."
+            exit 1
+          fi
+          cp "${notes_file}" dist/release-notes.md
+
       - name: Create GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
+          release_assets=(dist/*.tar.gz dist/*.zip dist/checksums.txt)
           if gh release view "${GITHUB_REF_NAME}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
-            gh release upload "${GITHUB_REF_NAME}" dist/* --repo "${GITHUB_REPOSITORY}" --clobber
-          else
-            gh release create "${GITHUB_REF_NAME}" dist/* \
+            gh release edit "${GITHUB_REF_NAME}" \
               --repo "${GITHUB_REPOSITORY}" \
               --title "updev ${GITHUB_REF_NAME}" \
-              --notes "Public preview release. macOS/Homebrew/mise is the supported preview scope; Linux and Windows binaries are experimental."
+              --notes-file dist/release-notes.md
+            gh release upload "${GITHUB_REF_NAME}" "${release_assets[@]}" --repo "${GITHUB_REPOSITORY}" --clobber
+          else
+            gh release create "${GITHUB_REF_NAME}" "${release_assets[@]}" \
+              --repo "${GITHUB_REPOSITORY}" \
+              --title "updev ${GITHUB_REF_NAME}" \
+              --notes-file dist/release-notes.md
           fi
