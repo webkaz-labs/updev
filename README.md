@@ -85,15 +85,7 @@ curl -fsSL https://raw.githubusercontent.com/webkaz-labs/updev/main/scripts/inst
 Managed with mise:
 
 ```bash
-UPDEV_VERSION="$(
-  curl -fsSL https://api.github.com/repos/webkaz-labs/updev/releases/latest |
-    sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p'
-)"
-if [ -z "$UPDEV_VERSION" ]; then
-  echo "could not resolve latest updev release" >&2
-  exit 1
-fi
-mise use -g "github:webkaz-labs/updev@${UPDEV_VERSION}"
+mise use -g github:webkaz-labs/updev@vX.Y.Z
 updev version
 ```
 
@@ -122,6 +114,34 @@ go install github.com/webkaz-labs/updev@latest
 
 Release archives and checksums are available on
 [GitHub Releases](https://github.com/webkaz-labs/updev/releases).
+
+## Provider Assumptions
+
+`updev` does not replace provider CLIs. It shells out to the provider tools you
+already use, and provider support assumes those commands are installed,
+authenticated where needed, and visible on `PATH`.
+
+| Area | Requirement |
+|------|-------------|
+| macOS preview | Homebrew and mise installed locally. |
+| Homebrew provider | `brew` must support JSON output such as `brew outdated --json=v2`; package mutation still runs through Homebrew. |
+| mise provider | `mise` must support `mise ls --current --json --cd <dir>` for inventory and the GitHub backend for the managed install example. |
+| Manual app inventory | macOS `.app` bundle metadata is read locally; Mac App Store evidence is used only when receipts or `mas` evidence are available. |
+| Security gates | Network evidence is best-effort and provider-scoped. Strict mode can hold updates when required evidence is missing. |
+
+Known-good validation as of 2026-06-04:
+
+| Tool | Verified version/path |
+|------|-----------------------|
+| macOS | primary supported preview platform. |
+| Homebrew | `5.1.14-199-g863696a` locally; CI uses mocked provider output. |
+| mise | `2026.5.18` locally; GitHub backend install smoke is covered separately. |
+| Go | module declares `go 1.25.8`; local validation used `go1.26.3`. |
+| GitHub Actions | CI and release workflows use GitHub-maintained Node 24 action majors. |
+
+These are validation anchors, not permanent minimum versions. If a newer
+provider changes output shape or command behavior, `updev` should mark that
+provider/version unsupported until the parser, tests, and docs are updated.
 
 ## Quick Start
 
