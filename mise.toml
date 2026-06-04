@@ -25,6 +25,10 @@ run = "go mod verify"
 description = "Build updev packages"
 run = "go build ./..."
 
+[tasks.docs-check]
+description = "Check high-value documentation source-of-truth mirrors"
+run = "scripts/check-docs.sh"
+
 [tasks.check]
 description = "Run the standard updev local validation suite"
 depends = ["test", "vet", "mod-verify", "build"]

@@ -154,7 +154,8 @@ evidence:
 
 - `schema_version`, `status`, `command`, and `root`;
 - `checks[]` with `tool`, `feature`, `required`, `command`, `status`,
-  optional `version`, `reason`, `remediation`, and JSON
+  optional `version`, `value`, `source`, `active`,
+  `command_shape_supported`, `reason`, `remediation`, and JSON
   `required_fields` / `missing_fields`;
 - required Homebrew/mise contract drift changes the report status to `drift`;
 - missing optional scanners stay `unavailable` at the check level without

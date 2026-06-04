@@ -17,7 +17,7 @@ validation, drift review, security policy, and reproducible manifests.
 | [ROADMAP.md](ROADMAP.md) | Current state and later release ordering. |
 | [RELEASE.md](RELEASE.md) | Active release scope, non-goals, blockers, and release-ready criteria. |
 | [EXTERNAL-MANAGEMENT.md](EXTERNAL-MANAGEMENT.md) | External/manual package and installer direction. |
-| `docs/agent/` | Planned source of truth for agent-facing usage, skill text, and CLI workflow recipes once agent guidance ships. |
+| `docs/agent/` | Source of truth for agent-facing usage, skill text, and CLI workflow recipes. |
 
 ## Documentation Source Of Truth
 
@@ -36,7 +36,7 @@ second long-form copy.
 | Tag-specific release notes | `docs/release-notes/<tag>.md` | GitHub Release bodies are generated from these files by the release workflow. |
 | Public publishing/export process | `PUBLISHING.md` | Public repo should not carry this dotfiles-canonical process document. |
 | Validation commands and dogfood smoke lists | `VALIDATION.md` | README development section stays short and points to mise tasks. |
-| Agent usage, skills, and agent-assisted updev development | planned `docs/agent/` | `updev skill`, `updev help agent`, and README discovery text should embed or link to this tree. |
+| Agent usage, skills, and agent-assisted updev development | `docs/agent/` | `updev skill`, `updev help agent`, and README discovery text should embed or link to this tree. |
 
 Apply these rules when changing docs or CLI behavior:
 

@@ -224,8 +224,9 @@ review for:
 Use `warn` mode for visibility and `strict` mode when missing or risky evidence
 should hold the update. mise inventory and manifest hygiene are checked today.
 When mise `minimum_release_age` is configured, mise applies that policy while
-resolving versions; updev should report that effective policy before adding its
-own mise update gate.
+resolving versions. `updev doctor dependencies`, `updev check --dependencies`,
+and `updev fix mise` report the effective provider-native policy before updev
+adds its own mise update gate.
 
 ## Common Commands
 
@@ -297,6 +298,7 @@ go mod verify
 go vet ./...
 go test ./...
 go build ./...
+scripts/check-docs.sh
 git diff --check
 ```
 
@@ -305,6 +307,7 @@ If you use mise, the local task runner wraps the same checks:
 ```bash
 mise install
 mise run check
+mise run docs-check
 ```
 
 ## Documentation
@@ -319,3 +322,4 @@ mise run check
 | [docs/ROADMAP.md](docs/ROADMAP.md) | Current state and later target ordering. |
 | [docs/RELEASE.md](docs/RELEASE.md) | Active release scope, non-goals, blockers, and release-ready criteria. |
 | [docs/EXTERNAL-MANAGEMENT.md](docs/EXTERNAL-MANAGEMENT.md) | Manual/external app and installer direction. |
+| [docs/agent/USAGE.md](docs/agent/USAGE.md) | Agent and automation workflow guidance. |

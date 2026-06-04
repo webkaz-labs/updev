@@ -94,8 +94,9 @@ mise is not part of the default update gate today. `updev` validates mise
 manifests for exact pins, rejects unsafe `latest` entries, and can rewrite
 resolvable `latest` pins through `updev fix mise`. When mise
 `minimum_release_age` is configured, mise applies that policy while resolving
-versions; updev should detect and report that effective policy. updev does not
-silently mutate mise config to add a provider-native age setting.
+versions; updev detects and reports that effective policy in dependency
+diagnostics and `updev fix mise`. updev does not silently mutate mise config to
+add a provider-native age setting.
 
 The provider direction is to converge on one gate vocabulary for every provider:
 provider-native age policy is detected as evidence, while updev-owned gates
