@@ -63,8 +63,9 @@ fields.
 Store only non-obvious classification in overrides. Scan output should remain
 generated state, not hand-edited desired state.
 
-Manual/vendor inventory uses a narrow override file configured by
-`~/.config/updev/config.toml`; read-only scan, reconciliation,
+Manual/vendor inventory uses a narrow override file. By default it lives under
+`~/.config/updev/`; users only need `~/.config/updev/config.toml` when they want
+to choose a non-default override path. Read-only scan, reconciliation,
 review-candidate, and generated-report preview flows all use this path:
 
 ```toml
@@ -104,7 +105,8 @@ should be rejected or surfaced as drift once an apply/write flow exists.
 
 External installers need stronger gates than package-manager providers:
 
-- `curl | sh` is blocked by default;
+- third-party `curl | sh` installer guidance is blocked by default unless the
+  source, version, and checksum/signature path are explicit;
 - preferred flow is `download -> checksum/signature verify -> install`;
 - missing checksum/signature produces review/hold, not silent install;
 - GitHub Release sources should use common version and asset discovery helpers;

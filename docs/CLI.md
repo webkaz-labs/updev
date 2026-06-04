@@ -264,8 +264,8 @@ contracts return drift.
 
 ## Localization And Progress
 
-Human text follows the detected language. Detection order is `UPDEV_LANG`,
-`~/.config/updev/config.toml` `[ui].language` when it is not `auto`, macOS
+Human text follows the detected language. Detection order is `UPDEV_LANG`, an
+optional `~/.config/updev/config.toml` `[ui].language` when it is not `auto`, macOS
 `AppleLanguages` / `AppleLocale`, then `LC_ALL`, `LC_MESSAGES`, and `LANG`.
 Japanese environments receive Japanese labels and helper text for human
 hub/detail surfaces. JSON remains English.

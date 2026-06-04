@@ -1,0 +1,66 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="980" height="360" viewBox="0 0 980 360" role="img" aria-labelledby="title desc">
+  <title id="title">updev daily workflow overview</title>
+  <desc id="desc">updev gathers provider evidence, produces one daily report, and turns drift or risk into reviewable decisions.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" x2="1" y1="0" y2="1">
+      <stop offset="0" stop-color="#f8fafc"/>
+      <stop offset="1" stop-color="#eef6f3"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="8" stdDeviation="10" flood-color="#0f172a" flood-opacity="0.12"/>
+    </filter>
+    <style>
+      .title { fill: #0f172a; font: 700 30px ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+      .subtitle { fill: #475569; font: 500 16px ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+      .card-title { fill: #0f172a; font: 700 18px ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+      .card-copy { fill: #475569; font: 500 13px ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+      .pill { fill: #134e4a; font: 700 12px ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+      .mono { fill: #334155; font: 600 13px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+    </style>
+  </defs>
+  <rect width="980" height="360" rx="24" fill="url(#bg)"/>
+  <text x="48" y="58" class="title">One daily loop for developer-machine updates</text>
+  <text x="48" y="86" class="subtitle">Keep provider tools native, but make the human review surface consistent.</text>
+
+  <g filter="url(#shadow)">
+    <rect x="48" y="122" width="250" height="172" rx="14" fill="#ffffff"/>
+    <rect x="68" y="144" width="84" height="24" rx="12" fill="#ccfbf1"/>
+    <text x="84" y="161" class="pill">gather</text>
+    <text x="68" y="196" class="card-title">Provider evidence</text>
+    <text x="68" y="224" class="card-copy">Homebrew, mise, manual apps,</text>
+    <text x="68" y="244" class="card-copy">security policy, and cached state</text>
+    <text x="68" y="270" class="mono">brew / mise / .app / JSON</text>
+  </g>
+
+  <path d="M318 208 H392" fill="none" stroke="#14b8a6" stroke-width="4" stroke-linecap="round"/>
+  <path d="M384 196 L400 208 L384 220" fill="none" stroke="#14b8a6" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+
+  <g filter="url(#shadow)">
+    <rect x="420" y="104" width="250" height="208" rx="14" fill="#ffffff"/>
+    <rect x="440" y="126" width="92" height="24" rx="12" fill="#dbeafe"/>
+    <text x="456" y="143" class="pill" fill="#1e3a8a">summarize</text>
+    <text x="440" y="178" class="card-title">One daily report</text>
+    <text x="440" y="206" class="card-copy">Updated, skipped, drifted,</text>
+    <text x="440" y="226" class="card-copy">blocked, and review-needed items</text>
+    <text x="440" y="256" class="mono">updev --dry-run</text>
+    <text x="440" y="280" class="mono">updev list --status attention</text>
+  </g>
+
+  <path d="M690 208 H764" fill="none" stroke="#14b8a6" stroke-width="4" stroke-linecap="round"/>
+  <path d="M756 196 L772 208 L756 220" fill="none" stroke="#14b8a6" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+
+  <g filter="url(#shadow)">
+    <rect x="792" y="122" width="140" height="172" rx="14" fill="#ffffff"/>
+    <rect x="812" y="144" width="72" height="24" rx="12" fill="#fde68a"/>
+    <text x="828" y="161" class="pill" fill="#713f12">decide</text>
+    <text x="812" y="196" class="card-title">Actions</text>
+    <text x="812" y="224" class="card-copy">adopt</text>
+    <text x="812" y="244" class="card-copy">hold</text>
+    <text x="812" y="264" class="card-copy">ignore</text>
+    <text x="866" y="224" class="card-copy">review</text>
+    <text x="866" y="244" class="card-copy">fix</text>
+    <text x="866" y="264" class="card-copy">open</text>
+  </g>
+
+  <text x="48" y="330" class="subtitle">Human text for daily use. Stable JSON for automation.</text>
+</svg>

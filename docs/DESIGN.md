@@ -87,19 +87,19 @@ Stable JSON reports include `schema_version`. Report names include
 Human text may evolve for usability; JSON field names and status meanings
 should remain stable once introduced.
 
-## Public Release Readiness
+## Stable Release Readiness
 
-`updev v1.0.0` is reserved for the first public-ready release. Reaching it
-requires a stable install and support contract, not only feature completeness:
+`updev v1.0.0` is reserved for the first stable public contract. Reaching it
+requires a stable support promise, not only feature completeness:
 
 1. **Scope freeze**: document which commands, config keys, cache/report files,
    and JSON report fields are stable, and mark the rest as experimental,
    provider-specific, or integration-local.
-2. **Install path**: provide a reproducible install/update path such as a
-   release binary, Homebrew formula, or `go install` command, plus uninstall
-   guidance.
+2. **Install path**: keep reproducible install/update paths such as the shell
+   installer, release binaries, mise GitHub backend, or `go install`, plus
+   uninstall guidance.
 3. **Repository model**: keep development, release tags, and issue tracking in
-   the public repository once public distribution becomes primary.
+   the public repository.
 4. **Repo assumptions**: make macOS, Homebrew, mise, cache paths, and
    desired-state root assumptions explicit; avoid hidden hardcoded paths.
 5. **Docs for first use**: provide a public README path from installation to
