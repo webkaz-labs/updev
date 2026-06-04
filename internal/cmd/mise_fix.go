@@ -25,23 +25,28 @@ type miseManifestFixOptions struct {
 }
 
 type miseManifestFixReport struct {
-	SchemaVersion int                     `json:"schema_version"`
-	Status        plan.Status             `json:"status"`
-	Root          string                  `json:"root"`
-	DryRun        bool                    `json:"dry_run"`
-	Actions       []miseManifestFixAction `json:"actions"`
-	Error         string                  `json:"error,omitempty"`
+	SchemaVersion         int                           `json:"schema_version"`
+	Status                plan.Status                   `json:"status"`
+	Root                  string                        `json:"root"`
+	DryRun                bool                          `json:"dry_run"`
+	MiseMinimumReleaseAge miseMinimumReleaseAgeEvidence `json:"mise_minimum_release_age"`
+	Actions               []miseManifestFixAction       `json:"actions"`
+	Error                 string                        `json:"error,omitempty"`
 }
 
 type miseManifestFixAction struct {
-	Tool     string      `json:"tool"`
-	Path     string      `json:"path"`
-	Line     int         `json:"line"`
-	Current  string      `json:"current,omitempty"`
-	Resolved string      `json:"resolved,omitempty"`
-	Command  []string    `json:"command,omitempty"`
-	Status   plan.Status `json:"status"`
-	Reason   string      `json:"reason,omitempty"`
+	Tool                  string      `json:"tool"`
+	Path                  string      `json:"path"`
+	Line                  int         `json:"line"`
+	Current               string      `json:"current,omitempty"`
+	Resolved              string      `json:"resolved,omitempty"`
+	Command               []string    `json:"command,omitempty"`
+	AgePolicyActive       bool        `json:"age_policy_active"`
+	AgePolicyValue        string      `json:"age_policy_value,omitempty"`
+	AgePolicySource       string      `json:"age_policy_source,omitempty"`
+	CommandShapeSupported bool        `json:"command_shape_supported"`
+	Status                plan.Status `json:"status"`
+	Reason                string      `json:"reason,omitempty"`
 }
 
 func runFix(args []string) int {
@@ -111,6 +116,7 @@ func buildMiseManifestFixReport(ctx context.Context, opts miseManifestFixOptions
 		DryRun:        !opts.apply,
 		Actions:       []miseManifestFixAction{},
 	}
+	report.MiseMinimumReleaseAge = detectMiseMinimumReleaseAge(ctx, commandRunner, opts.root)
 	issues, err := mise.ManifestIssues(opts.root)
 	if err != nil {
 		report.Status = plan.StatusError
@@ -126,12 +132,16 @@ func buildMiseManifestFixReport(ctx context.Context, opts miseManifestFixOptions
 	replacements := map[string]map[int]string{}
 	for _, issue := range latestIssues {
 		action := miseManifestFixAction{
-			Tool:    issue.Tool,
-			Path:    issue.Path,
-			Line:    issue.Line,
-			Current: issue.Version,
-			Command: []string{"mise", "latest", issue.Tool},
-			Status:  plan.StatusUnavailable,
+			Tool:                  issue.Tool,
+			Path:                  issue.Path,
+			Line:                  issue.Line,
+			Current:               issue.Version,
+			Command:               []string{"mise", "latest", issue.Tool},
+			AgePolicyActive:       report.MiseMinimumReleaseAge.Active,
+			AgePolicyValue:        report.MiseMinimumReleaseAge.Value,
+			AgePolicySource:       report.MiseMinimumReleaseAge.Source,
+			CommandShapeSupported: report.MiseMinimumReleaseAge.CommandShapeSupported,
+			Status:                plan.StatusUnavailable,
 		}
 		resolved, reason := resolveMiseLatestVersion(ctx, commandRunner, issue.Tool)
 		if reason != "" {
@@ -335,6 +345,7 @@ func printMiseManifestFixText(w io.Writer, report miseManifestFixReport, color b
 	if report.DryRun {
 		fmt.Fprintf(w, "%s %s\n", textui.StyleLabel("mode:", color), textui.StyleRequested("dry-run", color))
 	}
+	fmt.Fprintf(w, "%s %s\n", textui.StyleLabel("mise minimum_release_age:", color), miseMinimumReleaseAgeText(report.MiseMinimumReleaseAge))
 	if report.Error != "" {
 		fmt.Fprintf(w, "%s %s\n", textui.StyleError("error:", color), report.Error)
 	}
@@ -359,4 +370,21 @@ func printMiseManifestFixText(w io.Writer, report miseManifestFixReport, color b
 		{Header: "source", Min: 16, Max: 56},
 		{Header: "reason", Min: 0, Max: 72},
 	}, rows, color)
+}
+
+func miseMinimumReleaseAgeText(evidence miseMinimumReleaseAgeEvidence) string {
+	shape := "latest flag unsupported"
+	if evidence.CommandShapeSupported {
+		shape = "latest flag supported"
+	}
+	if evidence.Active {
+		if evidence.Source != "" {
+			return "active " + evidence.Value + " from " + evidence.Source + "; " + shape
+		}
+		return "active " + evidence.Value + "; " + shape
+	}
+	if evidence.Reason != "" {
+		return "inactive; " + evidence.Reason + "; " + shape
+	}
+	return "inactive; " + shape
 }
