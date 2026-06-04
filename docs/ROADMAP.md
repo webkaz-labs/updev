@@ -30,9 +30,12 @@ history in git log, and keep the current/next release target in
 
 1. Ship `updev v0.5.5` as a mise age-policy diagnostics slice: detect
    provider-native `minimum_release_age`, report it in dependency checks and
-   `updev fix mise`, and do not mutate mise config silently.
+   `updev fix mise`, do not mutate mise config silently, and add the canonical
+   `docs/agent/` source-of-truth model for agent usage/development guidance.
 2. Ship `updev v0.6.0` as the first updev-owned mise release-age gate, aligned
-   with the Homebrew gate vocabulary and JSON/text evidence model.
+   with the Homebrew gate vocabulary and JSON/text evidence model. Add
+   `updev skill` / `updev help agent` only after they embed the canonical agent
+   guidance files rather than duplicating workflow text.
 3. Continue provider-general inventory after the mise gate work:
    cross-platform fixtures, Linux read-only scanners, provider promotion
    suggestions, and a Windows evidence spike that remains experimental until a
@@ -74,6 +77,9 @@ history in git log, and keep the current/next release target in
 - Add a provider-compatibility ledger generated from local/CI contract checks:
   supported provider versions, last verified command/API shapes, failing
   versions, linked issues, and agent-ready remediation notes.
+- Add an agent guidance drift check once `docs/agent/` exists: embedded skill
+  output, README discovery text, and CLI help should all point back to the same
+  canonical files.
 - Converge every provider on the same updev-owned gate model: provider-native
   safety settings are evidence, while updev reports consistent decisions,
   confidence, remediation, and policy override hooks.
