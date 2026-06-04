@@ -63,14 +63,14 @@ fields.
 Store only non-obvious classification in overrides. Scan output should remain
 generated state, not hand-edited desired state.
 
-Manual/vendor inventory uses a narrow override file. By default it lives under
-`~/.config/updev/`; users only need `~/.config/updev/config.toml` when they want
-to choose a non-default override path. Read-only scan, reconciliation,
-review-candidate, and generated-report preview flows all use this path:
+Manual/vendor inventory uses a narrow override file. By default it lives at
+`~/.config/updev/inventory-overrides.toml` and is used automatically. Users only
+need `~/.config/updev/config.toml` when they want to choose a non-default
+override path:
 
 ```toml
 [inventory]
-overrides = "~/.config/updev/inventory-overrides.toml"
+overrides = "~/.config/updev/manual-overrides.local.toml"
 ```
 
 The initial override schema reconciles manual/vendor app identities with
