@@ -84,27 +84,62 @@ commands in local test plans, not as a permanent release log here.
   `git diff --check` pass. Repository-local integration smoke checks may add
   extra gates before mirroring a release.
 
-## Next Release: v0.6.0
+## Next Patch: v0.5.5
 
-`updev v0.6.0` should continue provider-general inventory after the macOS
-manual/vendor decision slice. The next target is Linux-first scanner groundwork:
-build the cross-platform model, fixture tests, and Linux read-only evidence
-before requiring a Windows environment. Windows support can stay at fixture or
-spike level unless a real runner is available.
+`updev v0.5.5` should close the mise age-policy documentation and diagnostics
+gap before broader provider expansion. The goal is not to add a full mise
+update gate yet; it is to detect and report whether mise's own
+`minimum_release_age` policy is active so `updev fix mise` and dependency
+diagnostics explain the safety posture consistently with Homebrew.
+
+### v0.5.5 Target Scope
+
+1. **mise native age-policy detection**: `updev doctor dependencies` and
+   `updev check --dependencies` report mise `minimum_release_age`, source,
+   status, and command-shape support.
+2. **mise fix evidence**: `updev fix mise` text/JSON reports include whether
+   `mise latest <tool>` is being resolved under an effective mise
+   `minimum_release_age` policy.
+3. **No silent config mutation**: updev may suggest `minimum_release_age`, but
+   it does not edit mise config automatically.
+4. **Docs and compatibility notes**: README, SECURITY, and CLI docs distinguish
+   provider-native mise age policy from updev-owned update gates.
+
+### v0.5.5 Non-Goals
+
+- implementing an updev-owned mise release-age gate;
+- mutating mise config without an explicit future apply command;
+- broad Linux/Windows package provider support.
+
+## Next Minor: v0.6.0
+
+`updev v0.6.0` should add the first updev-owned mise update gate and establish
+the provider-wide gate model. Homebrew already has an updev-owned release-age
+gate; v0.6.0 should bring mise into the same decision vocabulary, then make that
+model the direction for VS Code and future providers. Linux scanner groundwork
+can proceed after this safety model is explicit.
 
 ### v0.6.0 Target Scope
 
-1. **Linux manual inventory scanner**: add read-only evidence from `.desktop`
+1. **updev-owned mise release-age gate**: evaluate GitHub and registry-backed
+   mise candidates with updev config/env thresholds, cache keys, text/JSON
+   evidence, and `allow|hold|review|block` decisions aligned with Homebrew.
+2. **Provider-native policy evidence**: report mise `minimum_release_age` as
+   evidence, but keep updev-owned gate decisions independent and explainable.
+3. **Provider-wide gate contract**: document the common fields every provider
+   gate should expose: candidate identity, release date/age, min age, evidence,
+   policy source, decision, confidence, and remediation.
+4. **Linux manual inventory scanner**: add read-only evidence from `.desktop`
    files, Flatpak, Snap, AppImage, and distro package metadata where cheap.
-2. **Cross-platform fixtures**: cover Linux and Windows-style evidence with fake
+5. **Cross-platform fixtures**: cover Linux and Windows-style evidence with fake
    runner / fixture tests so most implementation can proceed on macOS.
-3. **Windows scanner spike**: define registry / winget evidence mapping and keep
+6. **Windows scanner spike**: define registry / winget evidence mapping and keep
    it read-only; mark it experimental until a Windows runner or real machine
    dogfood exists.
-4. **Provider promotion parity**: map Linux/Windows manual app rows into the
+7. **Provider promotion parity**: map Linux/Windows manual app rows into the
    same plan/check action vocabulary without making broad package management a
    stable promise.
-5. **Evidence quality**: improve source URLs, ownership confidence, and
+8. **Evidence quality**: improve source URLs, ownership confidence, and
    provider-native metadata for manual/vendor decisions.
 
 ### v0.6.0 Non-Goals
@@ -112,6 +147,7 @@ spike level unless a real runner is available.
 - default update inclusion for manual/vendor rows;
 - automatic external installer execution;
 - requiring a Windows environment for the first Linux scanner implementation;
+- silently mutating mise provider settings;
 - public `v1.0.0` stability promise.
 
 ## Later Ordering
@@ -120,12 +156,15 @@ Longer-term priorities live in [ROADMAP.md](ROADMAP.md). The short version:
 
 1. Continue provider-general inventory after `v0.6.0` with deeper
    Linux/Windows scanners.
-2. Broaden Homebrew release-age and advisory confidence beyond GitHub
+2. Broaden Homebrew and mise release-age/advisory confidence beyond GitHub and
+   first registry paths.
+3. Apply the common updev-owned gate model to VS Code and future providers.
+4. Broaden Homebrew release-age and advisory confidence beyond GitHub
    release/tag/ref URL paths.
-3. Add provider-native audit paths where package identity is reliable.
-4. Continue scanner hardening after OSV-Scanner, gitleaks, zizmor, Trivy, and
+5. Add provider-native audit paths where package identity is reliable.
+6. Continue scanner hardening after OSV-Scanner, gitleaks, zizmor, Trivy, and
    Grype.
-5. Prepare for public `updev v1.0.0` only after the stable macOS/Homebrew/mise
+7. Prepare for public `updev v1.0.0` only after the stable macOS/Homebrew/mise
    scope is deliberately narrowed and documented.
 
 ## Public Preview Maintenance

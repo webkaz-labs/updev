@@ -125,9 +125,9 @@ authenticated where needed, and visible on `PATH`.
 |------|-------------|
 | macOS preview | Homebrew and mise installed locally. |
 | Homebrew provider | `brew` must support JSON output such as `brew outdated --json=v2`; package mutation still runs through Homebrew. |
-| mise provider | `mise` must support `mise ls --current --json --cd <dir>` for inventory and the GitHub backend for the managed install example. |
+| mise provider | `mise` must support `mise ls --current --json --cd <dir>` for inventory and the GitHub backend for the managed install example. `updev` currently validates exact pins and rejects unsafe `latest` entries; it does not require, add, or enforce a mise-native age setting. |
 | Manual app inventory | macOS `.app` bundle metadata is read locally; Mac App Store evidence is used only when receipts or `mas` evidence are available. |
-| Security gates | Network evidence is best-effort and provider-scoped. Strict mode can hold updates when required evidence is missing. |
+| Security gates | Network evidence is best-effort and provider-scoped. Strict mode can hold Homebrew updates and opt-in VS Code extension updates when required evidence is missing. |
 
 Known-good validation as of 2026-06-04:
 
@@ -188,7 +188,8 @@ updev inventory plan --provider manual --format json
 `updev` can evaluate pending updates before mutation. It can hold or require
 review for:
 
-- releases that are newer than the configured age threshold;
+- Homebrew releases and VS Code extension updates that are newer than the
+  configured updev age threshold;
 - Homebrew casks, URL casks, and non-official taps that need provenance review;
 - advisory matches from OSV or GitHub Advisory evidence where package identity
   is reliable;
@@ -196,7 +197,10 @@ review for:
 - local policy rules such as temporary allow, hold, review, or block decisions.
 
 Use `warn` mode for visibility and `strict` mode when missing or risky evidence
-should hold the update.
+should hold the update. mise inventory and manifest hygiene are checked today.
+When mise `minimum_release_age` is configured, mise applies that policy while
+resolving versions; updev should report that effective policy before adding its
+own mise update gate.
 
 ## Common Commands
 

@@ -90,6 +90,18 @@ Default update gate scope:
 - Brewfile-managed VS Code extensions only when opted in.
 - Local policy evaluation for those candidates.
 
+mise is not part of the default update gate today. `updev` validates mise
+manifests for exact pins, rejects unsafe `latest` entries, and can rewrite
+resolvable `latest` pins through `updev fix mise`. When mise
+`minimum_release_age` is configured, mise applies that policy while resolving
+versions; updev should detect and report that effective policy. updev does not
+silently mutate mise config to add a provider-native age setting.
+
+The provider direction is to converge on one gate vocabulary for every provider:
+provider-native age policy is detected as evidence, while updev-owned gates
+eventually decide `allow`, `hold`, `review`, or `block` consistently across
+Homebrew, mise, VS Code, and future providers.
+
 Default update does not run project-native audits, OSV-Scanner, gitleaks, zizmor,
 Trivy, Grype, SBOM generation, cloud/SaaS posture checks, or agent-assisted web
 research. Those belong to explicit scan/review commands.
