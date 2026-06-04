@@ -92,7 +92,9 @@ update gate yet; it is to detect and report whether mise's own
 `minimum_release_age` policy is active so `updev fix mise` and dependency
 diagnostics explain the safety posture consistently with Homebrew. It should
 also establish the source-of-truth model for agent-facing usage so future
-skills and CLI guidance do not duplicate stale command details.
+skills and CLI guidance do not duplicate stale command details. The same
+source-of-truth model should apply across public docs, generated release notes,
+README summaries, validation docs, and future embedded CLI guidance.
 
 ### v0.5.5 Target Scope
 
@@ -114,6 +116,10 @@ skills and CLI guidance do not duplicate stale command details.
    read-only commands such as `updev --dry-run`, `updev list --status
    attention`, `updev security review`, and JSON/no-color outputs for scripts;
    mutation remains explicit and user-directed.
+7. **Docs source-of-truth ledger**: keep a durable map of which document owns
+   command semantics, data/config shape, security behavior, release criteria,
+   release notes, validation, publishing, and agent guidance. Mirrors should
+   summarize or link rather than duplicate long-form content.
 
 ### v0.5.5 Non-Goals
 
@@ -144,17 +150,21 @@ can proceed after this safety model is explicit.
    `updev help agent` after the `docs/agent/` source tree exists. These commands
    should embed the canonical files and avoid duplicating command reference in
    code.
-5. **Linux manual inventory scanner**: add read-only evidence from `.desktop`
+5. **Documentation drift checks**: add a focused local/CI check for high-value
+   mirrors such as release-note presence for tags, embedded agent skill output,
+   README links, and mise/CI validation parity. Expand later only where drift
+   has caused real maintenance risk.
+6. **Linux manual inventory scanner**: add read-only evidence from `.desktop`
    files, Flatpak, Snap, AppImage, and distro package metadata where cheap.
-6. **Cross-platform fixtures**: cover Linux and Windows-style evidence with fake
+7. **Cross-platform fixtures**: cover Linux and Windows-style evidence with fake
    runner / fixture tests so most implementation can proceed on macOS.
-7. **Windows scanner spike**: define registry / winget evidence mapping and keep
+8. **Windows scanner spike**: define registry / winget evidence mapping and keep
    it read-only; mark it experimental until a Windows runner or real machine
    dogfood exists.
-8. **Provider promotion parity**: map Linux/Windows manual app rows into the
+9. **Provider promotion parity**: map Linux/Windows manual app rows into the
    same plan/check action vocabulary without making broad package management a
    stable promise.
-9. **Evidence quality**: improve source URLs, ownership confidence, and
+10. **Evidence quality**: improve source URLs, ownership confidence, and
    provider-native metadata for manual/vendor decisions.
 
 ### v0.6.0 Non-Goals
