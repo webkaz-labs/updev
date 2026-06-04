@@ -80,7 +80,7 @@ Done for v1 means:
 - every manifest mutation has a previewable diff, validation result, and
   snapshot/rollback path;
 - compatibility commands remain clearly labeled and do not replace the default
-  default update workflow.
+  update workflow.
 
 Stable JSON reports include `schema_version`. Report names include
 `syncReport`, `mutationReport`, `rollbackReport`, and `backendPlanReport`.

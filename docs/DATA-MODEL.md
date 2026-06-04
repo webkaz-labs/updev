@@ -78,7 +78,7 @@ security = "strict"
 language = "ja"
 
 [inventory]
-overrides = "~/.config/updev/inventory-overrides.toml"
+overrides = "~/.config/updev/manual-overrides.local.toml"
 
 [[inventory.reports]]
 name = "manual-apps"
