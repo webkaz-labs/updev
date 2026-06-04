@@ -183,6 +183,8 @@ The public preview should stay narrow and incremental:
    release binaries, checksums, source install path, and
    `docs/release-notes/<tag>.md` in sync. The tag workflow uses that note as
    the GitHub Release body and updates existing release notes on reruns.
+   The repository-local `mise.toml` pins the Go toolchain and `mise run check`
+   mirrors the public CI's module verify, vet, test, and build gates.
 4. **`updev v1.0.0`** is the first stable public release. Its stable promise is
    macOS-first package/tool orchestration for Homebrew, Brewfile-derived
    desired state, mise, focused security gates, inventory, sync,

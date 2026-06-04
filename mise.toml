@@ -1,3 +1,6 @@
+[tools]
+go = "1.25.8"
+
 [tasks.test]
 description = "Run updev Go tests with cache and wall time"
 run = "/usr/bin/time -p go test ./..."
@@ -18,6 +21,10 @@ run = "go vet ./..."
 description = "Verify updev Go modules"
 run = "go mod verify"
 
+[tasks.build]
+description = "Build updev packages"
+run = "go build ./..."
+
 [tasks.check]
 description = "Run the standard updev local validation suite"
-depends = ["test", "vet", "mod-verify"]
+depends = ["test", "vet", "mod-verify", "build"]
