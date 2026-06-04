@@ -243,15 +243,20 @@ for `mise run dot-review`.
 `updev fix mise` is the dry-run-first fixer for resolvable `latest` entries. It
 uses `mise latest <tool>` as the source of truth, reports the replacement
 version and source line, leaves unresolved entries unchanged, and writes only
-when `--apply` is provided. The fixer rewrites each affected manifest in place.
+when `--apply` is provided. The report includes mise `minimum_release_age`
+evidence so reviewers can see whether `mise latest <tool>` resolved under a
+provider-native release-age policy. The fixer rewrites each affected manifest in
+place.
 
 `updev check --dependencies` and `updev doctor dependencies` run read-only
 contract checks for local CLIs that updev depends on. Required checks cover
 Homebrew and mise version commands plus the JSON shapes used by update safety
-and inventory collection. Optional scanner checks cover installed versions of
-OSV-Scanner, gitleaks, zizmor, Trivy, and Grype. Missing optional scanners are
-reported as unavailable but do not make the report fail; changed required JSON
-contracts return drift.
+and inventory collection. The mise dependency checks also report
+`minimum_release_age`, its source, active/inactive status, and whether the
+current `mise latest` command shape advertises release-age filtering. Optional
+scanner checks cover installed versions of OSV-Scanner, gitleaks, zizmor,
+Trivy, and Grype. Missing optional scanners are reported as unavailable but do
+not make the report fail; changed required JSON contracts return drift.
 
 ## Agent Contract
 

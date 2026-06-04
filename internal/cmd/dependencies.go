@@ -33,16 +33,20 @@ type dependencyContractReport struct {
 }
 
 type dependencyContractCheck struct {
-	Tool          string      `json:"tool"`
-	Feature       string      `json:"feature"`
-	Required      bool        `json:"required"`
-	Command       []string    `json:"command,omitempty"`
-	Status        plan.Status `json:"status"`
-	Version       string      `json:"version,omitempty"`
-	Reason        string      `json:"reason,omitempty"`
-	Remediation   string      `json:"remediation,omitempty"`
-	RequiredField []string    `json:"required_fields,omitempty"`
-	MissingField  []string    `json:"missing_fields,omitempty"`
+	Tool                  string      `json:"tool"`
+	Feature               string      `json:"feature"`
+	Required              bool        `json:"required"`
+	Command               []string    `json:"command,omitempty"`
+	Status                plan.Status `json:"status"`
+	Version               string      `json:"version,omitempty"`
+	Value                 string      `json:"value,omitempty"`
+	Source                string      `json:"source,omitempty"`
+	Active                *bool       `json:"active,omitempty"`
+	CommandShapeSupported *bool       `json:"command_shape_supported,omitempty"`
+	Reason                string      `json:"reason,omitempty"`
+	Remediation           string      `json:"remediation,omitempty"`
+	RequiredField         []string    `json:"required_fields,omitempty"`
+	MissingField          []string    `json:"missing_fields,omitempty"`
 }
 
 type dependencyProbe struct {
@@ -128,6 +132,7 @@ func buildDependencyContractReport(ctx context.Context, opts dependencyOptions, 
 			checks = append(checks, dependencyJSONContractCheck(ctx, commandRunner, probe))
 		}
 	}
+	checks = append(checks, dependencyMiseMinimumReleaseAgeCheck(ctx, commandRunner, opts.root))
 	sort.SliceStable(checks, func(i, j int) bool {
 		if checks[i].Required != checks[j].Required {
 			return checks[i].Required
@@ -144,6 +149,31 @@ func buildDependencyContractReport(ctx context.Context, opts dependencyOptions, 
 		Root:          opts.root,
 		Checks:        checks,
 	}
+}
+
+func dependencyMiseMinimumReleaseAgeCheck(ctx context.Context, commandRunner runner.Runner, root string) dependencyContractCheck {
+	check := dependencyContractCheck{
+		Tool:     "mise",
+		Feature:  "minimum-release-age",
+		Required: true,
+		Command:  []string{"mise", "settings", "ls", "--json-extended", "--cd", root},
+		Status:   plan.StatusOK,
+	}
+	if _, err := commandRunner.LookPath("mise"); err != nil {
+		check.Status = plan.StatusUnavailable
+		check.Reason = "executable not found on PATH"
+		check.Remediation = dependencyRemediation("mise", true)
+		return check
+	}
+	evidence := detectMiseMinimumReleaseAge(ctx, commandRunner, root)
+	check.Status = evidence.Status
+	check.Value = evidence.Value
+	check.Source = evidence.Source
+	check.Active = &evidence.Active
+	check.CommandShapeSupported = &evidence.CommandShapeSupported
+	check.Reason = evidence.Reason
+	check.Remediation = evidence.Remediation
+	return check
 }
 
 func dependencyProbes() []dependencyProbe {
@@ -332,7 +362,26 @@ func printDependencyContractText(w io.Writer, report dependencyContractReport, c
 		}
 		detail := check.Version
 		if detail == "" {
+			if check.Value != "" {
+				detail = check.Value
+				if check.Source != "" {
+					detail += " from " + check.Source
+				}
+			}
+		}
+		if detail == "" {
 			detail = check.Reason
+		}
+		if check.CommandShapeSupported != nil {
+			shape := "latest flag: unsupported"
+			if *check.CommandShapeSupported {
+				shape = "latest flag: supported"
+			}
+			if detail == "" {
+				detail = shape
+			} else {
+				detail += "; " + shape
+			}
 		}
 		if len(check.MissingField) > 0 {
 			detail = "missing fields: " + strings.Join(check.MissingField, ",")

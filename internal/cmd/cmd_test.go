@@ -129,7 +129,7 @@ func TestBuildVersionReport(t *testing.T) {
 	if report.SchemaVersion != 1 || report.Tool != toolName || report.Version != toolVersion {
 		t.Fatalf("unexpected version report: %#v", report)
 	}
-	if report.Major != 0 || report.Minor != 5 || report.Patch != 4 || report.Contract != "pre_stable" {
+	if report.Major != 0 || report.Minor != 5 || report.Patch != 5 || report.Contract != "pre_stable" {
 		t.Fatalf("unexpected version semantics: %#v", report)
 	}
 }
@@ -533,14 +533,19 @@ func TestMiseManifestFixDryRunResolvesLatest(t *testing.T) {
 `), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	fake := &fakeCommandRunner{results: map[string]runner.Result{
+	results := addMiseMinimumReleaseAgeFakeResults(map[string]runner.Result{
 		strings.Join([]string{"mise", "latest", "github:owner/tool"}, "\x00"): {Stdout: "1.2.3\n"},
-	}}
+	})
+	results[strings.Join([]string{"mise", "settings", "ls", "--json-extended", "--cd", root}, "\x00")] = runner.Result{Stdout: `{"minimum_release_age":{"value":"3d","type":"string","source":"/fake/mise/config.toml"}}`}
+	fake := &fakeCommandRunner{results: results}
 	report := buildMiseManifestFixReport(context.Background(), miseManifestFixOptions{root: root}, fake)
 	if report.Status != plan.StatusDrift || !report.DryRun || len(report.Actions) != 1 {
 		t.Fatalf("expected dry-run drift action, got %#v", report)
 	}
-	if action := report.Actions[0]; action.Status != plan.StatusDrift || action.Resolved != "1.2.3" || action.Current != "latest" {
+	if !report.MiseMinimumReleaseAge.Active || report.MiseMinimumReleaseAge.Value != "3d" {
+		t.Fatalf("expected active mise minimum_release_age evidence, got %#v", report.MiseMinimumReleaseAge)
+	}
+	if action := report.Actions[0]; action.Status != plan.StatusDrift || action.Resolved != "1.2.3" || action.Current != "latest" || !action.AgePolicyActive || action.AgePolicyValue != "3d" {
 		t.Fatalf("unexpected fix action: %#v", action)
 	}
 	data, err := os.ReadFile(configPath)
@@ -918,6 +923,16 @@ func TestBackendDoctorOnlyReportsMiseBackendFindings(t *testing.T) {
 	}
 }
 
+func addMiseMinimumReleaseAgeFakeResults(results map[string]runner.Result) map[string]runner.Result {
+	if results == nil {
+		results = map[string]runner.Result{}
+	}
+	results["mise\x00latest\x00--help"] = runner.Result{Stdout: "Usage: mise latest [OPTIONS] <TOOL@VERSION>\n      --minimum-release-age <MINIMUM_RELEASE_AGE>"}
+	results["mise\x00settings\x00ls\x00--json-extended"] = runner.Result{Stdout: `{"minimum_release_age":{"value":"3d","type":"string","source":"/fake/mise/config.toml"}}`}
+	results["mise\x00settings\x00ls\x00--json-extended\x00--cd\x00/repo"] = runner.Result{Stdout: `{"minimum_release_age":{"value":"3d","type":"string","source":"/fake/mise/config.toml"}}`}
+	return results
+}
+
 func TestDependencyContractReportChecksRequiredJSONContracts(t *testing.T) {
 	fake := &fakeCommandRunner{
 		paths: map[string]error{
@@ -929,12 +944,12 @@ func TestDependencyContractReportChecksRequiredJSONContracts(t *testing.T) {
 			"trivy":       fmt.Errorf("missing"),
 			"grype":       fmt.Errorf("missing"),
 		},
-		results: map[string]runner.Result{
+		results: addMiseMinimumReleaseAgeFakeResults(map[string]runner.Result{
 			"brew\x00--version":                 {Stdout: "Homebrew 4.5.0"},
 			"brew\x00outdated\x00--json=v2":     {Stdout: `{"formulae":[],"casks":[]}`},
 			"mise\x00--version":                 {Stdout: "2026.5.18"},
 			"mise\x00ls\x00--current\x00--json": {Stdout: `{}`},
-		},
+		}),
 	}
 	report := buildDependencyContractReport(context.Background(), dependencyOptions{command: "dependencies", root: "/repo"}, fake)
 	if report.SchemaVersion != dependencyContractReportSchemaVersion || report.Status != plan.StatusOK {
@@ -948,6 +963,56 @@ func TestDependencyContractReportChecksRequiredJSONContracts(t *testing.T) {
 			t.Fatalf("expected required checks to pass, got %#v", check)
 		}
 	}
+	foundPolicy := false
+	for _, check := range report.Checks {
+		if check.Tool == "mise" && check.Feature == "minimum-release-age" {
+			foundPolicy = true
+			if check.Active == nil || !*check.Active || check.Value != "3d" || check.Source != "/fake/mise/config.toml" {
+				t.Fatalf("expected active mise minimum_release_age evidence, got %#v", check)
+			}
+			if check.CommandShapeSupported == nil || !*check.CommandShapeSupported {
+				t.Fatalf("expected mise latest command shape support, got %#v", check)
+			}
+		}
+	}
+	if !foundPolicy {
+		t.Fatalf("expected mise minimum-release-age check, got %#v", report.Checks)
+	}
+}
+
+func TestDependencyContractReportAllowsInactiveMiseMinimumReleaseAge(t *testing.T) {
+	results := addMiseMinimumReleaseAgeFakeResults(map[string]runner.Result{
+		"brew\x00--version":                 {Stdout: "Homebrew 4.5.0"},
+		"brew\x00outdated\x00--json=v2":     {Stdout: `{"formulae":[],"casks":[]}`},
+		"mise\x00--version":                 {Stdout: "2026.5.18"},
+		"mise\x00ls\x00--current\x00--json": {Stdout: `{}`},
+	})
+	results["mise\x00settings\x00ls\x00--json-extended\x00--cd\x00/repo"] = runner.Result{Stdout: `{}`}
+	fake := &fakeCommandRunner{
+		paths: map[string]error{
+			"brew":        nil,
+			"mise":        nil,
+			"osv-scanner": fmt.Errorf("missing"),
+			"gitleaks":    fmt.Errorf("missing"),
+			"zizmor":      fmt.Errorf("missing"),
+			"trivy":       fmt.Errorf("missing"),
+			"grype":       fmt.Errorf("missing"),
+		},
+		results: results,
+	}
+	report := buildDependencyContractReport(context.Background(), dependencyOptions{command: "dependencies", root: "/repo"}, fake)
+	if report.Status != plan.StatusOK {
+		t.Fatalf("expected inactive mise minimum_release_age to remain ok, got %#v", report)
+	}
+	for _, check := range report.Checks {
+		if check.Tool == "mise" && check.Feature == "minimum-release-age" {
+			if check.Active == nil || *check.Active || check.Value != "" || !strings.Contains(check.Reason, "not configured") {
+				t.Fatalf("expected inactive mise minimum_release_age evidence, got %#v", check)
+			}
+			return
+		}
+	}
+	t.Fatalf("expected mise minimum-release-age check, got %#v", report.Checks)
 }
 
 func TestDependencyContractReportDetectsBrewJSONDrift(t *testing.T) {
@@ -961,12 +1026,12 @@ func TestDependencyContractReportDetectsBrewJSONDrift(t *testing.T) {
 			"trivy":       fmt.Errorf("missing"),
 			"grype":       fmt.Errorf("missing"),
 		},
-		results: map[string]runner.Result{
+		results: addMiseMinimumReleaseAgeFakeResults(map[string]runner.Result{
 			"brew\x00--version":                 {Stdout: "Homebrew 4.5.0"},
 			"brew\x00outdated\x00--json=v2":     {Stdout: `{"formulae":[]}`},
 			"mise\x00--version":                 {Stdout: "2026.5.18"},
 			"mise\x00ls\x00--current\x00--json": {Stdout: `{}`},
-		},
+		}),
 	}
 	report := buildDependencyContractReport(context.Background(), dependencyOptions{command: "dependencies", root: "/repo"}, fake)
 	if report.Status != plan.StatusDrift {
@@ -997,12 +1062,12 @@ func TestDependencyContractReportDetectsMiseJSONRootDrift(t *testing.T) {
 			"trivy":       fmt.Errorf("missing"),
 			"grype":       fmt.Errorf("missing"),
 		},
-		results: map[string]runner.Result{
+		results: addMiseMinimumReleaseAgeFakeResults(map[string]runner.Result{
 			"brew\x00--version":                 {Stdout: "Homebrew 4.5.0"},
 			"brew\x00outdated\x00--json=v2":     {Stdout: `{"formulae":[],"casks":[]}`},
 			"mise\x00--version":                 {Stdout: "2026.5.18"},
 			"mise\x00ls\x00--current\x00--json": {Stdout: `[]`},
-		},
+		}),
 	}
 	report := buildDependencyContractReport(context.Background(), dependencyOptions{command: "dependencies", root: "/repo"}, fake)
 	if report.Status != plan.StatusDrift {

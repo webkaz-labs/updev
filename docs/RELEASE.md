@@ -10,17 +10,17 @@ stays an integer schema contract. `v0.x` releases are public preview releases;
 
 ## Current Release
 
-The current implemented release is `updev v0.5.4`. `updev version`,
+The current implemented release is `updev v0.5.5`. `updev version`,
 `updev --version`, and `updev -v` report this command contract.
 
-`updev v0.5.4` is a public installation, README, and release hygiene patch on
-the `v0.5.x` CLI scope. It keeps the command behavior unchanged while making the
-public README clearer about the tool's value, adding a workflow visual, making
-binary installation safer, clarifying that `config.toml` is optional when
-defaults are sufficient, and documenting security/privacy boundaries. It adds a
-checksum-verifying shell installer for the common `curl | sh` path and keeps the
-release workflow on current GitHub Actions runtimes while avoiding deprecated
-artifact download behavior.
+`updev v0.5.5` is a mise diagnostics, agent guidance, and documentation
+source-of-truth patch on the `v0.5.x` CLI scope. It keeps the main update
+workflow stable while reporting mise native `minimum_release_age` evidence in
+dependency diagnostics and `updev fix mise`, adding canonical agent guidance,
+and adding a focused `docs-check` task for high-value documentation drift. It
+builds on the `v0.5.4` public installation and README polish: checksum-verifying
+shell install, current GitHub Actions runtimes, release notes generated from
+tag-specific files, and optional config defaults.
 
 The `v0.5.x` polish gate is folded into this current release state: real TTY
 dogfood, override duplicate/update/list/remove ergonomics, plan detail text,
@@ -61,6 +61,16 @@ commands in local test plans, not as a permanent release log here.
     `suggested_provider`, `review_url`, `install_hint`, and quoted
     `command_preview` fields for review; vendor installer commands are never
     executed from inventory output.
+11. **mise native age-policy diagnostics**: `updev doctor dependencies` and
+    `updev check --dependencies` report mise `minimum_release_age`, source,
+    active/inactive status, and command-shape support.
+12. **mise fix age-policy evidence**: `updev fix mise` text/JSON reports include
+    whether `mise latest <tool>` resolutions ran under an effective mise
+    `minimum_release_age` policy.
+13. **Documentation source-of-truth checks**: `docs/agent/` is the canonical
+    agent guidance tree, `docs/release-notes/<tag>.md` is the GitHub Release
+    body source, and `mise run docs-check` covers release-note presence,
+    README links, agent guidance files, and mise/CI validation parity.
 
 ### v0.5.x Non-Goals
 
@@ -80,53 +90,10 @@ commands in local test plans, not as a permanent release log here.
   install hints, review URLs, and command previews without ANSI color or
   localization;
 - manual/vendor inventory stays opt-in;
+- docs-check passes for high-value documentation mirrors;
 - `go mod verify`, `go vet ./...`, `go test ./...`, `go build ./...`, and
   `git diff --check` pass. Repository-local integration smoke checks may add
   extra gates before mirroring a release.
-
-## Next Patch: v0.5.5
-
-`updev v0.5.5` should close the mise age-policy documentation and diagnostics
-gap before broader provider expansion. The goal is not to add a full mise
-update gate yet; it is to detect and report whether mise's own
-`minimum_release_age` policy is active so `updev fix mise` and dependency
-diagnostics explain the safety posture consistently with Homebrew. It should
-also establish the source-of-truth model for agent-facing usage so future
-skills and CLI guidance do not duplicate stale command details. The same
-source-of-truth model should apply across public docs, generated release notes,
-README summaries, validation docs, and future embedded CLI guidance.
-
-### v0.5.5 Target Scope
-
-1. **mise native age-policy detection**: `updev doctor dependencies` and
-   `updev check --dependencies` report mise `minimum_release_age`, source,
-   status, and command-shape support.
-2. **mise fix evidence**: `updev fix mise` text/JSON reports include whether
-   `mise latest <tool>` is being resolved under an effective mise
-   `minimum_release_age` policy.
-3. **No silent config mutation**: updev may suggest `minimum_release_age`, but
-   it does not edit mise config automatically.
-4. **Docs and compatibility notes**: README, SECURITY, and CLI docs distinguish
-   provider-native mise age policy from updev-owned update gates.
-5. **Agent guidance source of truth**: design and introduce the canonical
-   `docs/agent/` guidance tree for agent usage and updev development workflows.
-   README, future skills, and future `updev skill` output must reference or
-   embed this tree instead of carrying separate copies.
-6. **Agent-safe workflow guidance**: document that agents should start from
-   read-only commands such as `updev --dry-run`, `updev list --status
-   attention`, `updev security review`, and JSON/no-color outputs for scripts;
-   mutation remains explicit and user-directed.
-7. **Docs source-of-truth ledger**: keep a durable map of which document owns
-   command semantics, data/config shape, security behavior, release criteria,
-   release notes, validation, publishing, and agent guidance. Mirrors should
-   summarize or link rather than duplicate long-form content.
-
-### v0.5.5 Non-Goals
-
-- implementing an updev-owned mise release-age gate;
-- mutating mise config without an explicit future apply command;
-- adding autonomous agent mutation or automatic policy bypasses;
-- broad Linux/Windows package provider support.
 
 ## Next Minor: v0.6.0
 
