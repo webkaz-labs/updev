@@ -19,6 +19,47 @@ validation, drift review, security policy, and reproducible manifests.
 | [EXTERNAL-MANAGEMENT.md](EXTERNAL-MANAGEMENT.md) | External/manual package and installer direction. |
 | `docs/agent/` | Planned source of truth for agent-facing usage, skill text, and CLI workflow recipes once agent guidance ships. |
 
+## Documentation Source Of Truth
+
+Keep public docs useful without making users, maintainers, and agents update the
+same fact in five places. Each durable fact should have one owner; other docs
+may summarize it, link to it, or embed it from the owner, but should not carry a
+second long-form copy.
+
+| Information | Owner | Mirrors and limits |
+|-------------|-------|--------------------|
+| Product boundary, stable scope, and source-of-truth policy | `DESIGN.md` | README may summarize the value proposition; release docs may point back here. |
+| Command surface, flags, exit codes, text/JSON/TUI behavior | live `updev help` and `CLI.md` | README and agent docs may show short recipes only. Avoid duplicated flag tables. |
+| Data model, config keys, cache/report paths, status vocabulary | `DATA-MODEL.md` | README may show minimal config examples; command docs should link back for details. |
+| Security gates, policy decisions, scanners, trust boundaries | `SECURITY.md` | README and agent docs may describe safe defaults and link here for detail. |
+| Current release target and release criteria | `RELEASE.md` | ROADMAP keeps ordering only; release notes describe one shipped tag only. |
+| Tag-specific release notes | `docs/release-notes/<tag>.md` | GitHub Release bodies are generated from these files by the release workflow. |
+| Public publishing/export process | `PUBLISHING.md` | Public repo should not carry this dotfiles-canonical process document. |
+| Validation commands and dogfood smoke lists | `VALIDATION.md` | README development section stays short and points to mise tasks. |
+| Agent usage, skills, and agent-assisted updev development | planned `docs/agent/` | `updev skill`, `updev help agent`, and README discovery text should embed or link to this tree. |
+
+Apply these rules when changing docs or CLI behavior:
+
+- Do not add a new long-form explanation until the owning document is clear.
+- README is the first-use path and product pitch, not the command reference,
+  release ledger, security spec, or validation log.
+- ROADMAP orders future work; RELEASE defines the active/next release; git log
+  remains the implementation history.
+- Version-specific text belongs in release notes or the current-release section,
+  not scattered through install snippets unless the command genuinely requires
+  an exact tag.
+- Generated or embedded surfaces should be derived from canonical files. Future
+  `updev skill`, GitHub Release notes, and similar outputs should avoid separate
+  Go string copies.
+- When a change affects a fact with multiple mirrors, the release checklist
+  should name every mirror that must be reviewed, even when no edit is needed.
+
+Planned drift checks should start small: verify that release tags have matching
+release-note files, embedded agent skill output matches `docs/agent/`, README
+links resolve, and local `mise run check` still mirrors CI's module verify, vet,
+test, and build gates. Broader checks can later cover command-help snapshots,
+JSON schema examples, and provider compatibility ledgers.
+
 ## Design Scope
 
 README.md is the user-facing overview, install path, and quick start. This
