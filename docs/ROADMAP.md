@@ -40,15 +40,20 @@ history in git log, and keep the current/next release target in
 5. Continue scanner hardening after OSV-Scanner, gitleaks, zizmor, Trivy, and
    Grype. Keep Syft and Prowler explicit future commands, not default package
    update gates.
-6. Add pending-update gates for VS Code and future providers as their update
+6. Add provider contract drift checks for local and CI runs. These checks
+   should sample supported provider command shapes, detect upstream CLI/API or
+   security-feed schema changes, mark affected provider versions unsupported
+   when compatibility is unknown, and open/update documentation and GitHub
+   issues for agent follow-up.
+7. Add pending-update gates for VS Code and future providers as their update
    flows move into Go.
-7. Add policy ergonomics: guided add/edit/list helpers, diagnostic indexes, and
+8. Add policy ergonomics: guided add/edit/list helpers, diagnostic indexes, and
    shadowed-rule references.
-8. Keep agent-assisted review optional for ambiguous candidates.
-9. Keep Go CLI standard checks as part of future release reviews; direct
+9. Keep agent-assisted review optional for ambiguous candidates.
+10. Keep Go CLI standard checks as part of future release reviews; direct
    subprocess exceptions, JSON encoding, and verbosity policy are documented for
    the current tool surface.
-10. Maintain the macOS/Homebrew/mise public preview with installation docs,
+11. Maintain the macOS/Homebrew/mise public preview with installation docs,
     privacy boundaries, and explicit experimental status for Linux/Windows
     providers. Reserve `updev v1.0.0` for the first stable public contract after
     that scope is deliberately narrowed and documented.
@@ -59,6 +64,9 @@ history in git log, and keep the current/next release target in
   after the macOS/Homebrew path remains stable. Linux can lead with fixtures and
   container/VM dogfood; Windows waits for at least a runner or real-machine
   validation before it becomes a release promise.
+- Add a provider-compatibility ledger generated from local/CI contract checks:
+  supported provider versions, last verified command/API shapes, failing
+  versions, linked issues, and agent-ready remediation notes.
 - Publish `updev v1.0.0` only after the readiness checklist in
   [DESIGN.md](DESIGN.md#public-release-readiness) is satisfied.
 - Make manual-app and provider-generated reports agent-maintained only after
