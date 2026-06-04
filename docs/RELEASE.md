@@ -51,7 +51,7 @@ commands in local test plans, not as a permanent release log here.
 7. **Manual inventory plan/check**: `updev inventory plan --provider manual`
    and `check` group rows into `keep-manual`, `adopt-brew`, `adopt-mas`,
    `ignore-local`, `open-vendor`, and `needs-review`.
-8. **Daily human entry point**: interactive daily `updev` defaults to the
+8. **Main human entry point**: interactive `updev` defaults to the
    manual plan when manual actions need review, but manual/vendor rows remain
    outside the default package update table.
 9. **Override write actions**: `updev inventory review --provider manual
@@ -68,7 +68,7 @@ commands in local test plans, not as a permanent release log here.
   checksum-missing apps;
 - broad Linux/Windows package provider support;
 - replacing Homebrew casks that already work well;
-- making manual/vendor rows part of the default daily `updev` inventory;
+- making manual/vendor rows part of the default `updev` inventory;
 - claiming public `v1.0.0` readiness.
 
 ### v0.5.x Release Criteria
@@ -109,7 +109,7 @@ spike level unless a real runner is available.
 
 ### v0.6.0 Non-Goals
 
-- default daily update inclusion for manual/vendor rows;
+- default update inclusion for manual/vendor rows;
 - automatic external installer execution;
 - requiring a Windows environment for the first Linux scanner implementation;
 - public `v1.0.0` stability promise.
@@ -136,14 +136,14 @@ The public preview should stay narrow and incremental:
    Linux/Windows binaries and provider expansion are clearly labeled
    experimental.
 2. **Pre-v1 hardening** freezes the stable command/config/JSON surface for the
-   macOS/Homebrew/mise daily workflow, labels experimental provider surfaces,
+   macOS/Homebrew/mise update workflow, labels experimental provider surfaces,
    removes or clearly hides compatibility-only paths, and keeps
    compatibility tests for exit codes, JSON shape, no-color/non-TTY output, and
    config parsing.
 3. **Distribution maintenance** keeps the mise GitHub backend install path,
    release binaries, checksums, source install path, and release notes in sync.
 4. **`updev v1.0.0`** is the first stable public release. Its stable promise is
-   macOS-first daily package/tool orchestration for Homebrew, Brewfile-derived
+   macOS-first package/tool orchestration for Homebrew, Brewfile-derived
    desired state, mise, focused security gates, inventory, sync,
    add/remove/edit/rollback, and documented JSON reports. Manual/vendor app
    inventory may remain opt-in unless it reaches the same stability bar.

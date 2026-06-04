@@ -29,7 +29,7 @@ updev security policy
 ## Completion Goal
 
 The Go security slice is complete enough for the first `updev` Go milestone
-when daily updates are safer without turning package management into a full
+when routine updates are safer without turning package management into a full
 security platform.
 
 Done for v1 means:
@@ -53,11 +53,11 @@ Non-goals:
 - auto-allowing casks/vendor installers only because advisory databases are
   quiet;
 - making SBOM inventory, cloud/SaaS posture, Prowler, or Syft part of the
-  default daily update gate;
-- requiring external web research or an agent runner for normal daily updates;
+  default update gate;
+- requiring external web research or an agent runner for normal updates;
 - treating unavailable optional scanners as package update failures.
 
-## Daily Update Gate
+## Update Gate
 
 `updev update` protects the mutation about to happen; it does not audit the
 whole workstation or repository.
@@ -84,13 +84,13 @@ Mode semantics:
 | `strict` | Holds mutation when required evidence is missing, stale, low-confidence, or policy-blocked. |
 | `off` | Skips mutation gates and makes that mode visible in the report. |
 
-Default daily gate scope:
+Default update gate scope:
 
 - Homebrew formula/cask candidates from the pending update set.
 - Brewfile-managed VS Code extensions only when opted in.
 - Local policy evaluation for those candidates.
 
-Daily update does not run project-native audits, OSV-Scanner, gitleaks, zizmor,
+Default update does not run project-native audits, OSV-Scanner, gitleaks, zizmor,
 Trivy, Grype, SBOM generation, cloud/SaaS posture checks, or agent-assisted web
 research. Those belong to explicit scan/review commands.
 
@@ -210,7 +210,7 @@ remaining buckets are:
 - broaden advisory coverage and curated mappings;
 - add provider-native audits where identities are reliable;
 - improve lockfile/SBOM/scanner hardening without making slow scanners default
-  daily gates;
+  update gates;
 - harden Homebrew release-age, tap/cask provenance, URL cask warnings, and
   skipped/held reporting;
 - harden VS Code extension update gates while keeping VS Code opt-in;

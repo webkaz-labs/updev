@@ -1,66 +1,84 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="980" height="360" viewBox="0 0 980 360" role="img" aria-labelledby="title desc">
-  <title id="title">updev daily workflow overview</title>
-  <desc id="desc">updev gathers provider evidence, produces one daily report, and turns drift or risk into reviewable decisions.</desc>
+<svg xmlns="http://www.w3.org/2000/svg" width="1080" height="430" viewBox="0 0 1080 430" role="img" aria-labelledby="title desc">
+  <title id="title">updev update safety workflow</title>
+  <desc id="desc">updev runs provider-native updates through a safety gate, then shows holds, review items, and drift decisions.</desc>
   <defs>
-    <linearGradient id="bg" x1="0" x2="1" y1="0" y2="1">
-      <stop offset="0" stop-color="#f8fafc"/>
-      <stop offset="1" stop-color="#eef6f3"/>
+    <linearGradient id="surface" x1="0" x2="1" y1="0" y2="1">
+      <stop offset="0" stop-color="#07111f"/>
+      <stop offset="0.58" stop-color="#0a1220"/>
+      <stop offset="1" stop-color="#09251f"/>
     </linearGradient>
-    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
-      <feDropShadow dx="0" dy="8" stdDeviation="10" flood-color="#0f172a" flood-opacity="0.12"/>
+    <filter id="soft-shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="12" stdDeviation="14" flood-color="#020617" flood-opacity="0.48"/>
     </filter>
     <style>
-      .title { fill: #0f172a; font: 700 30px ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
-      .subtitle { fill: #475569; font: 500 16px ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
-      .card-title { fill: #0f172a; font: 700 18px ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
-      .card-copy { fill: #475569; font: 500 13px ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
-      .pill { fill: #134e4a; font: 700 12px ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
-      .mono { fill: #334155; font: 600 13px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+      .title { fill: #f8fafc; font: 700 31px ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+      .subtitle { fill: #a8b3c7; font: 500 16px ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+      .label { fill: #cbd5e1; font: 700 12px ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; letter-spacing: 0.4px; }
+      .card-title { fill: #f8fafc; font: 700 19px ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+      .copy { fill: #cbd5e1; font: 500 14px ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+      .muted { fill: #94a3b8; font: 500 13px ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+      .mono { fill: #d1fae5; font: 600 14px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+      .mono-dim { fill: #93c5fd; font: 600 13px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+      .chip-text { fill: #0f172a; font: 700 12px ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+      .queue-text { fill: #e2e8f0; font: 600 14px ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
     </style>
   </defs>
-  <rect width="980" height="360" rx="24" fill="url(#bg)"/>
-  <text x="48" y="58" class="title">One daily loop for developer-machine updates</text>
-  <text x="48" y="86" class="subtitle">Keep provider tools native, but make the human review surface consistent.</text>
 
-  <g filter="url(#shadow)">
-    <rect x="48" y="122" width="250" height="172" rx="14" fill="#ffffff"/>
-    <rect x="68" y="144" width="84" height="24" rx="12" fill="#ccfbf1"/>
-    <text x="84" y="161" class="pill">gather</text>
-    <text x="68" y="196" class="card-title">Provider evidence</text>
-    <text x="68" y="224" class="card-copy">Homebrew, mise, manual apps,</text>
-    <text x="68" y="244" class="card-copy">security policy, and cached state</text>
-    <text x="68" y="270" class="mono">brew / mise / .app / JSON</text>
+  <rect width="1080" height="430" rx="26" fill="url(#surface)"/>
+  <rect x="24" y="24" width="1032" height="382" rx="22" fill="#0d182a" opacity="0.94"/>
+  <rect x="24" y="24" width="1032" height="382" rx="22" fill="none" stroke="#1f2d44" stroke-width="2"/>
+
+  <text x="56" y="68" class="title">Run updates through a safety gate</text>
+  <text x="56" y="98" class="subtitle">Provider tools stay native. updev decides what updates, what waits, and what needs review.</text>
+
+  <g filter="url(#soft-shadow)">
+    <rect x="56" y="132" width="292" height="214" rx="16" fill="#182338" stroke="#3b4a63" stroke-width="2"/>
+    <rect x="56" y="132" width="292" height="6" rx="3" fill="#22d3ee"/>
+    <rect x="76" y="154" width="74" height="24" rx="12" fill="#22d3ee"/>
+    <text x="96" y="171" class="chip-text">updev</text>
+    <text x="76" y="206" class="card-title">Main workflow</text>
+    <text x="76" y="234" class="mono">$ updev</text>
+    <text x="76" y="262" class="mono-dim">updates  12 ready</text>
+    <text x="76" y="286" class="mono-dim">held      2 risky</text>
+    <text x="76" y="310" class="mono-dim">review    3 drift</text>
+    <text x="76" y="332" class="muted">Preview first with updev --dry-run</text>
   </g>
 
-  <path d="M318 208 H392" fill="none" stroke="#14b8a6" stroke-width="4" stroke-linecap="round"/>
-  <path d="M384 196 L400 208 L384 220" fill="none" stroke="#14b8a6" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M366 239 H412" fill="none" stroke="#38bdf8" stroke-width="4" stroke-linecap="round"/>
+  <path d="M403 228 L416 239 L403 250" fill="none" stroke="#38bdf8" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
 
-  <g filter="url(#shadow)">
-    <rect x="420" y="104" width="250" height="208" rx="14" fill="#ffffff"/>
-    <rect x="440" y="126" width="92" height="24" rx="12" fill="#dbeafe"/>
-    <text x="456" y="143" class="pill" fill="#1e3a8a">summarize</text>
-    <text x="440" y="178" class="card-title">One daily report</text>
-    <text x="440" y="206" class="card-copy">Updated, skipped, drifted,</text>
-    <text x="440" y="226" class="card-copy">blocked, and review-needed items</text>
-    <text x="440" y="256" class="mono">updev --dry-run</text>
-    <text x="440" y="280" class="mono">updev list --status attention</text>
+  <g filter="url(#soft-shadow)">
+    <rect x="438" y="118" width="270" height="242" rx="16" fill="#0f443b" stroke="#2dd4bf" stroke-width="2"/>
+    <rect x="438" y="118" width="270" height="6" rx="3" fill="#fbbf24"/>
+    <rect x="458" y="140" width="102" height="24" rx="12" fill="#fbbf24"/>
+    <text x="478" y="157" class="chip-text">safety gate</text>
+    <text x="458" y="194" class="card-title">Hold before install</text>
+    <text x="458" y="224" class="copy">Too new release</text>
+    <text x="458" y="250" class="copy">Advisory match</text>
+    <text x="458" y="276" class="copy">Missing provenance</text>
+    <text x="458" y="302" class="copy">Local policy block</text>
+    <rect x="458" y="324" width="76" height="24" rx="12" fill="#34d399"/>
+    <text x="483" y="341" class="chip-text">allow</text>
+    <rect x="546" y="324" width="68" height="24" rx="12" fill="#fbbf24"/>
+    <text x="569" y="341" class="chip-text">hold</text>
+    <rect x="626" y="324" width="58" height="24" rx="12" fill="#fb7185"/>
+    <text x="641" y="341" class="chip-text">block</text>
   </g>
 
-  <path d="M690 208 H764" fill="none" stroke="#14b8a6" stroke-width="4" stroke-linecap="round"/>
-  <path d="M756 196 L772 208 L756 220" fill="none" stroke="#14b8a6" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M726 239 H772" fill="none" stroke="#38bdf8" stroke-width="4" stroke-linecap="round"/>
+  <path d="M763 228 L776 239 L763 250" fill="none" stroke="#38bdf8" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
 
-  <g filter="url(#shadow)">
-    <rect x="792" y="122" width="140" height="172" rx="14" fill="#ffffff"/>
-    <rect x="812" y="144" width="72" height="24" rx="12" fill="#fde68a"/>
-    <text x="828" y="161" class="pill" fill="#713f12">decide</text>
-    <text x="812" y="196" class="card-title">Actions</text>
-    <text x="812" y="224" class="card-copy">adopt</text>
-    <text x="812" y="244" class="card-copy">hold</text>
-    <text x="812" y="264" class="card-copy">ignore</text>
-    <text x="866" y="224" class="card-copy">review</text>
-    <text x="866" y="244" class="card-copy">fix</text>
-    <text x="866" y="264" class="card-copy">open</text>
+  <g filter="url(#soft-shadow)">
+    <rect x="796" y="132" width="228" height="214" rx="16" fill="#1d2440" stroke="#6d5bd0" stroke-width="2"/>
+    <rect x="796" y="132" width="228" height="6" rx="3" fill="#a78bfa"/>
+    <rect x="816" y="154" width="84" height="24" rx="12" fill="#a78bfa"/>
+    <text x="835" y="171" class="chip-text">review</text>
+    <text x="816" y="206" class="card-title">Decision queue</text>
+    <text x="816" y="236" class="queue-text">update safe items</text>
+    <text x="816" y="264" class="queue-text">review held risk</text>
+    <text x="816" y="292" class="queue-text">fix drift</text>
+    <text x="816" y="320" class="queue-text">adopt or ignore</text>
   </g>
 
-  <text x="48" y="330" class="subtitle">Human text for daily use. Stable JSON for automation.</text>
+  <text x="56" y="382" class="subtitle">Use warn mode for visibility. Use strict mode when risky or missing evidence should stop mutation.</text>
 </svg>
