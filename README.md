@@ -1,13 +1,26 @@
 # updev
 
-`updev` is a developer-machine update and inventory CLI. It gives one daily
-entry point for package managers and tool runtimes, then explains what changed,
-what is unmanaged, and what needs review.
+`updev` is a developer-machine update and inventory CLI. It turns package
+updates, runtime manifests, security checks, and manual app drift into one
+reviewable daily loop.
 
 The current public preview is intentionally narrow: macOS, Homebrew, mise, and
 manual/vendor app inventory are the supported focus. Linux and Windows binaries
 are published for early testing, but broad package-provider support is still
 experimental.
+
+![updev workflow overview](docs/assets/readme-workflow.svg)
+
+`updev` is built for machines that already use real provider tools. Homebrew,
+mise, and future providers still do the installing; `updev` gives you the
+operator view around them:
+
+- **What changed?** See pending, applied, skipped, and deferred updates in one
+  compact daily report.
+- **What drifted?** Compare desired manifests with live installed state,
+  including tools and manually installed apps.
+- **What needs a decision?** Turn risky updates, unmanaged apps, and provider
+  adoption candidates into explicit review actions instead of hidden drift.
 
 ## Why updev?
 
@@ -24,9 +37,9 @@ providers and keeps the daily workflow readable:
 - recommend provider/backend improvements, such as moving suitable CLI tools
   toward mise when appropriate.
 
-`updev` does not replace Homebrew, mise, or other package managers. Provider
-tools still perform installation and updates; `updev` orchestrates, validates,
-summarizes, and records reviewable decisions.
+The result is a quieter update workflow: package managers keep their native
+behavior, while humans get a consistent report, focused review queue, and JSON
+surface for automation.
 
 ## Features
 
@@ -157,7 +170,12 @@ updev inventory plan --provider manual --format json
 
 ## Configuration
 
-Normal user policy lives in:
+Most users do not need an `updev` config file. Built-in defaults are used when
+the file is missing, and `updev` does not create `config.toml` just to write
+default values.
+
+Create a config only when you want to change behavior. Normal user policy is
+read from:
 
 ```text
 ${XDG_CONFIG_HOME:-~/.config}/updev/config.toml
@@ -173,32 +191,19 @@ Environment variables remain one-off overrides for CI, tests, debugging,
 endpoints, and secrets. `--config <path>` is the CLI equivalent of
 `UPDEV_CONFIG` for one command. Do not put tokens or API secrets in TOML.
 
-Example `config.toml`:
+Minimal examples:
 
 ```toml
-[security.homebrew]
-min_release_age_days = 3
-min_tap_age_days = 30
-
-[security.vscode]
-min_install_count = 1000
-min_average_rating = 2.0
-min_extension_age_days = 14
-min_update_age_days = 3
-
 [providers]
-include_vscode = false
+include_vscode = true
 
 [update]
-security = "warn" # warn | strict | off
+security = "strict"
 
 [ui]
-language = "auto"      # auto | en | ja
-interactive = "auto"   # auto | on | off
-progress = true
+language = "ja"
 
 [inventory]
-state_dir = "~/.local/state/updev/inventory"
 overrides = "~/.config/updev/inventory-overrides.toml"
 ```
 
