@@ -42,9 +42,10 @@ type updevUpdateConfig struct {
 }
 
 type updevUIConfig struct {
-	Language    *string
-	Interactive *string
-	Progress    *bool
+	Language               *string
+	Interactive            *string
+	Progress               *bool
+	DescriptionTranslation *string
 }
 
 type updevInventoryConfig struct {
@@ -156,6 +157,11 @@ func parseUpdevConfigTOML(data string) updevConfig {
 				}
 			case "progress":
 				config.UI.Progress = parseBoolPtr(stringValue)
+			case "description_translation":
+				if validDescriptionTranslationMode(stringValue) {
+					normalized := strings.ToLower(stringValue)
+					config.UI.DescriptionTranslation = &normalized
+				}
 			}
 		case "inventory":
 			switch key {

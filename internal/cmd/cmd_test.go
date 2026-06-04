@@ -129,7 +129,7 @@ func TestBuildVersionReport(t *testing.T) {
 	if report.SchemaVersion != 1 || report.Tool != toolName || report.Version != toolVersion {
 		t.Fatalf("unexpected version report: %#v", report)
 	}
-	if report.Major != 0 || report.Minor != 5 || report.Patch != 5 || report.Contract != "pre_stable" {
+	if report.Major != 0 || report.Minor != 5 || report.Patch != 6 || report.Contract != "pre_stable" {
 		t.Fatalf("unexpected version semantics: %#v", report)
 	}
 }
@@ -206,6 +206,9 @@ func TestStartupProgressMessagesAreLocalized(t *testing.T) {
 	}
 	if got := safetyProgressMessage("ja"); !strings.Contains(got, "安全性") {
 		t.Fatalf("expected Japanese safety progress, got %q", got)
+	}
+	if got := descriptionTranslationProgressMessage("ja"); !strings.Contains(got, "翻訳") {
+		t.Fatalf("expected Japanese translation progress, got %q", got)
 	}
 	if got := securityScanProgressMessage("ja"); !strings.Contains(got, "セキュリティ") {
 		t.Fatalf("expected Japanese security scan progress, got %q", got)
@@ -938,6 +941,7 @@ func TestDependencyContractReportChecksRequiredJSONContracts(t *testing.T) {
 		paths: map[string]error{
 			"brew":        nil,
 			"mise":        nil,
+			"codex":       fmt.Errorf("missing"),
 			"osv-scanner": fmt.Errorf("missing"),
 			"gitleaks":    fmt.Errorf("missing"),
 			"zizmor":      fmt.Errorf("missing"),
@@ -977,6 +981,18 @@ func TestDependencyContractReportChecksRequiredJSONContracts(t *testing.T) {
 	}
 	if !foundPolicy {
 		t.Fatalf("expected mise minimum-release-age check, got %#v", report.Checks)
+	}
+	foundCodex := false
+	for _, check := range report.Checks {
+		if check.Tool == "codex" && check.Feature == "description-translation" {
+			foundCodex = true
+			if check.Status != plan.StatusUnavailable || check.Required {
+				t.Fatalf("expected optional unavailable codex translation check, got %#v", check)
+			}
+		}
+	}
+	if !foundCodex {
+		t.Fatalf("expected codex translation check, got %#v", report.Checks)
 	}
 }
 
@@ -1708,6 +1724,7 @@ security = "strict"
 language = "ja"
 interactive = "off"
 progress = false
+description_translation = "manual"
 
 [inventory]
 state_dir = "~/.local/state/updev/inventory"
@@ -1743,7 +1760,7 @@ path = "docs/apps.md"
 	if config.Update.Security == nil || *config.Update.Security != "strict" {
 		t.Fatalf("expected update security setting, got %#v", config)
 	}
-	if config.UI.Language == nil || *config.UI.Language != "ja" || config.UI.Interactive == nil || *config.UI.Interactive != "off" || config.UI.Progress == nil || *config.UI.Progress {
+	if config.UI.Language == nil || *config.UI.Language != "ja" || config.UI.Interactive == nil || *config.UI.Interactive != "off" || config.UI.Progress == nil || *config.UI.Progress || config.UI.DescriptionTranslation == nil || *config.UI.DescriptionTranslation != "manual" {
 		t.Fatalf("expected UI settings, got %#v", config)
 	}
 	if config.Inventory.StateDir == nil || *config.Inventory.StateDir != "~/.local/state/updev/inventory" {
@@ -8525,5 +8542,13 @@ func TestParseTranslatedTSV(t *testing.T) {
 	got := parseTranslatedTSV([]byte("noise\nBEGIN_TSV\nbrew:git\t分散バージョン管理\nEND_TSV\n"), pending)
 	if got["brew:git"] != "分散バージョン管理" {
 		t.Fatalf("unexpected translation parse result: %#v", got)
+	}
+}
+
+func TestListTranslationDisabledByConfigSkipsExplicitRequest(t *testing.T) {
+	t.Setenv("UPDEV_DESCRIPTION_TRANSLATION", "off")
+	update := maybeUpdateListTranslations(listOptions{format: "text", translateNow: true}, listReport{})
+	if !update.Attempted || update.Changed || !strings.Contains(update.Message, "disabled") {
+		t.Fatalf("expected disabled translation message, got %#v", update)
 	}
 }

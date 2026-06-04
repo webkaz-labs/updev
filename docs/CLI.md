@@ -255,8 +255,9 @@ and inventory collection. The mise dependency checks also report
 `minimum_release_age`, its source, active/inactive status, and whether the
 current `mise latest` command shape advertises release-age filtering. Optional
 scanner checks cover installed versions of OSV-Scanner, gitleaks, zizmor,
-Trivy, and Grype. Missing optional scanners are reported as unavailable but do
-not make the report fail; changed required JSON contracts return drift.
+Trivy, Grype, and the optional Codex description-translation backend. Missing
+optional integrations are reported as unavailable but do not make the report
+fail; changed required JSON contracts return drift.
 
 ## Agent Contract
 
@@ -281,6 +282,14 @@ English prose as localization keys. Human output can render those codes through
 versions, command strings, and JSON tokens stay untranslated. Keep short UI
 labels in Go i18n tables, data-like long guidance in structured embedded
 resources, and user-editable configuration in TOML.
+
+`updev list` can maintain a Japanese description cache for provider/tool
+descriptions. In Japanese TTY output, `[ui].description_translation = "auto"`
+updates missing descriptions with the optional Codex CLI before the list is
+printed; `manual` limits translation to explicit `updev list --translate-now` /
+`--retranslate-all`, and `off` disables translation attempts. Codex absence is
+non-fatal. JSON output and non-TTY text do not trigger automatic translation and
+machine-readable fields stay stable.
 
 Slow human-mode startup work uses a delayed TTY-only spinner on stderr for
 provider discovery, update safety checks, security scans/reviews, sync inventory

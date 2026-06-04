@@ -42,6 +42,9 @@ updev check --dependencies --format json
 - `updev list` is the primary human and agent review surface for installed and
   desired state. Prefer filters such as `--provider`, `--status`, `--category`,
   `--query`, and `--details` before running provider-native commands.
+- Japanese TTY `updev list` may update cached descriptions through the
+  optional Codex CLI. Agents should use JSON for decisions and treat translated
+  descriptions as display text only.
 - `updev inventory plan --provider manual` is a review queue for manual/vendor
   apps. Do not automatically adopt, ignore, or open vendor installers.
 - `updev security review` is the review queue for findings and policy

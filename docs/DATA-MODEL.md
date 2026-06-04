@@ -76,6 +76,7 @@ security = "strict"
 
 [ui]
 language = "ja"
+description_translation = "manual"
 
 [inventory]
 overrides = "~/.config/updev/manual-overrides.local.toml"
@@ -89,6 +90,11 @@ path = "docs/apps.md"
 
 The corresponding `UPDEV_*` variables remain temporary overrides for CI, tests,
 debugging, and secrets.
+
+`[ui].description_translation` accepts `auto`, `manual`, or `off`. It controls
+only the human `updev list` description cache: `auto` may call the optional
+Codex CLI in Japanese TTY text mode, `manual` requires explicit translate flags, and
+`off` prevents translation attempts.
 
 ## Status Vocabulary
 
