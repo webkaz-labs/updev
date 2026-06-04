@@ -15,12 +15,17 @@ experimental.
 `updev` is built for machines that already use real provider tools. Providers
 still do the installing; `updev` gives you the operator view around them:
 
-- **Run the workflow through `updev`**: preview, update, summarize, and drill
-  into provider state without remembering every provider-specific command.
-- **Hold risky changes**: delay too-new releases, block known advisories, and
-  require review when provenance, metadata, or policy evidence is missing.
-- **Reconcile drift**: see unmanaged tools, manual apps, provider mismatches,
-  and backend migration candidates without immediately adopting them.
+- **One operator surface**: preview updates, list installed state, inspect
+  drift, and run provider actions without memorizing every provider command.
+- **Human-first review**: compact text and TTY selectors keep routine checks
+  readable, while detail views and JSON stay available when you need evidence.
+- **Safety before mutation**: release-age holds, advisory checks, provenance
+  review, and strict mode make risky updates visible before they change the
+  machine.
+- **Native-provider friendly**: Homebrew and mise stay the source of execution;
+  `updev` coordinates, explains, and records decisions around them.
+- **Low setup pressure**: built-in defaults work without writing a config file;
+  TOML is only needed when you want policy or UI overrides.
 
 ## Why updev?
 
@@ -31,7 +36,8 @@ schedule, or before/after a machine change:
 
 - run one update/check command instead of remembering provider-specific flows;
 - compare desired manifests with live installed state;
-- show compact human output for routine use and JSON for automation;
+- browse package state through a readable `updev list` view with filters,
+  details, and JSON for automation;
 - identify unmanaged or manually installed apps without immediately adopting
   them;
 - add safety gates for risky package, cask, and extension updates;
@@ -42,6 +48,20 @@ The result is a quieter update workflow: package managers keep their native
 behavior, while humans get a consistent report, explicit holds, a focused
 review queue, and JSON output for automation.
 
+## What stands out
+
+- `updev list` is designed for scanning: grouped sections, concise status text,
+  focused filters, and `--details` when a row needs investigation.
+- Safety gates explain *why* an update is allowed, held, blocked, or needs
+  review instead of only hiding it behind a generic failure.
+- Manual/vendor app inventory is review-first. It can surface local-only apps,
+  cask/Mac App Store ownership evidence, and adoption candidates without
+  automatically taking over the machine.
+- The same commands work in terminals and automation: color-aware human output
+  for interactive runs, `--no-color` and JSON for scripts.
+- Configuration is additive. A default-only `config.toml` is not created or
+  required, which keeps first-run setup small.
+
 ## Features
 
 - **Main update workflow**: `updev` and `updev --dry-run` summarize updates,
@@ -49,8 +69,10 @@ review queue, and JSON output for automation.
 - **Supply-chain safety gates**: hold package or extension updates that are too
   new, policy-blocked, advisory-matched, or missing release-age/provenance
   evidence. Strict mode can stop mutation until evidence is good enough.
-- **Grouped inventory**: `updev list` shows desired/live package and runtime
-  state by provider, category, and status.
+- **Readable inventory**: `updev list` is a first-class review surface for
+  desired/live package and runtime state. It groups by provider, category, and
+  status, stays compact by default, and adds focused filters, detail views, and
+  JSON when you need to drill in.
 - **Desired-state checks**: `updev check`, `updev sync`, and `updev status`
   find missing, extra, drifted, blocked, and unavailable entries.
 - **mise hygiene**: `updev fix mise` previews rewrites for unsafe `latest` pins
@@ -137,7 +159,7 @@ Known-good validation as of 2026-06-04:
 | macOS | primary supported preview platform. |
 | Homebrew | `5.1.14-199-g863696a` locally; CI uses mocked provider output. |
 | mise | `2026.5.18` locally; GitHub backend install smoke is covered separately. |
-| Go | module declares `go 1.25.8`; local validation used `go1.26.3`. |
+| Go | module and repository mise config pin `go 1.25.8`. |
 | GitHub Actions | CI and release workflows use GitHub-maintained Node 24 action majors. |
 
 These are validation anchors, not permanent minimum versions. If a newer
@@ -156,7 +178,9 @@ updev
 Review what needs attention:
 
 ```bash
+updev list
 updev list --status attention
+updev list --provider brew --details
 updev security review
 ```
 
@@ -279,6 +303,7 @@ git diff --check
 If you use mise, the local task runner wraps the same checks:
 
 ```bash
+mise install
 mise run check
 ```
 
