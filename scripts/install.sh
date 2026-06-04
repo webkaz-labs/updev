@@ -56,7 +56,7 @@ need() {
 need curl
 need sed
 need tar
-need grep
+need awk
 need uname
 need mktemp
 need install
@@ -126,10 +126,15 @@ curl --fail --location --silent --show-error \
   --output "${tmpdir}/checksums.txt" \
   "${base_url}/checksums.txt"
 
-if ! grep " ./${archive}$" "${tmpdir}/checksums.txt" > "${tmpdir}/checksum.txt"; then
+if ! awk -v target="./${archive}" '$2 == target { print; found = 1 } END { exit found ? 0 : 1 }' \
+  "${tmpdir}/checksums.txt" > "${tmpdir}/checksum.txt"; then
   echo "install.sh: checksum entry not found for ${archive}" >&2
   exit 1
 fi
+
+archive_dir="${archive%.tar.gz}"
+binary_member="${archive_dir}/updev"
+binary_path="${tmpdir}/${binary_member}"
 
 (
   cd "$tmpdir"
@@ -138,11 +143,16 @@ fi
   else
     sha256sum -c checksum.txt
   fi
-  tar -xzf "$archive"
+  tar -xzf "$archive" "$binary_member"
 )
 
+if [ ! -f "$binary_path" ] || [ -L "$binary_path" ]; then
+  echo "install.sh: extracted binary is not a regular file: ${binary_member}" >&2
+  exit 1
+fi
+
 mkdir -p "$install_dir"
-install -m 0755 "${tmpdir}/${archive%.tar.gz}/updev" "${install_dir}/updev"
+install -m 0755 "$binary_path" "${install_dir}/updev"
 
 echo "installed updev ${version} to ${install_dir}/updev"
 "${install_dir}/updev" version

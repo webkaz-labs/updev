@@ -85,19 +85,24 @@ curl -fsSL https://raw.githubusercontent.com/webkaz-labs/updev/main/scripts/inst
 Managed with mise:
 
 ```bash
-mise use -g github:webkaz-labs/updev
+UPDEV_VERSION="$(
+  curl -fsSL https://api.github.com/repos/webkaz-labs/updev/releases/latest |
+    sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p'
+)"
+mise use -g "github:webkaz-labs/updev@${UPDEV_VERSION}"
 updev version
 ```
 
-This writes the following entry to your global mise config:
+This writes a pinned release entry to your global mise config:
 
 ```toml
 [tools]
-"github:webkaz-labs/updev" = "latest"
+"github:webkaz-labs/updev" = "vX.Y.Z"
 ```
 
-To pin a specific release, add a tag such as
-`github:webkaz-labs/updev@vX.Y.Z`.
+Replace `vX.Y.Z` with the resolved latest release tag. Avoid storing `latest`
+for this tool: `updev` treats unpinned mise versions as unsafe in managed
+manifests.
 
 To try `updev` without changing your mise config:
 
@@ -222,9 +227,6 @@ security = "strict"
 
 [ui]
 language = "ja"
-
-[inventory]
-overrides = "~/.config/updev/inventory-overrides.toml"
 ```
 
 ## Support Status
