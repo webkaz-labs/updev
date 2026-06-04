@@ -2,7 +2,7 @@
 
 `updev` is the package and developer-tool update and inventory layer. It should
 stay smaller than a full OS package manager: provider tools still install and
-update packages, while `updev` orchestrates daily updates, desired-state
+update packages, while `updev` orchestrates routine updates, desired-state
 validation, drift review, security policy, and reproducible manifests.
 
 ## Document Map
@@ -32,7 +32,7 @@ desired-state review.
 ## v1 Completion Goal
 
 The public v1 contract should stay narrower than the full command surface. The
-first stable scope is the daily package/tool workflow around Homebrew,
+first stable scope is the main package/tool workflow around Homebrew,
 Brewfile-derived desired state, mise, focused security gates, and reproducible
 inventory/check reports. Experimental provider expansion, manual/vendor app
 scans, backend migration advice, and agent-assisted review may exist before v1,
@@ -41,7 +41,7 @@ failure modes are proven.
 
 The v1 core surface is:
 
-- bare `updev` and `updev update` run the daily update workflow in Go, apply
+- bare `updev` and `updev update` run the default update workflow in Go, apply
   provider update/security policy, support dry-run and JSON output, and finish
   with grouped inventory.
 - `updev list`, `updev inventory`, `updev status`, `updev check`, and
@@ -75,12 +75,12 @@ Done for v1 means:
 - documented smoke commands for update, list, sync, add/remove,
   edit/rollback, security, and backend convergence run with expected exit-code
   semantics;
-- text output is compact enough for daily use, and JSON output is stable enough
+- text output is compact enough for routine use, and JSON output is stable enough
   for agents;
 - every manifest mutation has a previewable diff, validation result, and
   snapshot/rollback path;
 - compatibility commands remain clearly labeled and do not replace the default
-  daily workflow.
+  default update workflow.
 
 Stable JSON reports include `schema_version`. Report names include
 `syncReport`, `mutationReport`, `rollbackReport`, and `backendPlanReport`.
@@ -103,7 +103,7 @@ requires a stable support promise, not only feature completeness:
 4. **Repo assumptions**: make macOS, Homebrew, mise, cache paths, and
    desired-state root assumptions explicit; avoid hidden hardcoded paths.
 5. **Docs for first use**: provide a public README path from installation to
-   dry-run, daily update, list/check, configuration, and rollback/recovery.
+   dry-run, update, list/check, configuration, and rollback/recovery.
 6. **Privacy and security**: document what metadata is scanned, where reports
    are written, how secrets are redacted, and which network calls or external
    scanners are optional.
@@ -120,14 +120,14 @@ requires a stable support promise, not only feature completeness:
 | Layer | Owner | Rule |
 |-------|-------|------|
 | Shell/editor/app config files | adjacent config manager | Keep normal configuration files as source of truth. Do not move them into `updev`. |
-| Packages, runtimes, global CLIs, package-like apps | `updev` | Daily update, inventory, desired manifests, provider policy, security gates, backend convergence. |
+| Packages, runtimes, global CLIs, package-like apps | `updev` | Update workflow, inventory, desired manifests, provider policy, security gates, backend convergence. |
 | OS settings | adjacent OS settings tools | Defaults, network preferences, Wi-Fi metadata, previews, rollback, gated apply. |
 | Organization device management | Apple Business built-in MDM / external MDM | Device enrollment, managed accounts, enforced profiles, app assignment, certificates, OS update/security policy, fleet compliance. |
 | Other machine state | adjacent docs/tools | Secrets, auth, services, backups, hardware, project bootstrap, app runtime state. Track explicitly, but do not fold into `updev` without a narrow provider. |
 
 ## Operating Principles
 
-- Bare `updev` remains the one-command daily update workflow.
+- Bare `updev` remains the one-command update workflow.
 - Mutation is allowed, but it must be policy-checked, reported, and reversible
   where manifests are changed.
 - Manifest rewrites, provider migration, trial promotion, and direct-edit saves
@@ -146,7 +146,7 @@ requires a stable support promise, not only feature completeness:
 
 ## Current State
 
-Go `updev` owns the default daily workflow, rich list/inventory, read-only
+Go `updev` owns the default update workflow, rich list/inventory, read-only
 sync, guided add/remove/edit, rollback, security v1, and read-only backend
 convergence reports. `updev brewfile ...` and `brewfile` remain compatibility or
 low-level surfaces only.

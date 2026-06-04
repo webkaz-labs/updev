@@ -10,8 +10,8 @@ Human-facing commands should stay small:
 
 ```bash
 updev --config file --no-color ...
-updev           # daily update workflow, then compact review dashboard/selector on TTY
-updev update    # explicit default daily update workflow
+updev           # update workflow, then compact review dashboard/selector on TTY
+updev update    # explicit default update workflow
 updev list      # read-only inventory hub on TTY; rich grouped inventory otherwise
 updev ls        # alias for list
 updev inventory # alias for fast/filterable inventory
@@ -49,7 +49,7 @@ updev trial ...
 
 Backend convergence is an intentional human workflow, not only an advanced
 escape hatch. `updev backends plan/doctor` remain the stable non-TTY/JSON entry
-points, while the daily `updev` selector and `updev list` TTY flow should offer
+points, while the `updev` selector and `updev list` TTY flow should offer
 a visible route into the same findings when backend recommendations exist.
 Backend findings expose `recommended_tier` and `preference_rank`: reliable
 `mise` core backends first, registry-backed mise external backends next, then
@@ -74,7 +74,7 @@ Global flags:
   implemented release contract, currently `updev v0.5.4`. `updev version
   --format json` includes SemVer parts and the stable/pre-stable contract
   label.
-- Read-only aliases are supported for common daily commands: `ls` for `list`,
+- Read-only aliases are supported for common commands: `ls` for `list`,
   `st` for `status`, and `ck` for `check`.
 
 Exit codes:

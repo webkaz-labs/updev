@@ -6,7 +6,7 @@ history in git log, and keep the current/next release target in
 
 ## Current State
 
-- Daily update, grouped inventory, read-only `sync`, guided
+- Update workflow, grouped inventory, read-only `sync`, guided
   `add/remove/edit`, `rollback`, security v1, and read-only
   `backends doctor/plan` run in Go.
 - `updev sync` uses the shared inventory cache by default, supports
@@ -20,7 +20,7 @@ history in git log, and keep the current/next release target in
   backend convergence evidence, mise manifest hygiene/fix, and inventory
   override foundations are implemented.
 - Manual/vendor app scans, normalized identity reconciliation, review
-  candidates, override write actions, manual plan/check decision views, daily
+  candidates, override write actions, manual plan/check decision views, default
   human entry points, gated vendor guidance, generated report previews, and
   structured finding codes are implemented.
 - `updev brewfile ...` and `brewfile` remain compatibility or low-level

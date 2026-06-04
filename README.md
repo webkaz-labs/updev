@@ -1,8 +1,9 @@
 # updev
 
-`updev` is a developer-machine update and inventory CLI. It turns package
-updates, runtime manifests, security checks, and manual app drift into one
-reviewable daily loop.
+`updev` is a control plane for developer-machine updates, inventory, and
+supply-chain review. It keeps Homebrew, mise, and future provider tools native,
+but puts one command, one safety gate, and one review queue around machine
+changes.
 
 The current public preview is intentionally narrow: macOS, Homebrew, mise, and
 manual/vendor app inventory are the supported focus. Linux and Windows binaries
@@ -11,26 +12,26 @@ experimental.
 
 ![updev workflow overview](docs/assets/readme-workflow.svg)
 
-`updev` is built for machines that already use real provider tools. Homebrew,
-mise, and future providers still do the installing; `updev` gives you the
-operator view around them:
+`updev` is built for machines that already use real provider tools. Providers
+still do the installing; `updev` gives you the operator view around them:
 
-- **What changed?** See pending, applied, skipped, and deferred updates in one
-  compact daily report.
-- **What drifted?** Compare desired manifests with live installed state,
-  including tools and manually installed apps.
-- **What needs a decision?** Turn risky updates, unmanaged apps, and provider
-  adoption candidates into explicit review actions instead of hidden drift.
+- **Run the workflow through `updev`**: preview, update, summarize, and drill
+  into provider state without remembering every provider-specific command.
+- **Hold risky changes**: delay too-new releases, block known advisories, and
+  require review when provenance, metadata, or policy evidence is missing.
+- **Reconcile drift**: see unmanaged tools, manual apps, provider mismatches,
+  and backend migration candidates without immediately adopting them.
 
 ## Why updev?
 
-Developer machines often drift because each tool has its own update command,
+Developer machines drift because each tool has its own update command,
 desired-state file, safety model, and review output. `updev` sits above those
-providers and keeps the daily workflow readable:
+providers and keeps maintenance readable whether you run it on demand, on a
+schedule, or before/after a machine change:
 
 - run one update/check command instead of remembering provider-specific flows;
 - compare desired manifests with live installed state;
-- show compact human output for daily use and JSON for automation;
+- show compact human output for routine use and JSON for automation;
 - identify unmanaged or manually installed apps without immediately adopting
   them;
 - add safety gates for risky package, cask, and extension updates;
@@ -38,13 +39,16 @@ providers and keeps the daily workflow readable:
   toward mise when appropriate.
 
 The result is a quieter update workflow: package managers keep their native
-behavior, while humans get a consistent report, focused review queue, and JSON
-surface for automation.
+behavior, while humans get a consistent report, explicit holds, a focused
+review queue, and JSON output for automation.
 
 ## Features
 
-- **Daily dashboard**: `updev` and `updev --dry-run` summarize updates, drift,
-  skipped work, warnings, and next actions.
+- **Main update workflow**: `updev` and `updev --dry-run` summarize updates,
+  drift, skipped work, warnings, holds, and next actions.
+- **Supply-chain safety gates**: hold package or extension updates that are too
+  new, policy-blocked, advisory-matched, or missing release-age/provenance
+  evidence. Strict mode can stop mutation until evidence is good enough.
 - **Grouped inventory**: `updev list` shows desired/live package and runtime
   state by provider, category, and status.
 - **Desired-state checks**: `updev check`, `updev sync`, and `updev status`
@@ -52,7 +56,8 @@ surface for automation.
 - **mise hygiene**: `updev fix mise` previews rewrites for unsafe `latest` pins
   while keeping Node `lts` as the only allowed LTS shortcut.
 - **Security review**: `updev security scan`, `gate`, `review`, and `policy`
-  provide explicit safety decisions and machine-readable findings.
+  turn findings into allow/hold/review/block decisions and machine-readable
+  evidence.
 - **Manual/vendor app inventory**: `updev inventory scan|plan|review
   --provider manual` finds macOS `.app` bundles, Mac App Store evidence,
   Homebrew cask ownership, and local-only apps that need a decision.
@@ -111,18 +116,18 @@ Release archives and checksums are available on
 
 ## Quick Start
 
-Preview the daily workflow:
+Preview the workflow safely, then run the main command:
 
 ```bash
 updev --dry-run
+updev
 ```
 
-Inspect inventory:
+Review what needs attention:
 
 ```bash
-updev list
 updev list --status attention
-updev list --provider mise
+updev security review
 ```
 
 Run consistency checks:
@@ -149,12 +154,27 @@ updev security gate --format json
 updev inventory plan --provider manual --format json
 ```
 
+## Supply-Chain Review
+
+`updev` can evaluate pending updates before mutation. It can hold or require
+review for:
+
+- releases that are newer than the configured age threshold;
+- Homebrew casks, URL casks, and non-official taps that need provenance review;
+- advisory matches from OSV or GitHub Advisory evidence where package identity
+  is reliable;
+- VS Code extension updates when marketplace age/posture checks are enabled;
+- local policy rules such as temporary allow, hold, review, or block decisions.
+
+Use `warn` mode for visibility and `strict` mode when missing or risky evidence
+should hold the update.
+
 ## Common Commands
 
 | Command | Purpose |
 |---------|---------|
-| `updev` | Run the daily update workflow. |
-| `updev --dry-run` | Preview the daily workflow without applying updates. |
+| `updev` | Run the update workflow. |
+| `updev --dry-run` | Preview the update workflow without applying updates. |
 | `updev list` / `updev ls` | Show grouped desired/live inventory. |
 | `updev status` / `updev st` | Show compact current state. |
 | `updev check` / `updev ck` | Validate manifests and provider consistency. |
