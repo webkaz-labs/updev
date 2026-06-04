@@ -49,7 +49,22 @@ summarizes, and records reviewable decisions.
 
 ## Install
 
-Recommended with mise:
+Quick shell install:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/webkaz-labs/updev/main/scripts/install.sh | sh
+```
+
+This installs the latest GitHub release to `~/.local/bin/updev` and verifies the
+release checksum before copying the binary. To pin a release or choose another
+directory:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/webkaz-labs/updev/main/scripts/install.sh |
+  sh -s -- --version vX.Y.Z --install-dir ~/.local/bin
+```
+
+Managed with mise:
 
 ```bash
 mise use -g github:webkaz-labs/updev
@@ -72,40 +87,14 @@ To try `updev` without changing your mise config:
 mise x github:webkaz-labs/updev -- updev version
 ```
 
-You can also download a release archive from
-[GitHub Releases](https://github.com/webkaz-labs/updev/releases), unpack it,
-and place `updev` on your `PATH`.
-
-macOS example:
-
-```bash
-version=$(curl --fail --location --silent --show-error \
-  https://api.github.com/repos/webkaz-labs/updev/releases/latest |
-  sed -nE 's/.*"tag_name": *"([^"]+)".*/\1/p')
-test -n "$version"
-case "$(uname -m)" in
-  arm64|aarch64) arch=arm64 ;;
-  x86_64) arch=amd64 ;;
-  *) echo "unsupported architecture: $(uname -m)" >&2; exit 1 ;;
-esac
-archive="updev_${version}_darwin_${arch}.tar.gz"
-base_url="https://github.com/webkaz-labs/updev/releases/download/${version}"
-curl --fail --location --output "$archive" \
-  "${base_url}/${archive}"
-curl --fail --location --output checksums.txt \
-  "${base_url}/checksums.txt"
-grep " ./${archive}$" checksums.txt | shasum -a 256 -c -
-tar -xzf "$archive"
-mkdir -p ~/.local/bin
-install -m 0755 "${archive%.tar.gz}/updev" ~/.local/bin/updev
-updev version
-```
-
 You can also install from source with Go:
 
 ```bash
 go install github.com/webkaz-labs/updev@latest
 ```
+
+Release archives and checksums are available on
+[GitHub Releases](https://github.com/webkaz-labs/updev/releases).
 
 ## Quick Start
 
