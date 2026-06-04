@@ -28,32 +28,39 @@ history in git log, and keep the current/next release target in
 
 ## Near-Term Order
 
-1. Ship `updev v0.6.0` as a Linux-first provider-general inventory slice:
+1. Ship `updev v0.5.5` as a mise age-policy diagnostics slice: detect
+   provider-native `minimum_release_age`, report it in dependency checks and
+   `updev fix mise`, and do not mutate mise config silently.
+2. Ship `updev v0.6.0` as the first updev-owned mise release-age gate, aligned
+   with the Homebrew gate vocabulary and JSON/text evidence model.
+3. Continue provider-general inventory after the mise gate work:
    cross-platform fixtures, Linux read-only scanners, provider promotion
    suggestions, and a Windows evidence spike that remains experimental until a
    real Windows runner or machine is available.
-2. Continue provider evidence quality with richer source URLs and ownership
+4. Continue provider evidence quality with richer source URLs and ownership
    confidence where provider metadata is cheap and reliable.
-3. Broaden Homebrew release-age and advisory confidence beyond GitHub
+5. Broaden Homebrew and mise release-age/advisory confidence beyond GitHub and
+   first registry paths.
+6. Broaden Homebrew release-age and advisory confidence beyond GitHub
    release/tag/ref URL paths.
-4. Add provider-native audit paths where package identity is reliable.
-5. Continue scanner hardening after OSV-Scanner, gitleaks, zizmor, Trivy, and
+7. Add provider-native audit paths where package identity is reliable.
+8. Continue scanner hardening after OSV-Scanner, gitleaks, zizmor, Trivy, and
    Grype. Keep Syft and Prowler explicit future commands, not default package
    update gates.
-6. Add provider contract drift checks for local and CI runs. These checks
+9. Add provider contract drift checks for local and CI runs. These checks
    should sample supported provider command shapes, detect upstream CLI/API or
    security-feed schema changes, mark affected provider versions unsupported
    when compatibility is unknown, and open/update documentation and GitHub
    issues for agent follow-up.
-7. Add pending-update gates for VS Code and future providers as their update
-   flows move into Go.
-8. Add policy ergonomics: guided add/edit/list helpers, diagnostic indexes, and
+10. Add pending-update gates for VS Code and future providers as their update
+   flows move into Go, using the same updev-owned gate vocabulary.
+11. Add policy ergonomics: guided add/edit/list helpers, diagnostic indexes, and
    shadowed-rule references.
-9. Keep agent-assisted review optional for ambiguous candidates.
-10. Keep Go CLI standard checks as part of future release reviews; direct
+12. Keep agent-assisted review optional for ambiguous candidates.
+13. Keep Go CLI standard checks as part of future release reviews; direct
    subprocess exceptions, JSON encoding, and verbosity policy are documented for
    the current tool surface.
-11. Maintain the macOS/Homebrew/mise public preview with installation docs,
+14. Maintain the macOS/Homebrew/mise public preview with installation docs,
     privacy boundaries, and explicit experimental status for Linux/Windows
     providers. Reserve `updev v1.0.0` for the first stable public contract after
     that scope is deliberately narrowed and documented.
@@ -67,6 +74,9 @@ history in git log, and keep the current/next release target in
 - Add a provider-compatibility ledger generated from local/CI contract checks:
   supported provider versions, last verified command/API shapes, failing
   versions, linked issues, and agent-ready remediation notes.
+- Converge every provider on the same updev-owned gate model: provider-native
+  safety settings are evidence, while updev reports consistent decisions,
+  confidence, remediation, and policy override hooks.
 - Publish `updev v1.0.0` only after the readiness checklist in
   [DESIGN.md](DESIGN.md#public-release-readiness) is satisfied.
 - Make manual-app and provider-generated reports agent-maintained only after
