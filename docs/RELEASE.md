@@ -180,7 +180,9 @@ The public preview should stay narrow and incremental:
    compatibility tests for exit codes, JSON shape, no-color/non-TTY output, and
    config parsing.
 3. **Distribution maintenance** keeps the mise GitHub backend install path,
-   release binaries, checksums, source install path, and release notes in sync.
+   release binaries, checksums, source install path, and
+   `docs/release-notes/<tag>.md` in sync. The tag workflow uses that note as
+   the GitHub Release body and updates existing release notes on reruns.
 4. **`updev v1.0.0`** is the first stable public release. Its stable promise is
    macOS-first package/tool orchestration for Homebrew, Brewfile-derived
    desired state, mise, focused security gates, inventory, sync,

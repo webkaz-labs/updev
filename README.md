@@ -113,7 +113,8 @@ go install github.com/webkaz-labs/updev@latest
 ```
 
 Release archives and checksums are available on
-[GitHub Releases](https://github.com/webkaz-labs/updev/releases).
+[GitHub Releases](https://github.com/webkaz-labs/updev/releases). Tag-specific
+release notes are kept in [`docs/release-notes`](docs/release-notes).
 
 ## Provider Assumptions
 
