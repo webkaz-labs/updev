@@ -89,6 +89,10 @@ UPDEV_VERSION="$(
   curl -fsSL https://api.github.com/repos/webkaz-labs/updev/releases/latest |
     sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p'
 )"
+if [ -z "$UPDEV_VERSION" ]; then
+  echo "could not resolve latest updev release" >&2
+  exit 1
+fi
 mise use -g "github:webkaz-labs/updev@${UPDEV_VERSION}"
 updev version
 ```
