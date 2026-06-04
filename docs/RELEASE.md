@@ -90,7 +90,9 @@ commands in local test plans, not as a permanent release log here.
 gap before broader provider expansion. The goal is not to add a full mise
 update gate yet; it is to detect and report whether mise's own
 `minimum_release_age` policy is active so `updev fix mise` and dependency
-diagnostics explain the safety posture consistently with Homebrew.
+diagnostics explain the safety posture consistently with Homebrew. It should
+also establish the source-of-truth model for agent-facing usage so future
+skills and CLI guidance do not duplicate stale command details.
 
 ### v0.5.5 Target Scope
 
@@ -104,11 +106,20 @@ diagnostics explain the safety posture consistently with Homebrew.
    it does not edit mise config automatically.
 4. **Docs and compatibility notes**: README, SECURITY, and CLI docs distinguish
    provider-native mise age policy from updev-owned update gates.
+5. **Agent guidance source of truth**: design and introduce the canonical
+   `docs/agent/` guidance tree for agent usage and updev development workflows.
+   README, future skills, and future `updev skill` output must reference or
+   embed this tree instead of carrying separate copies.
+6. **Agent-safe workflow guidance**: document that agents should start from
+   read-only commands such as `updev --dry-run`, `updev list --status
+   attention`, `updev security review`, and JSON/no-color outputs for scripts;
+   mutation remains explicit and user-directed.
 
 ### v0.5.5 Non-Goals
 
 - implementing an updev-owned mise release-age gate;
 - mutating mise config without an explicit future apply command;
+- adding autonomous agent mutation or automatic policy bypasses;
 - broad Linux/Windows package provider support.
 
 ## Next Minor: v0.6.0
@@ -129,17 +140,21 @@ can proceed after this safety model is explicit.
 3. **Provider-wide gate contract**: document the common fields every provider
    gate should expose: candidate identity, release date/age, min age, evidence,
    policy source, decision, confidence, and remediation.
-4. **Linux manual inventory scanner**: add read-only evidence from `.desktop`
+4. **Agent skill command**: add `updev skill`, `updev skill --full`, and
+   `updev help agent` after the `docs/agent/` source tree exists. These commands
+   should embed the canonical files and avoid duplicating command reference in
+   code.
+5. **Linux manual inventory scanner**: add read-only evidence from `.desktop`
    files, Flatpak, Snap, AppImage, and distro package metadata where cheap.
-5. **Cross-platform fixtures**: cover Linux and Windows-style evidence with fake
+6. **Cross-platform fixtures**: cover Linux and Windows-style evidence with fake
    runner / fixture tests so most implementation can proceed on macOS.
-6. **Windows scanner spike**: define registry / winget evidence mapping and keep
+7. **Windows scanner spike**: define registry / winget evidence mapping and keep
    it read-only; mark it experimental until a Windows runner or real machine
    dogfood exists.
-7. **Provider promotion parity**: map Linux/Windows manual app rows into the
+8. **Provider promotion parity**: map Linux/Windows manual app rows into the
    same plan/check action vocabulary without making broad package management a
    stable promise.
-8. **Evidence quality**: improve source URLs, ownership confidence, and
+9. **Evidence quality**: improve source URLs, ownership confidence, and
    provider-native metadata for manual/vendor decisions.
 
 ### v0.6.0 Non-Goals

@@ -17,6 +17,7 @@ validation, drift review, security policy, and reproducible manifests.
 | [ROADMAP.md](ROADMAP.md) | Current state and later release ordering. |
 | [RELEASE.md](RELEASE.md) | Active release scope, non-goals, blockers, and release-ready criteria. |
 | [EXTERNAL-MANAGEMENT.md](EXTERNAL-MANAGEMENT.md) | External/manual package and installer direction. |
+| `docs/agent/` | Planned source of truth for agent-facing usage, skill text, and CLI workflow recipes once agent guidance ships. |
 
 ## Design Scope
 
@@ -86,6 +87,35 @@ Stable JSON reports include `schema_version`. Report names include
 `syncReport`, `mutationReport`, `rollbackReport`, and `backendPlanReport`.
 Human text may evolve for usability; JSON field names and status meanings
 should remain stable once introduced.
+
+## Agent Guidance Design
+
+Agent-facing guidance is useful both for users who ask AI coding agents to run
+`updev` and for agents developing `updev` itself. It must not become another
+place where command semantics drift. Keep one canonical agent guidance tree and
+make every other surface reference or embed it:
+
+- `docs/agent/USAGE.md` is the planned canonical guide for agent workflows:
+  safe read-only entrypoints, mutation boundaries, exit-code handling, JSON
+  usage, security-gate behavior, and `updev list` as the primary review
+  surface.
+- `docs/agent/SKILL.md` is the planned installable skill artifact. It stays
+  short and procedural, and points to `updev help`, `updev help agent`, and
+  `docs/agent/USAGE.md` instead of duplicating full command reference.
+- `updev skill` should print the embedded `docs/agent/SKILL.md`; `updev skill
+  --full` should include the deeper usage guide. The CLI must embed these files
+  directly rather than carrying a second copy in Go strings.
+- README should only advertise that agent guidance exists and show the minimal
+  discovery commands. It should not duplicate the workflow recipes.
+- CLI flag and command details remain owned by live command help and
+  [CLI.md](CLI.md). Agent docs may name recommended commands, but should avoid
+  copying long flag tables.
+
+When command behavior, JSON shape, exit-code semantics, security-gate decisions,
+or mutation boundaries change, the release checklist must explicitly include
+the agent guidance tree. If a future generated check is added, it should verify
+that embedded skill output and repository files match so release artifacts do
+not drift from docs.
 
 ## Stable Release Readiness
 
