@@ -45,11 +45,15 @@ inventory does not hide current manifest drift.
 
 ## Config Files
 
-Normal persistent user settings live in:
+Normal persistent user settings are optional and live in:
 
 ```text
 ${XDG_CONFIG_HOME:-~/.config}/updev/config.toml
 ```
+
+When this file is missing, `updev` uses built-in defaults and should not create
+the file just to materialize those defaults. Write only non-default user
+choices.
 
 Security exception rules remain in:
 
@@ -57,35 +61,23 @@ Security exception rules remain in:
 ${XDG_CONFIG_HOME:-~/.config}/updev/security-policy.json
 ```
 
-Use TOML for normal policy and UI settings. Keep endpoint URLs, API tokens,
-test fixtures, and secrets in environment overrides rather than TOML.
+Use TOML for normal policy and UI settings that should persist. Keep endpoint
+URLs, API tokens, test fixtures, and secrets in environment overrides rather
+than TOML.
 
-Config surface:
+Example non-default config:
 
 ```toml
-[security.homebrew]
-min_release_age_days = 3
-min_tap_age_days = 30
-
-[security.vscode]
-min_install_count = 1000
-min_average_rating = 2.0
-min_extension_age_days = 14
-min_update_age_days = 3
-
 [providers]
-include_vscode = false
+include_vscode = true
 
 [update]
-security = "warn" # warn | strict | off
+security = "strict"
 
 [ui]
-language = "auto"
-interactive = "auto"
-progress = true
+language = "ja"
 
 [inventory]
-state_dir = "~/.local/state/updev/inventory"
 overrides = "~/.config/updev/inventory-overrides.toml"
 
 [[inventory.reports]]
