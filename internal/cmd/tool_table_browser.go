@@ -67,8 +67,8 @@ func tableBrowserLabels() reviewui.TableBrowserLabels {
 	return reviewui.TableBrowserLabels{
 		Labels: reviewLabels(),
 		ControlsHelp: tr(
-			"Up/Down/j/k move, PgUp/PgDn scroll, Enter/Space expand, / filter, m mouse, x clear, ? help, b/Backspace Back, q Exit",
-			"↑↓/j/k 移動、PgUp/PgDn スクロール、Enter/Space 展開、/ filter、m mouse、x 解除、? help、b/Backspace 戻る、q 終了",
+			"Up/Down/j/k move, PgUp/PgDn scroll, Enter/Space expand, a/1-9 action, / filter, m mouse, x clear, ? help, b/Backspace Back, q Exit",
+			"↑↓/j/k 移動、PgUp/PgDn スクロール、Enter/Space 展開、a/1-9 action、/ filter、m mouse、x 解除、? help、b/Backspace 戻る、q 終了",
 		),
 		NoRows:      tr("no matching rows", "該当する行はありません"),
 		FilterLabel: tr("filter:", "フィルター:"),

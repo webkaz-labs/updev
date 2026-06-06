@@ -14,6 +14,7 @@ type updevConfig struct {
 	Update    updevUpdateConfig
 	UI        updevUIConfig
 	Inventory updevInventoryConfig
+	Backends  updevBackendsConfig
 }
 
 type updevSecurityConfig struct {
@@ -61,6 +62,10 @@ type updevInventoryReportConfig struct {
 	Path      string
 }
 
+type updevBackendsConfig struct {
+	PreferenceOrder []string
+}
+
 func loadUpdevConfig() updevConfig {
 	path := updevConfigPath()
 	if path == "" {
@@ -91,7 +96,7 @@ func updevConfigPath() string {
 func parseUpdevConfigTOML(data string) updevConfig {
 	config := updevConfig{}
 	section := ""
-	scanner := bufio.NewScanner(strings.NewReader(data))
+	scanner := bufio.NewScanner(strings.NewReader(collapseTOMLMultilineArrays(data)))
 	for scanner.Scan() {
 		line := stripTOMLComment(strings.TrimSpace(scanner.Text()))
 		if line == "" {
@@ -170,6 +175,11 @@ func parseUpdevConfigTOML(data string) updevConfig {
 			case "overrides":
 				config.Inventory.Overrides = parseNonEmptyStringPtr(stringValue)
 			}
+		case "backends":
+			switch key {
+			case "preference_order":
+				config.Backends.PreferenceOrder = parseStringArray(value)
+			}
 		case "inventory.reports":
 			if len(config.Inventory.Reports) == 0 {
 				config.Inventory.Reports = append(config.Inventory.Reports, updevInventoryReportConfig{})
@@ -188,6 +198,34 @@ func parseUpdevConfigTOML(data string) updevConfig {
 		}
 	}
 	return config
+}
+
+func collapseTOMLMultilineArrays(data string) string {
+	lines := []string{}
+	var pending strings.Builder
+	for _, raw := range strings.Split(data, "\n") {
+		line := stripTOMLComment(strings.TrimSpace(raw))
+		if pending.Len() > 0 {
+			if line != "" {
+				pending.WriteByte(' ')
+				pending.WriteString(line)
+			}
+			if strings.Contains(line, "]") {
+				lines = append(lines, pending.String())
+				pending.Reset()
+			}
+			continue
+		}
+		if strings.Contains(line, "=") && strings.Contains(line, "[") && !strings.Contains(line, "]") {
+			pending.WriteString(line)
+			continue
+		}
+		lines = append(lines, raw)
+	}
+	if pending.Len() > 0 {
+		lines = append(lines, pending.String())
+	}
+	return strings.Join(lines, "\n")
 }
 
 func parseNonEmptyStringPtr(value string) *string {

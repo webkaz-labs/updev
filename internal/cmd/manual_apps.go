@@ -1,14 +1,19 @@
 package cmd
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"sort"
 	"strings"
+	"time"
 	"unicode"
 
 	"github.com/webkaz-labs/updev/internal/plan"
+	"github.com/webkaz-labs/updev/internal/reviewui"
+	"github.com/webkaz-labs/updev/internal/runner"
 )
 
 const manualProviderName = "manual"
@@ -59,6 +64,9 @@ func manualAppSections(root string, filters listOptions, inventoryItems []plan.I
 	for _, section := range sections {
 		rows := make([]toolRow, 0, len(section.Rows))
 		for _, row := range section.Rows {
+			if manualRowHiddenByDefault(section, row, filters) {
+				continue
+			}
 			if filters.status != "" && !toolRowStatusMatches(row.State, filters.status) {
 				continue
 			}
@@ -75,6 +83,13 @@ func manualAppSections(root string, filters listOptions, inventoryItems []plan.I
 	return out
 }
 
+func manualRowHiddenByDefault(section toolSection, row toolRow, filters listOptions) bool {
+	if section.Name != "manual/installed-apps" || row.State != "brew" {
+		return false
+	}
+	return filters.status == "" && filters.query == ""
+}
+
 func manualAppSectionsForInventoryCommand(root string) []toolSection {
 	return manualAppSections(root, listOptions{root: root, provider: manualProviderName}, manualCachedInventoryItems(root))
 }
@@ -82,9 +97,39 @@ func manualAppSectionsForInventoryCommand(root string) []toolSection {
 func manualCachedInventoryItems(root string) []plan.Item {
 	entry, ok := loadInventoryCache(root, inventoryCacheMaxAge, inventoryOptions{IncludeVSCode: false})
 	if !ok {
-		return nil
+		return manualLiveCaskInventoryItems(root, runner.Local{})
 	}
 	return entry.Report.Items
+}
+
+func manualLiveCaskInventoryItems(root string, local runner.Runner) []plan.Item {
+	if runtime.GOOS != "darwin" || !shouldUseHomeBrewfile(root) {
+		return nil
+	}
+	if _, err := local.LookPath("brew"); err != nil {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	result := local.Run(ctx, "brew", "list", "--cask", "-1")
+	if result.Err != nil {
+		return nil
+	}
+	items := []plan.Item{}
+	for _, line := range strings.Split(result.Stdout, "\n") {
+		name := strings.TrimSpace(line)
+		if name == "" {
+			continue
+		}
+		items = append(items, plan.Item{
+			Provider: "brew",
+			Kind:     "cask",
+			Name:     name,
+			Status:   plan.StatusExtra,
+			Live:     true,
+		})
+	}
+	return items
 }
 
 func manualCaskSections(items []plan.Item) []toolSection {
@@ -110,6 +155,9 @@ func manualCaskSections(items []plan.Item) []toolSection {
 			Name:   manualCaskDisplayName(item.Name),
 			State:  "brew",
 			Detail: strings.Join(details, "; "),
+			Actions: []reviewui.Action{
+				manualReviewRouteActionForTarget(manualCaskDisplayName(item.Name), "brew", "cask"),
+			},
 		})
 	}
 	if len(rows) == 0 {
@@ -222,12 +270,35 @@ func manualRowIdentityKeys(row toolRow) []string {
 	if masID := manualDetailValue(row.Detail, "mas_id"); masID != "" {
 		keys = append(keys, "mas:"+strings.ToLower(masID))
 	}
+	if path := manualDetailValue(row.Detail, "path"); path != "" {
+		for _, key := range manualAppPathKeys(path) {
+			if key != "" {
+				keys = append(keys, "name:"+key)
+			}
+		}
+	}
+	if cask := manualDetailValue(row.Detail, "cask"); cask != "" {
+		for _, key := range manualAppKeys(manualCaskDisplayName(cask)) {
+			if key != "" {
+				keys = append(keys, "name:"+key)
+			}
+		}
+	}
 	for _, key := range manualAppKeys(row.Name) {
 		if key != "" {
 			keys = append(keys, "name:"+key)
 		}
 	}
 	return keys
+}
+
+func manualAppPathKeys(path string) []string {
+	base := strings.TrimSpace(filepath.Base(filepath.Clean(path)))
+	base = strings.TrimSuffix(base, ".app")
+	if base == "" || base == "." || base == string(filepath.Separator) {
+		return nil
+	}
+	return manualAppKeys(base)
 }
 
 func mergeManualLiveRow(row *toolRow, live toolRow) {
@@ -349,6 +420,9 @@ func manualScannedAppSections(root string) []toolSection {
 			Version: app.Version,
 			State:   "installed",
 			Detail:  strings.Join(details, "; "),
+			Actions: []reviewui.Action{
+				manualReviewRouteActionForTarget(app.Name, manualProviderName, "app"),
+			},
 		})
 	}
 	return []toolSection{{

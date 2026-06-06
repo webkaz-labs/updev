@@ -10,23 +10,22 @@ stays an integer schema contract. `v0.x` releases are public preview releases;
 
 ## Current Release
 
-The current implemented release is `updev v0.5.6`. `updev version`,
+The current implemented release is `updev v0.5.7`. `updev version`,
 `updev --version`, and `updev -v` report this command contract.
 
-`updev v0.5.6` is a Japanese description-translation UX patch on the `v0.5.x`
-CLI scope. It keeps the main update workflow stable while letting Japanese
-TTY `updev` / `updev list` refresh cached `updev list` descriptions
-through the optional Codex CLI, exposing `[ui].description_translation` to
-choose `auto`, `manual`, or `off`, and reporting the optional Codex backend in
-dependency diagnostics. It builds on the `v0.5.5` mise diagnostics, agent
-guidance, and documentation source-of-truth patch.
+`updev v0.5.7` is the current dogfood UX/action polish patch on the `v0.5.x`
+CLI scope. It keeps the macOS/Homebrew/mise update workflow stable while
+improving the interactive dashboard, installed inventory, manual review plan,
+backend convergence, security review, and cached-report re-entry. It also
+includes the `v0.5.6` Japanese description-translation UX: Japanese TTY `updev`
+/ `updev list` can refresh cached list descriptions through the optional Codex
+CLI, `[ui].description_translation` can choose `auto`, `manual`, or `off`, and
+dependency diagnostics report the optional Codex backend.
 
-The `v0.5.x` polish gate is folded into this current release state: real TTY
-dogfood, override duplicate/update/list/remove ergonomics, plan detail text,
-vendor URL evidence, provider adoption evidence, provider/backend preference
-policy, backend convergence UX from `updev` / `updev list`, Japanese/human copy,
-and safe accept/edit/ignore write-flow smoke are complete. Keep regression
-commands in local test plans, not as a permanent release log here.
+The `v0.5.x` UX/action gate is still tracked in [UX.md](UX.md). Do not treat it
+as fully closed until the action-review checklist there is green in real TTY
+dogfood. Keep regression commands in local test plans, not as a permanent
+release log here.
 
 ### v0.5.x Scope
 
@@ -50,9 +49,11 @@ commands in local test plans, not as a permanent release log here.
 7. **Manual inventory plan/check**: `updev inventory plan --provider manual`
    and `check` group rows into `keep-manual`, `adopt-brew`, `adopt-mas`,
    `ignore-local`, `open-vendor`, and `needs-review`.
-8. **Main human entry point**: interactive `updev` defaults to the
-   manual plan when manual actions need review, but manual/vendor rows remain
-   outside the default package update table.
+8. **Main human entry point**: interactive `updev`, `updev list`, and
+   `updev last` are the human-facing TTY entry points; `--plain` and
+   `--format json` are the stable agent/script outputs. `updev` can still
+   route to the manual plan when manual actions need review, but manual/vendor
+   rows remain outside the default package update table.
 9. **Override write actions**: `updev inventory review --provider manual
    --action accept|edit|ignore --query <text>` appends exactly one selected
    override to the configured overrides TOML.
@@ -75,7 +76,6 @@ commands in local test plans, not as a permanent release log here.
     the optional Codex CLI, `[ui].description_translation` can switch between
     `auto`, `manual`, and `off`, missing Codex remains non-fatal, and
     `updev doctor dependencies` reports the optional backend.
-
 ### v0.5.x Non-Goals
 
 - automatic installation of paid, privileged, vendor-account, or
@@ -98,6 +98,86 @@ commands in local test plans, not as a permanent release log here.
 - `go mod verify`, `go vet ./...`, `go test ./...`, `go build ./...`, and
   `git diff --check` pass. Repository-local integration smoke checks may add
   extra gates before mirroring a release.
+
+## Current Patch: v0.5.7 Dogfood Polish
+
+`updev v0.5.7` is the active dogfood polish line. The detailed UX contract and
+remaining tracking checklist live in [UX.md](UX.md).
+
+### v0.5.7 Target Checklist
+
+- [x] **Action-rich detailed list**: detailed `updev list` / update views make
+  updated, deferred, held, skipped, errored, and review-needed rows visually
+  distinct, with collapsed badges for action count, update/defer counts,
+  security decision, release asset status, and backend applyability. Update
+  views include item-level updated/deferred rows in addition to provider log
+  rows, with enough expanded evidence to decide what changed and why.
+- [x] **Detail row actions foundation**: expanded rows can show numbered actions
+  and execute them from that context where a safe write path exists: security
+  allow/hold with default or custom reason/expiry, security allow plus provider
+  rerun, manual override accept/edit/ignore, cask/MAS/vendor evidence review,
+  safe backend rewrite, covered old mise-entry removal, and Brewfile ownership
+  removal when mise already owns the tool.
+- [x] **Manual plan operability after `updev`**: the post-`updev` manual review
+  plan must not feel like a dead-end Back-only screen. Rows that can be acted on
+  expose those actions clearly, and rows that are read-only explain the exact
+  next command or evidence needed.
+- [x] **Provider log formatting**: Homebrew and other provider stdout/stderr
+  keep meaningful newlines in expanded update/log detail instead of collapsing
+  into one wrapped paragraph.
+- [x] **Dashboard-in-dashboard actions**: the `updev` dashboard itself should be
+  an actionable detail view where feasible. Focused dashboard rows show their
+  `a/1`, `2`, ... action hints before expansion, while the footer selector stays
+  available for flows that cannot sensibly live inside dashboard rows.
+- [x] **Manual list brew/cask suppression**: `updev list --provider manual`
+  should not show Homebrew-managed GUI apps in the default Installed apps review
+  bucket. Homebrew cask evidence remains available through explicit status/query
+  filters.
+- [x] **Backend apply path**: backend convergence should not only show
+  suggestions. Safe mise backend rewrites and covered old-entry removals can be
+  applied from the `updev` / `updev list` detail browser after confirmation;
+  each row explains whether it is applyable or review-only. Brewfile ownership
+  removal is available only when the recommended mise entry already exists;
+  full brew-to-mise migration from a missing mise entry remains review-only.
+- [x] **Backend preference policy**: align default tiers with mise registry
+  acceptance guidance (`core`, `aqua`, `github`/`gitlab`, `conda`, then
+  language package backends), keep deprecated/legacy backends such as `ubi` and
+  `asdf` out of the default recommendation order, and add configurable
+  `[backends].preference_order` so future providers can be ranked without code
+  changes.
+- [x] **Backend GitHub coverage**: infer GitHub backend candidates from scalable
+  metadata sources, starting with Homebrew formula URLs and mise `cargo:` /
+  `npm:` package repository metadata. Known GitHub-backed tools such as `broot`
+  and `rtk` are dogfood fixtures, not one-off special cases.
+- [x] **Backend candidate evidence**: metadata-inferred `mise/github` moves are
+  review-only candidates, not direct recommendations. When `gh` is available,
+  latest-release asset names are sampled and matched against the current
+  OS/architecture; npm/cargo entries stay non-applyable until release assets,
+  version mapping, and official distribution ownership are verified. Japanese
+  TTY copy must label these rows as candidates. `cargo:` rows with missing or
+  non-matching release assets must explain that the local cargo build should be
+  kept until compatible binary release evidence exists.
+- [ ] **Hands-on TTY acceptance pass**: run the actual `updev` and `updev list`
+  interactive flows in a real terminal, not only renderer tests or non-TTY
+  output, and verify the three dogfood UX promises end to end: focused-row action
+  hints are visible before expansion, manual app rows can execute their safe
+  actions from details, and backend/security detail actions can be selected,
+  confirmed, and either applied or clearly rejected as review-only. When the
+  live report has no actionable security finding, use a fixture-backed cached
+  report via `updev last --section security` for the security
+  action confirmation smoke.
+
+The only remaining `v0.5.7` release gate is the real-terminal hands-on pass.
+Automated renderer tests and PTY smoke are useful regression checks, but they do
+not close this gate by themselves.
+
+### v0.5.7 Non-Goals
+
+- broad Linux/Windows provider implementation;
+- automatic vendor installer execution;
+- silent Brewfile removal after backend migration;
+- changing JSON reports to execute actions implicitly;
+- replacing the `v0.6.0` mise update gate scope.
 
 ## Next Minor: v0.6.0
 

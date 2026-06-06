@@ -31,7 +31,7 @@ type options struct {
 const (
 	usageExitCode = 64
 	toolName      = "updev"
-	toolVersion   = "v0.5.6"
+	toolVersion   = "v0.5.7"
 )
 
 type versionReport struct {
@@ -120,7 +120,7 @@ func Run(args []string) int {
 			return usageExitCode
 		}
 		return runLastReport(opts)
-	case "inventory", "list", "ls":
+	case "inventory", "list", "ls", "hub":
 		if command == "inventory" && len(args) > 0 && args[0] == "scan" {
 			opts, err := parseInventoryScanOptions(args[1:])
 			if err != nil {
@@ -165,6 +165,10 @@ func Run(args []string) int {
 			opts.title = "updev list --fast"
 		} else if normalizeListCommand(listCommand) == "list" {
 			opts.title = "updev list"
+		} else if command == "hub" {
+			opts.title = "updev hub"
+			opts.hub = true
+			opts.tui = true
 		}
 		return runList(opts)
 	case "", "status", "st", "check", "ck", "plan":
@@ -553,9 +557,22 @@ func truncate(text string, width int) string {
 func printUsage() {
 	fmt.Fprintln(os.Stderr, `Usage:
   updev [--config file] [--no-color] ...
-  updev                         # daily update workflow, then compact review dashboard
+
+Human interactive entry points:
+  updev                         # [interactive] update workflow, then dashboard on TTY
+  updev list                    # [interactive] installed inventory browser on TTY
+  updev hub                     # [interactive] full list menu selector on TTY
+  updev last                    # [interactive] reopen cached update dashboard on TTY
+
+Agent/script-safe output:
+  updev --plain                 # [scriptable] text update summary, never opens TUI
+  updev list --plain            # [scriptable] text inventory list, never opens TUI
+  updev last --plain            # [scriptable] cached text summary, never opens TUI
+  updev <command> --format json # [scriptable] machine-readable output, never opens TUI
+
+Commands:
   updev -h | --help             # help
-  updev update [--dry-run] [--security warn|strict|off] [--include-vscode] [--policy file] [--inventory fast|legacy] [--interactive|--no-interactive] [--format text|json]
+  updev update [--dry-run] [--security warn|strict|off] [--include-vscode] [--policy file] [--inventory fast|legacy] [--interactive|--no-interactive|--plain] [--format text|json]
   updev sync [--format text|json]
   updev add [--provider brew|mise] [--kind brew|cask|tap|vscode|tool] [--category work|personal] [--version version] <name>
   updev remove [--provider brew|mise] [--kind brew|cask|tap|vscode|tool] <name>
@@ -564,9 +581,9 @@ func printUsage() {
   updev fix mise [--dry-run|--apply] [--format text|json]
   updev backends <doctor|plan> [--format text|json]
   updev doctor dependencies [--format text|json]
-  updev list                    # Go rich list with descriptions/translations/cache
-  updev last [--section summary|updates|security|inventory|logs|full] [--details] [--format text|json]
-  updev inventory [--refresh] [--include-vscode] [--provider name] [--kind kind] [--status status] [--query text] [--limit n] [--details] [--interactive|--no-interactive] [--format text|json]
+  updev last [--section summary|updates|security|inventory|logs|full] [--details] [--interactive|--no-interactive|--plain] [--format text|json]
+  updev hub [inventory/list options]  # full menu selector for list views
+  updev inventory [--refresh] [--include-vscode] [--provider name] [--kind kind] [--status status] [--query text] [--limit n] [--details] [--interactive|--no-interactive|--plain] [--format text|json]
   updev inventory scan [--provider manual] [--format text|json]
   updev inventory plan [--provider manual] [--action action] [--query text] [--limit n] [--format text|json]
   updev inventory check [--provider manual] [--action action] [--query text] [--limit n] [--format text|json]
@@ -588,6 +605,13 @@ func printUsage() {
   updev --version | -v
   updev brewfile [--root path] <add|remove|has|check|sync> ...
   updev legacy <command> ...    # explicit escape hatch for Python legacy commands
+
+Notes:
+  TTY text output may open an interactive dashboard/browser unless --plain or --no-interactive is set.
+  Use --plain for stable human-readable logs and --format json for machine-readable output.
+  Global options: --config file, --no-color, --lang en|ja.
+  Configuration is optional; defaults are used when no updev.toml exists.
+  Exit codes: 0 ok, 1 error, 2 drift.
 
 Use "updev legacy <command>" only for explicitly named legacy comparison or
 compatibility paths.`)

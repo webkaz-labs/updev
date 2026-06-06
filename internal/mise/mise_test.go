@@ -77,6 +77,60 @@ experimental = false
 	}
 }
 
+func TestRenameToolPreservesSpecAndInlineComment(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, "dot_config", "mise")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "config.toml")
+	content := `[tools]
+"cargo:fd-find" = { version = "10.4.2", os = ["macos/x64"] } # keep condition
+
+[settings]
+experimental = false
+`
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	changed, err := RenameTool(root, "cargo:fd-find", "aqua:sharkdp/fd")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !changed || HasTool(root, "cargo:fd-find") || !HasTool(root, "aqua:sharkdp/fd") {
+		t.Fatalf("expected mise tool rename to update desired tools")
+	}
+	updated, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{`"aqua:sharkdp/fd" = { version = "10.4.2", os = ["macos/x64"] } # keep condition`, `[settings]`} {
+		if !strings.Contains(string(updated), want) {
+			t.Fatalf("expected renamed config to contain %q:\n%s", want, updated)
+		}
+	}
+	projectPath := filepath.Join(root, "mise.toml")
+	if err := os.WriteFile(projectPath, []byte(`[tools]
+"cargo:git-delta" = "0.19.2"
+`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	changed, err = RenameTool(root, "cargo:git-delta", "aqua:dandavison/delta")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !changed || HasTool(root, "cargo:git-delta") || !HasTool(root, "aqua:dandavison/delta") {
+		t.Fatalf("expected project-local mise tool rename to update desired tools")
+	}
+	projectUpdated, err := os.ReadFile(projectPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(projectUpdated), `"aqua:dandavison/delta" = "0.19.2"`) {
+		t.Fatalf("expected project-local rename, got %s", projectUpdated)
+	}
+}
+
 func TestAddToolRequiresPinnedVersion(t *testing.T) {
 	root := t.TempDir()
 	dir := filepath.Join(root, "dot_config", "mise")

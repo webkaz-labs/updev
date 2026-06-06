@@ -118,7 +118,11 @@ External installers need stronger gates than package-manager providers:
 
 `updev list --provider manual` remains the explicit manual-app view. The default
 inventory should not mix manual/vendor rows into package-manager rows unless
-the user chooses that view.
+the user chooses that view. Within the manual view, Homebrew cask-owned rows are
+used as reconciliation evidence but hidden by default. The tool may use fresh
+inventory cache or a short `brew list --cask -1` ownership probe for that
+reconciliation; explicit `--status brew` or query filters expose the evidence
+when the user is investigating ownership.
 
 Current read-only flows:
 
@@ -127,6 +131,11 @@ updev inventory scan --provider manual
 updev inventory review --provider manual
 updev inventory render --report manual-apps
 ```
+
+The interactive `updev` hub may present manual plan rows in an action-capable
+detail browser. Mutating choices must still call the same explicit review write
+path (`accept`, `edit`, or `ignore`) and ask for confirmation before writing
+overrides.
 
 Future gated flows:
 

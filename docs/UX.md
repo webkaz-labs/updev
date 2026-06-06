@@ -1,0 +1,207 @@
+# updev interactive UX contract
+
+This document defines the target interactive UX for `updev`, `updev list`, and
+cached report review. Keep release state in [RELEASE.md](RELEASE.md); keep this
+file as the behavior contract and tracking checklist for action-review UX.
+
+## UX Principle
+
+`updev` is an action review hub, not just a list viewer. After an update, a user
+should be able to answer three questions without leaving the TTY flow:
+
+1. What changed, stopped, or needs review?
+2. Why did it happen, and what evidence supports that state?
+3. What is the next safe action, and can it be run from the current context?
+
+`updev list` remains an installed inventory entry point, but it should still
+route a focused item to the relevant action domain when updev already knows that
+the item needs manual review, backend convergence, security review, or update
+evidence inspection.
+
+## Screen Model
+
+1. Bare `updev`
+   - Runs the update workflow.
+   - Ends in an interactive `updev update <status>` summary hub on TTY and
+     stays there until the user chooses a row action or exits.
+   - The first screen preserves the old compact summary content and table
+     layout: root/security/safety/update/report lines, update outcome, update
+     steps, security attention, inventory drift, and top inventory items.
+   - The compact summary's table headings and data rows become selectable.
+     Selecting update rows opens update details/logs, security rows open
+     security evidence, and inventory rows open inventory details.
+   - Manual review and backend convergence appear as additional review actions
+     after the preserved compact summary when they have work to do.
+   - On the update summary hub, `Enter`, `Space`, or `a` opens the focused
+     summary row. Domain detail browsers keep `Enter` / `Space` as
+     expand/collapse unless that screen explicitly says otherwise.
+   - Summary rows may execute final actions only when the row itself has
+     enough context; otherwise they route to the domain detail view.
+   - Back from a domain detail view returns to the update summary hub, not to
+     the old footer selector. Back from the summary hub exits the hub.
+2. `updev list`
+   - Opens the grouped installed inventory browser first on TTY.
+   - Back/Home from the top inventory browser opens the full selector menu so
+     manual app rows, backend convergence, cached update/security evidence, and
+     filter views are easy to switch to.
+   - `updev hub` opens that full selector menu directly when a user wants the
+     all-menu list of views and filters first.
+   - The installed inventory rows are primarily read-only.
+   - Rows should expose routing actions to the relevant action domain when a
+     matching manual/backend/security/update review context exists.
+   - Row routing actions preserve the focused item identity. Opening backend,
+     manual, update, or security review from an installed item shows the rows
+     for that item first and Back returns to the original inventory browser.
+3. Shared detail browser
+   - Is the primary review surface for all action domains.
+   - Collapsed rows show status, badges, concise summary, and action count.
+   - The focused row always shows `a/1`, `2`, ... action hints before expansion
+     when actions exist.
+   - Expanded rows separate detail, evidence, and actions.
+   - Write actions always require confirmation before changing local state.
+
+## Row Contract
+
+Every review row should expose these fields where evidence exists:
+
+- `status`: one of `updated`, `deferred`, `held`, `review`, `needs-review`,
+  `applyable`, `review-only`, `ok`, `error`, or the provider-native equivalent.
+- `summary`: one concise line that explains what the user should notice.
+- `detail`: what happened or what decision is being requested.
+- `evidence`: provider logs, versions, commands, source URLs, release assets,
+  policy source, review confidence, or scanner/advisory evidence.
+- `actions`: safe actions or routing actions.
+- `next`: if no direct action is safe, the next view or command to use and why.
+
+Rows without write actions must not feel like dead ends. They should explain why
+the action is unavailable and how to continue review.
+
+## Action Domains
+
+Manual app review actions:
+
+- `accept override`
+- `ignore local app`
+- `edit override`
+- `review cask`
+- `review App Store`
+- `open vendor`
+
+Backend convergence actions:
+
+- `rewrite mise backend`
+- `remove old mise backend`
+- `remove Brewfile ownership`
+- `open backend review`
+
+Metadata-inferred backend candidates such as `mise/github` remain review-only
+until release assets, version mapping, and official distribution ownership are
+verified.
+
+Security actions:
+
+- `allow 7 days`
+- `custom allow`
+- `allow and rerun provider`
+- `hold`
+- `open security review`
+
+Update/log actions:
+
+- `open update evidence`
+- `open security review` for held security steps
+- `open backend review` or `open manual review` when the update evidence points
+  to those domains
+
+Installed inventory actions:
+
+- Write actions are not executed directly from the installed inventory table.
+- Routing actions are allowed and expected: open manual review, backend review,
+  security review, or update evidence for the focused item.
+
+## Acceptance Contract
+
+The v0.5.x UX polish is complete only when these user-visible behaviors hold in
+the real TTY, not only in renderer tests:
+
+1. Update review clarity
+   - `updev --dry-run --interactive` opens the old compact summary as the
+     selectable first screen, not a replacement card/list view.
+   - The selectable summary still shows root/security/safety/update/report
+     lines plus the update, security, and inventory summary tables.
+   - Updated, deferred, held, skipped, errored, and review-needed rows are
+     visually distinct in collapsed detail rows.
+   - Focused rows with actions show `a/1`, `2`, ... hints before expansion.
+   - Expanded rows keep meaningful provider log newlines and show detail,
+     evidence, and actions as separate blocks.
+2. Manual app review operability
+   - The post-`updev` manual app review path is never a Back-only dead end.
+   - Manual rows with safe write paths expose accept, edit, or ignore actions
+     from details and require confirmation before writing.
+   - Cask, App Store, and vendor rows that cannot be safely written explain the
+     missing evidence or next command.
+3. In-dashboard action routing
+   - Summary table headings and rows route directly to update evidence, manual
+     app review, backend convergence, security review, installed inventory, or
+     logs where that row has enough context.
+   - `Enter` on a focused summary row follows the same primary action as
+     `a/1`, so the update result can be operated as a summary-first hub
+     without requiring action-key memorization.
+   - Footer selectors remain available only as a fallback for cross-domain or
+     filter flows that do not fit inside a single dashboard row; they must not
+     appear automatically after the dashboard summary.
+4. Installed inventory routing
+   - `updev list --interactive` remains an inventory browser, but rows route to
+     the relevant action domain when matching manual/backend/security/update
+     evidence exists.
+   - Routing is item-scoped: a backend action on `ripgrep` opens matching
+     backend findings for `ripgrep`, not the full backend list. Rows without
+     matching evidence do not show misleading domain actions.
+   - Default manual app inventory suppresses Homebrew-managed GUI apps while
+     keeping cask evidence available through explicit filters.
+5. Backend convergence safety
+   - Safe mise backend rewrites and covered old-entry removals can be applied
+     after confirmation from the detail browser.
+   - Metadata-inferred `mise/github` moves stay review-only until release asset,
+     version mapping, platform, and distribution ownership evidence are strong
+     enough to apply.
+
+## Tracking Checklist
+
+- [x] Shared table browser rows can carry TTY-only routing actions and expose
+  `a/1`, `2`, ... action hints like the detail browser.
+- [x] `updev list --interactive` brew/mise inventory rows can route to backend
+  convergence review instead of staying purely read-only.
+- [x] `updev list --interactive` manual evidence rows can route to manual app
+  review instead of staying purely read-only.
+- [x] `updev list --interactive` item rows expose routing actions when a focused
+  item matches security or update evidence.
+- [x] `updev list` starts with the installed inventory browser, while
+  `updev hub` opens the full view/filter selector menu directly.
+- [x] Installed inventory expanded rows show enough evidence to explain why a
+  routing action exists.
+- [x] Filtered `updev list --interactive` views propagate row routing actions
+  back to the list hub instead of swallowing them.
+- [x] Dashboard rows route to domain detail views without forcing users back to
+  a footer-only selector for common paths.
+- [x] Bare `updev` keeps the dashboard as the top hub; Back from child detail
+  views returns to the dashboard instead of opening the old selector.
+- [x] Domain detail rows with safe write actions can execute those actions via
+  `a/1`, `2`, ... after confirmation.
+- [x] Domain detail rows without safe write actions explain the missing evidence
+  or next command instead of appearing Back-only.
+- [x] Update detail rows distinguish updated, deferred, held, skipped, errored,
+  and review-needed states with status color and compact badges.
+- [x] Provider stdout/stderr keeps meaningful newlines in expanded details.
+- [x] Installed inventory row actions carry item identity and open item-scoped
+  manual/backend/update/security detail rows before returning to the inventory
+  browser.
+- [x] TTY dogfood covers `updev --dry-run --interactive`,
+  `updev list --interactive`, and `updev last --section security`.
+
+## Release Boundary
+
+The `v0.5.x` UX baseline is not complete until the tracking checklist above is
+green in real TTY dogfood. `v0.6.0` can start after the baseline is true and
+verified, because the mise update gate should build on the same action-review
+model instead of creating a separate flow.

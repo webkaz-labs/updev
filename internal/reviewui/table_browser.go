@@ -41,6 +41,7 @@ type TableBrowserModel struct {
 	Help                bool
 	MouseMode           MouseMode
 	pendingMouseRelease int
+	actionFocus         int
 	actions             BrowserActions
 	labels              TableBrowserLabels
 }
@@ -87,7 +88,7 @@ func NewTableBrowserModel(title string, sections []Section, state State, labels 
 	} else if state.Selected >= count {
 		state.Selected = count - 1
 	}
-	model := TableBrowserModel{Title: title, Sections: sections, State: state, Color: color, FilterInput: state.Query, MouseMode: MouseOff, pendingMouseRelease: -1, actions: fillActions(actions), labels: fillTableBrowserLabels(labels)}
+	model := TableBrowserModel{Title: title, Sections: sections, State: state, Color: color, FilterInput: state.Query, MouseMode: MouseOff, pendingMouseRelease: -1, actionFocus: -1, actions: fillActions(actions), labels: fillTableBrowserLabels(labels)}
 	model.refreshFilteredSections()
 	model.clampSelection()
 	return model
@@ -128,23 +129,34 @@ func (m TableBrowserModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.State.Action = m.actions.Home
 			return m, tea.Quit
 		case "up", "k":
-			m.move(-1)
+			m.moveFocus(-1)
 		case "down", "j":
-			m.move(1)
+			m.moveFocus(1)
 		case "pgup":
 			m.move(-m.visibleRowCapacity())
 		case "pgdown":
 			m.move(m.visibleRowCapacity())
 		case "home":
 			m.State.Selected = 0
+			m.actionFocus = -1
 			m.ensureSelectedVisible()
 		case "end":
 			if count := RowCount(m.Sections); count > 0 {
 				m.State.Selected = count - 1
+				m.actionFocus = -1
 				m.ensureSelectedVisible()
 			}
-		case "enter", " ":
+		case "enter":
+			if m.selectFocusedAction() {
+				return m, tea.Quit
+			}
 			m.toggleSelected()
+		case " ":
+			m.toggleSelected()
+		case "a":
+			if m.selectRowAction(0) {
+				return m, tea.Quit
+			}
 		case "/":
 			m.Filtering = true
 			m.FilterInput = m.State.Query
@@ -155,6 +167,12 @@ func (m TableBrowserModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.pendingMouseRelease = -1
 		case "x":
 			m.clearFilter()
+		default:
+			if index, ok := tableBrowserActionKeyIndex(msg.String()); ok {
+				if m.selectRowAction(index) {
+					return m, tea.Quit
+				}
+			}
 		}
 	case tea.WindowSizeMsg:
 		m.Height = msg.Height
@@ -172,6 +190,7 @@ func (m TableBrowserModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			m.State.Selected = msg.Index
+			m.actionFocus = -1
 			m.ensureSelectedVisible()
 			m.pendingMouseRelease = msg.Index
 		}
@@ -225,6 +244,7 @@ func (m *TableBrowserModel) applyFilterInput() {
 	m.State.Query = strings.TrimSpace(m.FilterInput)
 	m.State.Selected = 0
 	m.State.Offset = 0
+	m.actionFocus = -1
 	m.refreshFilteredSections()
 	m.clampSelection()
 }
@@ -246,6 +266,7 @@ func (m *TableBrowserModel) move(delta int) {
 		return
 	}
 	m.State.Selected += delta
+	m.actionFocus = -1
 	if m.State.Selected < 0 {
 		m.State.Selected = 0
 	}
@@ -253,6 +274,36 @@ func (m *TableBrowserModel) move(delta int) {
 		m.State.Selected = count - 1
 	}
 	m.ensureSelectedVisible()
+}
+
+func (m *TableBrowserModel) moveFocus(delta int) {
+	if delta == 0 {
+		return
+	}
+	row, ok := m.selectedRow()
+	actionCount := len(row.Actions)
+	if ok && m.State.Expanded[m.State.Selected] && actionCount > 0 {
+		if m.actionFocus < 0 && delta < 0 {
+			m.move(delta)
+			return
+		}
+		next := m.actionFocus + delta
+		if m.actionFocus < 0 && delta > 0 {
+			next = 0
+		}
+		if next >= 0 && next < actionCount {
+			m.actionFocus = next
+			m.ensureSelectedVisible()
+			return
+		}
+		if next < 0 {
+			m.actionFocus = -1
+			m.ensureSelectedVisible()
+			return
+		}
+		m.actionFocus = -1
+	}
+	m.move(delta)
 }
 
 func (m *TableBrowserModel) scroll(delta int) {
@@ -279,10 +330,63 @@ func (m *TableBrowserModel) toggleSelected() {
 		m.State.Expanded = map[int]bool{}
 	}
 	m.State.Expanded[m.State.Selected] = !m.State.Expanded[m.State.Selected]
+	if !m.State.Expanded[m.State.Selected] {
+		m.actionFocus = -1
+		m.ensureSelectedVisible()
+		return
+	}
+	row, ok := m.selectedRow()
+	if ok && len(row.Actions) > 0 {
+		m.actionFocus = 0
+	} else {
+		m.actionFocus = -1
+	}
+	m.ensureSelectedVisible()
 }
 
 func (m *TableBrowserModel) ToggleSelected() {
 	m.toggleSelected()
+}
+
+func (m *TableBrowserModel) selectRowAction(index int) bool {
+	row, ok := m.selectedRow()
+	if !ok || index < 0 || index >= len(row.Actions) || row.Actions[index].Value == "" {
+		return false
+	}
+	m.State.Action = row.Actions[index].Value
+	return true
+}
+
+func (m *TableBrowserModel) selectFocusedAction() bool {
+	row, ok := m.selectedRow()
+	if !ok || !m.State.Expanded[m.State.Selected] || m.actionFocus < 0 || m.actionFocus >= len(row.Actions) {
+		return false
+	}
+	return m.selectRowAction(m.actionFocus)
+}
+
+func (m TableBrowserModel) selectedRow() (Row, bool) {
+	target := m.State.Selected
+	if target < 0 {
+		return Row{}, false
+	}
+	index := 0
+	for _, section := range m.filteredSections() {
+		for _, row := range section.Rows {
+			if index == target {
+				return row, true
+			}
+			index++
+		}
+	}
+	return Row{}, false
+}
+
+func tableBrowserActionKeyIndex(value string) (int, bool) {
+	if len(value) != 1 || value[0] < '1' || value[0] > '9' {
+		return 0, false
+	}
+	return int(value[0] - '1'), true
 }
 
 func (m TableBrowserModel) View() tea.View {
@@ -294,7 +398,11 @@ func (m TableBrowserModel) View() tea.View {
 		fmt.Fprintf(&out, "%s %s\n", textui.StyleLabel(m.labels.FilterLabel, m.Color), m.FilterInput)
 		line = 5
 	}
-	fmt.Fprintf(&out, "%s %s\n\n", textui.StyleDim(m.positionText(), m.Color), textui.StyleDim("mouse="+string(m.MouseMode), m.Color))
+	fmt.Fprintf(&out, "%s %s\n", textui.StyleDim(m.positionText(), m.Color), textui.StyleDim("mouse="+string(m.MouseMode), m.Color))
+	if hint := m.selectedActionHint(); hint != "" {
+		fmt.Fprintf(&out, "%s\n", textui.StyleDim(hint, m.Color))
+	}
+	fmt.Fprintln(&out)
 	if m.Help {
 		for _, line := range m.labels.HelpLines {
 			fmt.Fprintf(&out, "  %s\n", line)
@@ -322,7 +430,7 @@ visible:
 			line++
 			renderedLines++
 		}
-		fmt.Fprintf(&out, "%s %s\n", textui.StyleHeading(section.Title, m.Color), textui.StyleCount(fmt.Sprintf("(%d)", len(section.Rows)), m.Color))
+		fmt.Fprintf(&out, "%s %s\n", textui.StyleSection(section.Title, m.Color), textui.StyleCount(fmt.Sprintf("(%d)", len(section.Rows)), m.Color))
 		line++
 		renderedLines++
 		hasWanted := HasWanted(section)
@@ -359,7 +467,11 @@ visible:
 			line++
 			renderedLines++
 			if m.State.Expanded[rowIndex] {
-				for _, expandedLine := range ExpandedLinesWithWidth(section.Rows[rowOffset], m.labels.Labels, m.expandedDetailWidth()) {
+				actionFocus := -1
+				if rowIndex == m.State.Selected {
+					actionFocus = m.actionFocus
+				}
+				for _, expandedLine := range ExpandedLinesWithWidthStyledFocus(section.Rows[rowOffset], m.labels.Labels, m.expandedDetailWidth(), m.Color, actionFocus) {
 					if renderedLines >= maxBodyLines {
 						break
 					}
@@ -421,6 +533,37 @@ visible:
 	return view
 }
 
+func (m TableBrowserModel) selectedActionHint() string {
+	row, ok := m.selectedRow()
+	if !ok || len(row.Actions) == 0 {
+		return ""
+	}
+	parts := make([]string, 0, len(row.Actions))
+	for index, action := range row.Actions {
+		if strings.TrimSpace(action.Label) == "" {
+			continue
+		}
+		key := fmt.Sprintf("%d", index+1)
+		if index == 0 {
+			key = "a/1"
+		}
+		parts = append(parts, key+"="+action.Label)
+		if len(parts) == 4 {
+			break
+		}
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	if len(row.Actions) > len(parts) {
+		parts = append(parts, fmt.Sprintf("+%d", len(row.Actions)-len(parts)))
+	}
+	if m.State.Expanded[m.State.Selected] {
+		return "expanded actions: ↑↓ select, Enter run; " + strings.Join(parts, ", ")
+	}
+	return "focused actions: " + strings.Join(parts, ", ")
+}
+
 func (m *TableBrowserModel) ensureSelectedVisible() {
 	capacity := m.visibleRowCapacity()
 	if capacity <= 0 {
@@ -444,7 +587,7 @@ func (m *TableBrowserModel) ensureSelectedVisible() {
 	}
 	sections := m.filteredSections()
 	for attempts := 0; attempts <= m.filteredRowCount(); attempts++ {
-		if TableVisibleRowsWithWidth(sections, m.State.Offset, m.visibleBodyLines(), m.State.Expanded, m.expandedDetailWidth())[m.State.Selected] {
+		if TableRowBlockVisibleWithWidth(sections, m.State.Offset, m.visibleBodyLines(), m.State.Expanded, m.expandedDetailWidth(), m.State.Selected, m.labels.Labels) {
 			return
 		}
 		if m.State.Selected < m.State.Offset {
@@ -461,6 +604,57 @@ func (m *TableBrowserModel) ensureSelectedVisible() {
 		}
 		return
 	}
+}
+
+func TableRowBlockVisibleWithWidth(sections []Section, offset int, maxBodyLines int, expanded map[int]bool, width int, selected int, labels Labels) bool {
+	if maxBodyLines <= 0 || selected < 0 {
+		return false
+	}
+	renderedLines := 0
+	rowIndex := 0
+	for sectionIndex, section := range sections {
+		sectionStart := rowIndex
+		sectionEnd := sectionStart + len(section.Rows)
+		if sectionEnd <= offset {
+			rowIndex = sectionEnd
+			continue
+		}
+		if sectionIndex > 0 && renderedLines > 0 {
+			renderedLines++
+			if renderedLines >= maxBodyLines {
+				return false
+			}
+		}
+		renderedLines += 2
+		if renderedLines >= maxBodyLines {
+			return false
+		}
+		windowStart := 0
+		if offset > sectionStart {
+			windowStart = offset - sectionStart
+		}
+		rowIndex = sectionStart + windowStart
+		for rowOffset := windowStart; rowOffset < len(section.Rows); rowOffset++ {
+			if rowIndex < offset {
+				rowIndex++
+				continue
+			}
+			if renderedLines >= maxBodyLines {
+				return false
+			}
+			rowLines := 1
+			if expanded[rowIndex] {
+				rowLines += len(ExpandedLinesWithWidth(section.Rows[rowOffset], labels, width))
+			}
+			if rowIndex == selected {
+				return renderedLines+rowLines <= maxBodyLines
+			}
+			renderedLines += rowLines
+			rowIndex++
+		}
+		rowIndex = sectionEnd
+	}
+	return false
 }
 
 func TableVisibleRows(sections []Section, offset int, maxBodyLines int, expanded map[int]bool, labels ...Labels) map[int]bool {
@@ -630,7 +824,7 @@ func fillActions(actions BrowserActions) BrowserActions {
 func fillTableBrowserLabels(labels TableBrowserLabels) TableBrowserLabels {
 	labels.Labels = fillLabels(labels.Labels)
 	if labels.ControlsHelp == "" {
-		labels.ControlsHelp = "Up/Down/j/k move, PgUp/PgDn scroll, Enter/Space expand, / filter, m mouse, x clear, ? help, b/Backspace Back, q Exit"
+		labels.ControlsHelp = "Up/Down/j/k move, PgUp/PgDn scroll, Enter/Space expand, a/1-9 action, / filter, m mouse, x clear, ? help, b/Backspace Back, q Exit"
 	}
 	if labels.NoRows == "" {
 		labels.NoRows = "no matching rows"

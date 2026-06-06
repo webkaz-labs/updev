@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -79,6 +80,20 @@ func (fake *fakeCommandRunner) RunStreaming(ctx context.Context, stdout io.Write
 	return result
 }
 
+func testBackendCompatibleAssetName(prefix string) string {
+	osName := runtime.GOOS
+	switch osName {
+	case "darwin":
+		osName = "darwin"
+	}
+	archName := runtime.GOARCH
+	switch archName {
+	case "amd64":
+		archName = "x86_64"
+	}
+	return prefix + "-" + osName + "-" + archName + ".tar.gz"
+}
+
 type deadlineRecordingRunner struct {
 	calls       int
 	sawDeadline bool
@@ -129,7 +144,7 @@ func TestBuildVersionReport(t *testing.T) {
 	if report.SchemaVersion != 1 || report.Tool != toolName || report.Version != toolVersion {
 		t.Fatalf("unexpected version report: %#v", report)
 	}
-	if report.Major != 0 || report.Minor != 5 || report.Patch != 6 || report.Contract != "pre_stable" {
+	if report.Major != 0 || report.Minor != 5 || report.Patch != 7 || report.Contract != "pre_stable" {
 		t.Fatalf("unexpected version semantics: %#v", report)
 	}
 }
@@ -236,18 +251,32 @@ func TestParseUpdateOptionsInteractiveFlags(t *testing.T) {
 	if !opts.tui || !opts.noTUI {
 		t.Fatalf("expected interactive flags, got %+v", opts)
 	}
-}
-
-func TestParseLastReportOptions(t *testing.T) {
-	opts, err := parseLastReportOptions([]string{"--section", "inventory", "--provider", "brew", "--status", "attention", "--query", "jq", "--details", "--format", "json"})
+	opts, err = parseUpdateOptions([]string{"--plain"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if opts.section != "inventory" || opts.provider != "brew" || opts.status != "attention" || opts.query != "jq" || !opts.details || opts.format != "json" {
+	if opts.format != "text" || !opts.noTUI {
+		t.Fatalf("expected --plain to force text and disable TUI, got %+v", opts)
+	}
+}
+
+func TestParseLastReportOptions(t *testing.T) {
+	opts, err := parseLastReportOptions([]string{"--section", "inventory", "--provider", "brew", "--status", "attention", "--query", "jq", "--details", "--interactive", "--no-interactive", "--format", "json"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if opts.section != "inventory" || opts.provider != "brew" || opts.status != "attention" || opts.query != "jq" || !opts.details || !opts.tui || !opts.noTUI || opts.format != "json" {
 		t.Fatalf("unexpected options: %+v", opts)
 	}
 	if _, err := parseLastReportOptions([]string{"--section", "unknown"}); err == nil {
 		t.Fatal("expected unsupported section to fail")
+	}
+	opts, err = parseLastReportOptions([]string{"--plain"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if opts.format != "text" || !opts.noTUI {
+		t.Fatalf("expected --plain to force text and disable TUI, got %+v", opts)
 	}
 }
 
@@ -262,6 +291,13 @@ func TestParseListOptionsDetailsAndLimit(t *testing.T) {
 	if _, err := parseListOptions([]string{"--limit", "-1"}); err == nil {
 		t.Fatal("expected negative limit to fail")
 	}
+	opts, err = parseListOptions([]string{"--plain"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if opts.format != "text" || !opts.noTUI {
+		t.Fatalf("expected --plain to force text and disable TUI, got %+v", opts)
+	}
 }
 
 func TestParseReadOnlyOptionsRefreshAndVSCode(t *testing.T) {
@@ -274,15 +310,15 @@ func TestParseReadOnlyOptionsRefreshAndVSCode(t *testing.T) {
 	}
 }
 
-func TestShouldRunInteractiveRequiresTextAndTTYUnlessForced(t *testing.T) {
+func TestShouldRunInteractiveRequiresTextAndTTY(t *testing.T) {
 	if shouldRunUpdevInteractive(strings.NewReader(""), &bytes.Buffer{}, "text", false, false) {
 		t.Fatal("expected non-TTY to skip interactive mode")
 	}
 	if shouldRunUpdevInteractive(strings.NewReader(""), &bytes.Buffer{}, "json", true, false) {
 		t.Fatal("expected JSON to skip interactive mode even when forced")
 	}
-	if !shouldRunUpdevInteractive(strings.NewReader(""), &bytes.Buffer{}, "text", true, false) {
-		t.Fatal("expected forced text mode to allow interactive selector")
+	if shouldRunUpdevInteractive(strings.NewReader(""), &bytes.Buffer{}, "text", true, false) {
+		t.Fatal("expected explicit interactive mode to still require a TTY")
 	}
 	if shouldRunUpdevInteractive(strings.NewReader(""), &bytes.Buffer{}, "text", true, true) {
 		t.Fatal("expected disabled interactive mode to win over force")
@@ -291,8 +327,8 @@ func TestShouldRunInteractiveRequiresTextAndTTYUnlessForced(t *testing.T) {
 	if shouldRunUpdevInteractive(strings.NewReader(""), &bytes.Buffer{}, "text", false, false) {
 		t.Fatal("expected CI to skip automatic interactive mode")
 	}
-	if !shouldRunUpdevInteractive(strings.NewReader(""), &bytes.Buffer{}, "text", true, false) {
-		t.Fatal("expected force to win over CI for explicit interactive mode")
+	if shouldRunUpdevInteractive(strings.NewReader(""), &bytes.Buffer{}, "text", true, false) {
+		t.Fatal("expected explicit interactive mode in CI to still require a TTY")
 	}
 }
 
@@ -303,17 +339,61 @@ func TestShouldRunListHubSkipsExplicitFocusedOutput(t *testing.T) {
 	if shouldRunListHub(listOptions{format: "text", category: "runtime"}, strings.NewReader(""), &bytes.Buffer{}) {
 		t.Fatal("expected explicit category filter to skip automatic list hub")
 	}
-	if !shouldRunListHub(listOptions{format: "text", tui: true}, strings.NewReader(""), &bytes.Buffer{}) {
-		t.Fatal("expected forced interactive list to run without focused filters")
+	if shouldRunListHub(listOptions{format: "text", tui: true}, strings.NewReader(""), &bytes.Buffer{}) {
+		t.Fatal("expected explicit interactive list to still require a TTY")
 	}
-	if !shouldRunListHub(listOptions{format: "text", tui: true, provider: "brew"}, strings.NewReader(""), &bytes.Buffer{}) {
-		t.Fatal("expected --interactive to override focused filter suppression")
+	if shouldRunListHub(listOptions{format: "text", tui: true, provider: "brew"}, strings.NewReader(""), &bytes.Buffer{}) {
+		t.Fatal("expected explicit interactive list with filter to still require a TTY")
 	}
 	if shouldRunUpdateHub(updateOptions{format: "text", tui: true, noTUI: true}, strings.NewReader(""), &bytes.Buffer{}) {
 		t.Fatal("expected no-interactive to disable update hub")
 	}
 	if shouldRunUpdateHub(updateOptions{format: "text", inventory: "legacy", tui: true}, strings.NewReader(""), &bytes.Buffer{}) {
 		t.Fatal("expected legacy inventory comparison to skip update hub")
+	}
+	if shouldRunLastReportHub(lastReportOptions{format: "text"}, strings.NewReader(""), &bytes.Buffer{}) {
+		t.Fatal("expected automatic last report hub to still require a TTY")
+	}
+	if shouldRunLastReportHub(lastReportOptions{format: "text", tui: true}, strings.NewReader(""), &bytes.Buffer{}) {
+		t.Fatal("expected explicit interactive last report to still require a TTY")
+	}
+	if shouldRunLastReportHub(lastReportOptions{format: "json", tui: true}, strings.NewReader(""), &bytes.Buffer{}) {
+		t.Fatal("expected JSON last report to skip interactive hub")
+	}
+	if shouldRunLastReportHub(lastReportOptions{format: "text", tui: true, noTUI: true}, strings.NewReader(""), &bytes.Buffer{}) {
+		t.Fatal("expected no-interactive to disable last report hub")
+	}
+}
+
+func TestLastReportHubDefaultAction(t *testing.T) {
+	tests := map[string]string{
+		"updates":   updateHubActionUpdatesFilter,
+		"security":  updateHubActionSecurity,
+		"inventory": updateHubActionInventoryAll,
+		"logs":      updateHubActionLogs,
+		"full":      updateHubActionFull,
+		"summary":   "",
+	}
+	for section, want := range tests {
+		if got := lastReportHubDefaultAction(section); got != want {
+			t.Fatalf("section %q default action = %q, want %q", section, got, want)
+		}
+	}
+}
+
+func TestUpdateHubActionAvailable(t *testing.T) {
+	choices := []updevChoice{
+		{Value: updateHubActionInventoryAll},
+		{Value: updateHubActionSecurity},
+	}
+	if !updateHubActionAvailable(updateHubActionSecurity, choices) {
+		t.Fatal("expected available action to be accepted")
+	}
+	if updateHubActionAvailable(updateHubActionBackends, choices) {
+		t.Fatal("expected unavailable action to be rejected")
+	}
+	if updateHubActionAvailable("", choices) {
+		t.Fatal("expected empty action to be rejected")
 	}
 }
 
@@ -847,6 +927,7 @@ func TestRollbackReportRestoresLatestSnapshot(t *testing.T) {
 }
 
 func TestBackendPlanReportsReadOnlyConvergenceFindings(t *testing.T) {
+	compatibleAsset := testBackendCompatibleAssetName("demo")
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	if err := os.WriteFile(filepath.Join(home, "Brewfile"), []byte(`brew "git"
@@ -855,6 +936,7 @@ func TestBackendPlanReportsReadOnlyConvergenceFindings(t *testing.T) {
 	}
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "Brewfile.tmpl"), []byte(`brew "ripgrep"
+brew "rtk"
 brew "git"
 `), 0o600); err != nil {
 		t.Fatal(err)
@@ -867,13 +949,37 @@ brew "git"
 ripgrep = "15.1.0"
 "cargo:fd-find" = { version = "10.4.2", os = ["macos/x64"] }
 "aqua:sharkdp/fd" = { version = "10.4.2", os = ["macos/arm64", "linux"] }
+"cargo:git-delta" = { version = "0.19.2", os = ["macos/x64"] }
+"aqua:dandavison/delta" = { version = "0.19.2", os = ["macos/x64", "linux"] }
+"cargo:broot" = "1.56.4"
+"cargo:demo-tool" = "0.1.0"
+"cargo:local-build" = "0.2.0"
+"npm:@scope/demo-cli" = "2.0.0"
 `), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	fake := &fakeCommandRunner{paths: map[string]error{
-		"rg": nil,
-		"fd": fmt.Errorf("missing"),
-	}}
+	fake := &fakeCommandRunner{
+		paths: map[string]error{
+			"rg":          nil,
+			"rtk":         nil,
+			"fd":          fmt.Errorf("missing"),
+			"delta":       nil,
+			"demo-tool":   nil,
+			"local-build": nil,
+			"demo-cli":    nil,
+		},
+		results: map[string]runner.Result{
+			"brew\x00info\x00--json=v2\x00git\x00rtk":                                          {Stdout: `{"formulae":[{"name":"rtk","urls":{"stable":{"url":"https://github.com/rtk-ai/rtk/archive/refs/tags/v0.42.1.tar.gz"},"head":{"url":"https://github.com/rtk-ai/rtk.git"}}}],"casks":[]}`},
+			"cargo\x00info\x00demo-tool":                                                       {Stdout: "demo-tool # CLI\nrepository: https://github.com/example/demo-tool\n"},
+			"cargo\x00info\x00local-build":                                                     {Stdout: "local-build # CLI\nrepository: https://github.com/example/local-build\n"},
+			"npm\x00view\x00@scope/demo-cli\x00repository\x00homepage\x00--json":               {Stdout: `{"repository":{"url":"git+https://github.com/example/demo-cli.git"},"homepage":"https://example.com"}`},
+			"gh\x00api\x00repos/Canop/broot/releases/latest\x00--jq\x00.assets[].name":         {Stdout: compatibleAsset},
+			"gh\x00api\x00repos/rtk-ai/rtk/releases/latest\x00--jq\x00.assets[].name":          {Stdout: compatibleAsset},
+			"gh\x00api\x00repos/example/demo-tool/releases/latest\x00--jq\x00.assets[].name":   {Stdout: compatibleAsset},
+			"gh\x00api\x00repos/example/local-build/releases/latest\x00--jq\x00.assets[].name": {},
+			"gh\x00api\x00repos/example/demo-cli/releases/latest\x00--jq\x00.assets[].name":    {Stdout: compatibleAsset},
+		},
+	}
 	report := buildBackendPlanReportWithRunner(context.Background(), backendOptions{command: "plan", root: root}, fake)
 	if report.SchemaVersion != backendPlanReportSchemaVersion || report.Status != plan.StatusDrift {
 		t.Fatalf("expected drift backend plan report, got %#v", report)
@@ -886,18 +992,127 @@ ripgrep = "15.1.0"
 			if finding.CommandStatus != "on-path" || !containsString(finding.CommandNames, "rg") || finding.RecommendedTier != "mise/core" || finding.PreferenceRank != 1 {
 				t.Fatalf("expected ripgrep command verification, got %#v", finding)
 			}
+		case "rtk":
+			if finding.Type != "homebrew-to-mise-candidate" || finding.RecommendedName != "github:rtk-ai/rtk" || finding.RecommendedTier != "mise/github" || finding.PreferenceRank != 3 || finding.CommandStatus != "on-path" || finding.RecommendationKind != "candidate" || finding.ReleaseAssetStatus != "compatible" {
+				t.Fatalf("expected rtk GitHub backend candidate from Homebrew metadata with platform evidence, got %#v", finding)
+			}
 		case "cargo:fd-find":
 			if finding.CommandStatus != "missing" || !containsString(finding.CurrentOS, "macos/x64") || !containsString(finding.RecommendedOS, "macos/arm64") || finding.RecommendedTier != "mise/aqua" || finding.PreferenceRank != 2 {
 				t.Fatalf("expected fd command and OS-condition evidence, got %#v", finding)
 			}
+		case "cargo:git-delta":
+			if finding.RecommendedName != "aqua:dandavison/delta" || !finding.RewriteAllowed || !containsString(finding.CurrentOS, "macos/x64") || !containsString(finding.RecommendedOS, "macos/x64") {
+				t.Fatalf("expected delta recommendation to be safely removable with covered OS evidence, got %#v", finding)
+			}
+		case "cargo:broot":
+			if finding.RecommendedName != "github:Canop/broot" || finding.RecommendedTier != "mise/github" || finding.PreferenceRank != 3 {
+				t.Fatalf("expected broot GitHub backend recommendation, got %#v", finding)
+			}
+		case "cargo:demo-tool":
+			if finding.Type != "mise-backend-candidate" || finding.RecommendedName != "github:example/demo-tool" || finding.RecommendedTier != "mise/github" || finding.PreferenceRank != 3 || finding.RecommendationKind != "candidate" || finding.ReleaseAssetStatus != "compatible" || !containsString(finding.ReleaseAssetMatches, compatibleAsset) {
+				t.Fatalf("expected cargo metadata GitHub backend candidate with platform evidence, got %#v", finding)
+			}
+		case "cargo:local-build":
+			if finding.Type != "mise-backend-candidate" || finding.RecommendedName != "github:example/local-build" || finding.ReleaseAssetStatus != "no-assets" || finding.Confidence != "low" || !strings.Contains(finding.Action, "local cargo build") {
+				t.Fatalf("expected cargo metadata candidate without assets to preserve local build, got %#v", finding)
+			}
+		case "npm:@scope/demo-cli":
+			if finding.Type != "mise-backend-candidate" || finding.RecommendedName != "github:example/demo-cli" || finding.RecommendedTier != "mise/github" || finding.PreferenceRank != 3 || !containsString(finding.CommandNames, "demo-cli") || finding.RecommendationKind != "candidate" || finding.ReleaseAssetStatus != "compatible" {
+				t.Fatalf("expected npm metadata GitHub backend candidate with platform evidence, got %#v", finding)
+			}
 		}
 	}
-	if !types["homebrew-to-mise"] || !types["mise-backend-rewrite"] {
+	if !types["homebrew-to-mise"] || !types["homebrew-to-mise-candidate"] || !types["mise-backend-rewrite"] || !types["mise-backend-candidate"] {
 		t.Fatalf("expected brew and mise convergence findings, got %#v", report.Findings)
 	}
 	rows := backendDetailRows(report)
-	if len(rows) != len(report.Findings) || !strings.Contains(strings.Join(rows[0].Metadata, " "), "command status:") || !strings.Contains(strings.Join(rows[0].Metadata, " "), "preference:") {
+	if len(rows) != len(report.Findings) || !strings.Contains(strings.Join(rows[0].Metadata, " "), "command status:") || !strings.Contains(strings.Join(rows[0].Metadata, " "), "preference:") || !strings.Contains(strings.Join(rows[0].Metadata, " "), "recommendation kind:") {
 		t.Fatalf("expected backend detail rows to expose command evidence, got %#v", rows)
+	}
+	sections := backendToolSections(report)
+	sectionTitles := []string{}
+	for _, section := range sections {
+		sectionTitles = append(sectionTitles, section.Title)
+	}
+	for _, want := range []string{"backend / homebrew-to-mise", "backend / mise-backend-rewrite", "backend / mise-backend-candidate"} {
+		if !containsString(sectionTitles, want) {
+			t.Fatalf("expected backend grouped table sections to include %q, got %#v", want, sectionTitles)
+		}
+	}
+	actionRows := map[string]detailBrowserRow{}
+	for _, row := range rows {
+		actionRows[row.Title] = row
+	}
+	if len(actionRows["cargo:broot -> github:Canop/broot"].Actions) != 1 {
+		t.Fatalf("expected simple mise rewrite to expose an action, got %#v", actionRows["cargo:broot -> github:Canop/broot"].Actions)
+	}
+	if len(actionRows["cargo:git-delta -> aqua:dandavison/delta"].Actions) != 1 || !strings.Contains(actionRows["cargo:git-delta -> aqua:dandavison/delta"].Actions[0].Value, "remove-mise") {
+		t.Fatalf("expected covered duplicate backend to expose remove action, got %#v", actionRows["cargo:git-delta -> aqua:dandavison/delta"].Actions)
+	}
+	if len(actionRows["ripgrep -> ripgrep"].Actions) != 1 || !strings.Contains(actionRows["ripgrep -> ripgrep"].Actions[0].Value, "remove-brew") {
+		t.Fatalf("expected duplicated Homebrew/mise ownership to expose Brewfile removal action, got %#v", actionRows["ripgrep -> ripgrep"].Actions)
+	}
+	if len(actionRows["cargo:demo-tool -> github:example/demo-tool"].Actions) != 0 {
+		t.Fatalf("expected metadata-inferred rewrite to remain review-only, got %#v", actionRows["cargo:demo-tool -> github:example/demo-tool"].Actions)
+	}
+	if len(actionRows["cargo:fd-find -> aqua:sharkdp/fd"].Actions) != 0 {
+		t.Fatalf("expected already-desired rewrite to remain review-only, got %#v", actionRows["cargo:fd-find -> aqua:sharkdp/fd"].Actions)
+	}
+	if !strings.Contains(strings.Join(actionRows["cargo:fd-find -> aqua:sharkdp/fd"].Metadata, " "), "review-only") {
+		t.Fatalf("expected uncovered OS conditions to explain review-only applyability, got %#v", actionRows["cargo:fd-find -> aqua:sharkdp/fd"].Metadata)
+	}
+	if action, current, recommended, ok := parseBackendDetailAction(actionRows["cargo:broot -> github:Canop/broot"].Actions[0].Value); !ok || action != "rewrite-mise" || current != "cargo:broot" || recommended != "github:Canop/broot" {
+		t.Fatalf("unexpected backend action parse: action=%q current=%q recommended=%q ok=%v", action, current, recommended, ok)
+	}
+	if action, current, recommended, ok := parseBackendDetailAction(actionRows["cargo:git-delta -> aqua:dandavison/delta"].Actions[0].Value); !ok || action != "remove-mise" || current != "cargo:git-delta" || recommended != "aqua:dandavison/delta" {
+		t.Fatalf("unexpected backend remove action parse: action=%q current=%q recommended=%q ok=%v", action, current, recommended, ok)
+	}
+	if action, current, recommended, ok := parseBackendDetailAction(actionRows["ripgrep -> ripgrep"].Actions[0].Value); !ok || action != "remove-brew" || current != "brew:ripgrep" || recommended != "ripgrep" {
+		t.Fatalf("unexpected backend Brewfile removal action parse: action=%q current=%q recommended=%q ok=%v", action, current, recommended, ok)
+	}
+}
+
+func TestBackendPreferenceTiersHonorConfiguredOrder(t *testing.T) {
+	config := updevConfig{Backends: updevBackendsConfig{PreferenceOrder: []string{"store/native", "mise/github", "linux/apt"}}}
+	tiers := backendPreferenceTiersWithConfig(config)
+	if len(tiers) < 5 {
+		t.Fatalf("expected configured and default tiers, got %#v", tiers)
+	}
+	for index, tier := range tiers {
+		if tier.Rank != index+1 {
+			t.Fatalf("expected ranks to be recomputed, got %#v", tiers)
+		}
+	}
+	if tiers[0].Label != "store/native" || tiers[0].Provider != "mas" {
+		t.Fatalf("expected store/native first with default provider mapping, got %#v", tiers[0])
+	}
+	if tiers[1].Label != "mise/github" || tiers[1].Provider != "mise" || tiers[1].Backend != "github" {
+		t.Fatalf("expected mise/github second, got %#v", tiers[1])
+	}
+	if tiers[2].Label != "linux/apt" || tiers[2].Provider != "linux" || tiers[2].Backend != "apt" {
+		t.Fatalf("expected unknown provider/backend label to be preserved, got %#v", tiers[2])
+	}
+	if tiers[3].Label != "mise/core" {
+		t.Fatalf("expected unspecified defaults to remain after configured tiers, got %#v", tiers[:5])
+	}
+}
+
+func TestBackendPreferenceTiersExcludeDeprecatedMiseBackendsByDefault(t *testing.T) {
+	t.Setenv("UPDEV_CONFIG", filepath.Join(t.TempDir(), "missing.toml"))
+	tiers := backendPreferenceTiersWithConfig(updevConfig{})
+	for _, tier := range tiers {
+		switch tier.Label {
+		case "mise/ubi", "mise/vfox", "mise/asdf":
+			t.Fatalf("expected deprecated or legacy backend to stay out of defaults, got %#v", tier)
+		}
+	}
+	ubi := backendPreferenceTierFor("mise", "ubi:owner/repo")
+	if ubi.Label != "mise/ubi" || ubi.Rank != 90 {
+		t.Fatalf("expected existing ubi backend to remain recognized as deprecated, got %#v", ubi)
+	}
+	configured := backendPreferenceTiersWithConfig(updevConfig{Backends: updevBackendsConfig{PreferenceOrder: []string{"mise/asdf"}}})
+	if configured[0].Label != "mise/asdf" || configured[0].Rank != 1 {
+		t.Fatalf("expected explicit deprecated backend override to be honored, got %#v", configured[0])
 	}
 }
 
@@ -1730,6 +1945,9 @@ description_translation = "manual"
 state_dir = "~/.local/state/updev/inventory"
 overrides = ".config/updev/inventory-overrides.toml"
 
+[backends]
+preference_order = ["store/native", "mise/github", "linux/apt"]
+
 [[inventory.reports]]
 name = "manual-apps"
 providers = ["manual", "mas", "vendor"]
@@ -1774,6 +1992,9 @@ path = "docs/apps.md"
 	}
 	if got := strings.Join(config.Inventory.Reports[0].Providers, ","); got != "manual,mas,vendor" {
 		t.Fatalf("unexpected report providers: %q", got)
+	}
+	if got := strings.Join(config.Backends.PreferenceOrder, ","); got != "store/native,mise/github,linux/apt" {
+		t.Fatalf("unexpected backend preference order: %q", got)
 	}
 }
 
@@ -1992,6 +2213,7 @@ func TestPrintUpdateTextIncludesSkippedStepStatus(t *testing.T) {
 	printUpdateTextTo(&buffer, updateReport{
 		Status:   plan.StatusHeld,
 		Root:     "/repo",
+		Report:   "/tmp/last-update.json",
 		Security: "strict",
 		Steps: []updateStep{
 			{Name: "brew", Command: []string{"brew", "upgrade"}, Status: plan.StatusHeld, Skipped: true, Reason: "security=strict held update because safety gate requires review"},
@@ -2472,11 +2694,13 @@ func TestUpdateDetailRowsExposeInventorySecurityAndLogs(t *testing.T) {
 	report := updateReport{
 		Status: plan.StatusHeld,
 		Steps: []updateStep{{
-			Name:    "brew",
-			Command: []string{"brew", "upgrade"},
-			Status:  plan.StatusHeld,
-			Reason:  "security review required",
-			Stdout:  "kept current version",
+			Name:         "brew",
+			Command:      []string{"brew", "upgrade"},
+			Status:       plan.StatusHeld,
+			Reason:       "security review required",
+			Stdout:       "kept current version",
+			Updated:      []string{"jq 1.7 -> 1.8.1"},
+			SkippedItems: []string{"demo held by policy"},
 		}},
 		Safety: []safetyGate{{
 			Provider: "brew",
@@ -2510,16 +2734,130 @@ func TestUpdateDetailRowsExposeInventorySecurityAndLogs(t *testing.T) {
 		t.Fatalf("expected attention inventory detail row, got %#v", rows)
 	}
 	securityRows := updateSecurityDetailRows(report)
-	if len(securityRows) != 1 || !strings.Contains(strings.Join(securityRows[0].Metadata, " "), "fixed: 1.2.3") {
+	if len(securityRows) != 1 || !strings.Contains(strings.Join(securityRows[0].Metadata, " "), "fixed: 1.2.3") || !strings.Contains(strings.Join(securityRows[0].Metadata, " "), "decision: hold") {
 		t.Fatalf("expected security finding metadata, got %#v", securityRows)
+	}
+	if len(securityRows[0].Actions) != 5 || !strings.Contains(securityRows[0].Actions[0].Value, securityDetailActionPrefix) {
+		t.Fatalf("expected held security row to expose policy actions, got %#v", securityRows[0].Actions)
 	}
 	allowRows := updateSecurityDetailRowsForFilter(report, lastReportOptions{section: "security", status: "allow"})
 	if len(allowRows) != 2 || allowRows[1].Title != "brew/brew safe" {
 		t.Fatalf("expected explicit allow filter to show allow findings, got %#v", allowRows)
 	}
 	logRows := updateLogDetailRows(report)
-	if len(logRows) != 1 || !strings.Contains(strings.Join(logRows[0].Metadata, " "), "stdout: kept current version") {
-		t.Fatalf("expected update log metadata, got %#v", logRows)
+	if len(logRows) != 3 {
+		t.Fatalf("expected updated item, deferred item, and provider log rows, got %#v", logRows)
+	}
+	if logRows[0].Status != "updated" || logRows[0].Summary != "jq 1.7 -> 1.8.1" {
+		t.Fatalf("expected first update detail row to be item-level updated row, got %#v", logRows[0])
+	}
+	if logRows[1].Status != "held" || logRows[1].Summary != "demo held by policy" || len(logRows[1].Actions) != 1 {
+		t.Fatalf("expected second update detail row to be held item row with security action, got %#v", logRows[1])
+	}
+	providerLog := logRows[2]
+	logMetadata := strings.Join(providerLog.Metadata, " ")
+	if !strings.Contains(logMetadata, "stdout: kept current version") || !strings.Contains(logMetadata, "updated: jq") || !strings.Contains(logMetadata, "deferred: demo held") {
+		t.Fatalf("expected update provider log metadata, got %#v", providerLog)
+	}
+	if providerLog.Summary != "security review required" {
+		t.Fatalf("expected reason to remain update log summary, got %#v", providerLog)
+	}
+	if len(providerLog.Actions) != 1 || providerLog.Actions[0].Value != updateHubActionSecurity {
+		t.Fatalf("expected held update log row to link to security detail actions, got %#v", providerLog.Actions)
+	}
+	if action, provider, kind, name, ok := parseSecurityDetailAction(securityRows[0].Actions[0].Value); !ok || action != "allow-7d-rerun" || provider != "brew" || kind != "cask" || name != "demo" {
+		t.Fatalf("unexpected security detail action parse: action=%q provider=%q kind=%q name=%q ok=%v", action, provider, kind, name, ok)
+	}
+	nonRerunnable := securityDetailActions(safetyGate{Provider: "github-repo"}, safetyFinding{Kind: "repo", Name: "owner/tool", Decision: "hold"})
+	if len(nonRerunnable) != 3 || strings.Contains(nonRerunnable[0].Value, "rerun") {
+		t.Fatalf("expected non-update provider security actions to omit rerun, got %#v", nonRerunnable)
+	}
+	if action, _, _, _, ok := parseSecurityDetailAction(nonRerunnable[0].Value); !ok || action != "allow-custom" {
+		t.Fatalf("expected custom allow to be the first non-rerunnable action, got %#v", nonRerunnable)
+	}
+}
+
+func TestUpdateLogDetailRowsDistinguishSkippedErrorAndPreserveLogLines(t *testing.T) {
+	rows := updateLogDetailRows(updateReport{Steps: []updateStep{
+		{
+			Name:    "brew",
+			Command: []string{"brew", "upgrade"},
+			Status:  plan.StatusOK,
+			Skipped: true,
+			Reason:  "dry run",
+			Stdout:  "line one\nline two",
+		},
+		{
+			Name:    "mise",
+			Command: []string{"mise", "upgrade"},
+			Status:  plan.StatusError,
+			Stderr:  "error one\nerror two",
+		},
+	}})
+	if len(rows) != 2 {
+		t.Fatalf("expected skipped and error provider log rows, got %#v", rows)
+	}
+	if rows[0].Status != "skipped" || !strings.Contains(strings.Join(rows[0].Metadata, " "), "skipped: true") {
+		t.Fatalf("expected skipped provider row to expose skipped state, got %#v", rows[0])
+	}
+	if rows[1].Status != string(plan.StatusError) || rows[1].Summary != "error one error two" {
+		t.Fatalf("expected error provider row to summarize stderr, got %#v", rows[1])
+	}
+	expanded := strings.Join(detailBrowserExpandedLinesWithWidth(rows[0], 80), "\n")
+	if !strings.Contains(expanded, "stdout: line one") || !strings.Contains(expanded, "line two") {
+		t.Fatalf("expected expanded update log to preserve stdout newlines, got %q", expanded)
+	}
+}
+
+func TestValidateSecurityPolicyAllowExpiry(t *testing.T) {
+	now := time.Date(2026, 6, 5, 12, 0, 0, 0, time.Local)
+	for _, value := range []string{"2026-06-05", "2026-06-06", " 2026-06-06 "} {
+		got, err := validateSecurityPolicyAllowExpiry(value, now)
+		if err != nil || got == "" {
+			t.Fatalf("expected expiry %q to be accepted, got %q err=%v", value, got, err)
+		}
+	}
+	for _, value := range []string{"2026-06-04", "2026/06/06", ""} {
+		if got, err := validateSecurityPolicyAllowExpiry(value, now); err == nil {
+			t.Fatalf("expected expiry %q to be rejected, got %q", value, got)
+		}
+	}
+}
+
+func TestRefreshUpdateReportSecurityPolicyAppliesDetailDecision(t *testing.T) {
+	root := t.TempDir()
+	policyPath := filepath.Join(root, "policy.json")
+	report := updateReport{
+		Policy: &securityPolicyUse{Path: policyPath},
+		Safety: []safetyGate{{
+			Provider: "brew",
+			Status:   plan.StatusHeld,
+			Findings: []safetyFinding{{
+				Kind:        "cask",
+				Name:        "demo",
+				Decision:    "hold",
+				Reason:      "needs review",
+				Remediation: "review vendor",
+			}},
+		}},
+	}
+	err := addSecurityPolicyRule(policyPath, securityPolicyRule{
+		Provider: "brew",
+		Kind:     "cask",
+		Name:     "demo",
+		Decision: "allow",
+		Reason:   "trusted after review",
+		Expires:  "2099-01-01",
+	})
+	if err != nil {
+		t.Fatalf("add security policy rule: %v", err)
+	}
+	refreshUpdateReportSecurityPolicy(&report, policyPath)
+	if report.Policy == nil || report.Policy.RuleCount != 1 {
+		t.Fatalf("expected policy view to refresh, got %#v", report.Policy)
+	}
+	if report.Safety[0].Status != plan.StatusOK || report.Safety[0].Findings[0].Decision != "allow" || report.Safety[0].Summary.Allow != 1 {
+		t.Fatalf("expected safety finding to be allowed after policy refresh, got %#v", report.Safety[0])
 	}
 }
 
@@ -2548,6 +2886,184 @@ func TestUpdateHubChoicesExposeNavigationTargets(t *testing.T) {
 	if manualPlan.AttentionCount != 2 {
 		t.Fatalf("expected manual plan attention count to include adoption actions")
 	}
+}
+
+func TestUpdateDashboardDetailRowsExposeHubActions(t *testing.T) {
+	report := updateReport{
+		Status:   plan.StatusHeld,
+		Root:     "/repo",
+		Report:   "/tmp/last-update.json",
+		Security: "strict",
+		Steps: []updateStep{{
+			Name:         "brew",
+			Status:       plan.StatusHeld,
+			Updated:      []string{"jq 1.7 -> 1.8.1"},
+			SkippedItems: []string{"demo held"},
+		}},
+		Safety: []safetyGate{{
+			Provider: "brew",
+			Status:   plan.StatusHeld,
+			Findings: []safetyFinding{{
+				Provider: "brew",
+				Kind:     "cask",
+				Name:     "demo",
+				Decision: "hold",
+				Reason:   "review provenance",
+			}},
+		}},
+		Inventory: plan.Report{
+			Status: plan.StatusDrift,
+			Items: []plan.Item{{
+				Provider: "brew",
+				Kind:     "brew",
+				Name:     "jq",
+				Status:   plan.StatusExtra,
+			}},
+			Providers: []plan.ProviderSummary{{Name: "brew", Desired: 1, Live: 2}},
+		},
+	}
+	manualPlan := inventoryPlanReport{ActionCounts: map[string]int{"needs-review": 1}, AttentionCount: 1}
+	backendPlan := backendPlanReport{Status: plan.StatusDrift, Findings: []backendFinding{{Type: "mise-backend-rewrite"}}}
+	rows := updateDashboardDetailRows(report, manualPlan, backendPlan)
+	byTitle := map[string]detailBrowserRow{}
+	for _, row := range rows {
+		byTitle[row.Title] = row
+	}
+	for _, tc := range []struct {
+		title string
+		want  string
+	}{
+		{"Update steps", updateHubActionUpdatesFilter},
+		{"Security", updateHubActionSecurity},
+		{"Inventory", updateHubActionInventoryAll},
+		{"Manual review", updateHubActionManualPlan},
+		{"Backend convergence", updateHubActionBackends},
+		{"Full report", updateHubActionFull},
+	} {
+		row := byTitle[tc.title]
+		if len(row.Actions) == 0 || row.Actions[0].Value != tc.want {
+			t.Fatalf("expected dashboard row %q to expose action %q, got %#v", tc.title, tc.want, row.Actions)
+		}
+	}
+	backendMetadata := strings.Join(byTitle["Backend convergence"].Metadata, " ")
+	if !strings.Contains(backendMetadata, "mise/github") || !strings.Contains(backendMetadata, "safe actions:") {
+		t.Fatalf("expected backend preference metadata to include mise/github, got %#v", byTitle["Backend convergence"].Metadata)
+	}
+	dashboardView := newDetailBrowserModel("updev dashboard", rows, detailBrowserState{}, false).View().Content
+	if !strings.Contains(dashboardView, "focused actions: a/1=filter updates") {
+		t.Fatalf("expected dashboard view to expose focused row action hint:\n%s", dashboardView)
+	}
+	summaryModel := newUpdateSummaryBrowserModel(updateHubTitle(report), report, manualPlan, backendPlan, detailBrowserState{}, updateHubActionLogs, false)
+	summaryModel.Height = 80
+	dashboardView = summaryModel.View().Content
+	for _, want := range []string{"updev update held", "root: /repo", "security: strict", "safety summary:", "update summary:", "focused actions:", "a/1=open update details", "updates", "security attention", "inventory drift", "review actions"} {
+		if !strings.Contains(dashboardView, want) {
+			t.Fatalf("expected update hub view to contain %q:\n%s", want, dashboardView)
+		}
+	}
+	summaryActions := updateSummaryActionsByText(summaryModel.Lines)
+	for _, tc := range []struct {
+		contains string
+		want     string
+	}{
+		{"updates", updateHubActionLogs},
+		{"security attention", updateHubActionSecurity},
+		{"inventory drift", updateHubActionInventoryAll},
+		{"top inventory items", updateHubActionInventoryDetails},
+		{"report:", updateHubActionFull},
+		{"manual review", updateHubActionManualPlan},
+		{"backend convergence", updateHubActionBackends},
+	} {
+		if got := summaryActions[tc.contains]; got != tc.want {
+			t.Fatalf("expected summary row containing %q to route to %q, got %q", tc.contains, tc.want, got)
+		}
+	}
+	if route, ok := firstUpdateSummaryRoute(summaryModel.Lines, "brew"); !ok || route.Base != updateHubActionLogs || route.Provider != "brew" {
+		t.Fatalf("expected brew update row to route to provider-filtered logs, route=%+v ok=%v", route, ok)
+	}
+	reviewFocused := newUpdateSummaryBrowserModel(updateHubTitle(report), report, manualPlan, backendPlan, detailBrowserState{}, updateHubActionManualPlan, false)
+	reviewFocused.Height = 80
+	reviewView := reviewFocused.View().Content
+	if !strings.Contains(reviewView, "action") || !strings.Contains(reviewView, "summary") {
+		t.Fatalf("expected review actions to render as a small table:\n%s", reviewView)
+	}
+	if strings.Contains(reviewView, "[Enter: open manual review]") {
+		t.Fatalf("expected review action row to avoid inline Enter badge:\n%s", reviewView)
+	}
+	coloredSummaryModel := newUpdateSummaryBrowserModel(updateHubTitle(report), report, manualPlan, backendPlan, detailBrowserState{}, updateHubActionLogs, true)
+	coloredSummaryModel.Height = 80
+	coloredSummaryView := coloredSummaryModel.View().Content
+	if !strings.Contains(coloredSummaryView, "\033[1m\033[35mupdates") || !strings.Contains(coloredSummaryView, "\033[1m\033[35mreview actions") {
+		t.Fatalf("expected summary section titles to be visually styled:\n%q", coloredSummaryView)
+	}
+	if !updateHubActionExists(updateHubActionBackends) || updateHubActionExists("unknown") {
+		t.Fatalf("unexpected update hub action existence result")
+	}
+	for _, tc := range []struct {
+		action string
+		index  int
+		title  string
+	}{
+		{updateHubActionManualPlan, 3, "Manual review"},
+		{updateHubActionBackends, 4, "Backend convergence"},
+		{updateHubActionSecurity, 1, "Security"},
+		{updateHubActionInventoryDetails, 2, "Inventory"},
+		{updateHubActionUpdatesFilter, 0, "Update steps"},
+	} {
+		index := updateDashboardRowIndexForAction(tc.action)
+		if index != tc.index || rows[index].Title != tc.title {
+			t.Fatalf("expected dashboard action %q to focus row %d/%q, got %d/%q", tc.action, tc.index, tc.title, index, rows[index].Title)
+		}
+	}
+	for _, tc := range []struct {
+		listAction string
+		want       string
+	}{
+		{listHubActionManual, updateHubActionManualPlan},
+		{listHubActionBackends, updateHubActionBackends},
+		{listHubActionUpdates, updateHubActionLogs},
+		{listHubActionSecurity, updateHubActionSecurity},
+		{"unknown", ""},
+	} {
+		if got := updateHubActionFromListAction(tc.listAction); got != tc.want {
+			t.Fatalf("list action %q mapped to %q, want %q", tc.listAction, got, tc.want)
+		}
+	}
+	if got := initialUpdateHubAction("", updateHubActionManualPlan); got != updateHubActionDashboard {
+		t.Fatalf("expected bare update hub to open summary first, got %q", got)
+	}
+	if got := initialUpdateHubAction(updateHubActionSecurity, updateHubActionSecurity); got != updateHubActionSecurity {
+		t.Fatalf("expected explicit preferred section to open directly, got %q", got)
+	}
+}
+
+func updateSummaryActionsByText(lines []updateSummaryLine) map[string]string {
+	out := map[string]string{}
+	for _, line := range lines {
+		plain := strings.ToLower(line.Text)
+		for _, key := range []string{"updates", "security attention", "inventory drift", "top inventory items", "report:", "manual review", "backend convergence"} {
+			if strings.Contains(plain, key) && line.Action != "" {
+				action := line.Action
+				if route, ok := parseUpdateSummaryRoute(action); ok {
+					action = route.Base
+				}
+				out[key] = action
+			}
+		}
+	}
+	return out
+}
+
+func firstUpdateSummaryRoute(lines []updateSummaryLine, contains string) (updateSummaryRoute, bool) {
+	for _, line := range lines {
+		if !strings.Contains(strings.ToLower(line.Text), strings.ToLower(contains)) {
+			continue
+		}
+		if route, ok := parseUpdateSummaryRoute(line.Action); ok {
+			return route, true
+		}
+	}
+	return updateSummaryRoute{}, false
 }
 
 func TestUpdateFacetCounts(t *testing.T) {
@@ -7179,6 +7695,47 @@ func TestManualInventoryReconcilesDocumentedAppsWithHomebrewCasks(t *testing.T) 
 	}
 }
 
+func TestManualInventoryHidesHomebrewOnlyCasksByDefault(t *testing.T) {
+	root := t.TempDir()
+	result := inventoryResult{Report: plan.Report{
+		Status: plan.StatusOK,
+		Root:   root,
+		Items: []plan.Item{
+			{Provider: "brew", Kind: "cask", Name: "firefox", Status: plan.StatusOK, Desired: true, Live: true, Category: "personal"},
+		},
+	}}
+
+	defaultReport := buildListReport(result, listOptions{root: root, provider: "manual"})
+	if len(defaultReport.Sections) != 0 {
+		t.Fatalf("expected Homebrew-only cask evidence to be hidden by default, got %#v", defaultReport.Sections)
+	}
+	statusReport := buildListReport(result, listOptions{root: root, provider: "manual", status: "brew"})
+	if len(statusReport.Sections) != 1 || statusReport.Sections[0].Rows[0].Name != "Firefox" {
+		t.Fatalf("expected explicit brew status filter to show cask evidence, got %#v", statusReport.Sections)
+	}
+	queryReport := buildListReport(result, listOptions{root: root, provider: "manual", query: "firefox"})
+	if len(queryReport.Sections) != 1 || queryReport.Sections[0].Rows[0].State != "brew" {
+		t.Fatalf("expected query filter to show cask evidence, got %#v", queryReport.Sections)
+	}
+}
+
+func TestManualLiveCaskInventoryItemsUsesBoundedBrewProbe(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("Homebrew cask probe is macOS-only")
+	}
+	fake := &fakeCommandRunner{result: runner.Result{Stdout: "firefox\nvisual-studio-code\n"}}
+	items := manualLiveCaskInventoryItems(defaultRoot(), fake)
+	if len(items) != 2 || items[0].Provider != "brew" || items[0].Kind != "cask" || items[0].Name != "firefox" || items[0].Status != plan.StatusExtra || !items[0].Live {
+		t.Fatalf("expected live Homebrew cask evidence, got %#v", items)
+	}
+	if len(fake.calls) != 1 || strings.Join(fake.calls[0], " ") != "brew list --cask -1" {
+		t.Fatalf("expected bounded brew cask list probe, got %#v", fake.calls)
+	}
+	if got := manualLiveCaskInventoryItems(t.TempDir(), fake); got != nil {
+		t.Fatalf("expected non-default root to skip live brew probe, got %#v", got)
+	}
+}
+
 func TestInventoryRenderBuildsManualAppsPreview(t *testing.T) {
 	root := t.TempDir()
 	writeFakeAppBundle(t, filepath.Join(root, "Applications", "Demo.app"), map[string]string{
@@ -7575,6 +8132,40 @@ func TestInventoryPlanSuggestsMASAdoption(t *testing.T) {
 	}
 }
 
+func TestManualInventoryReconcilesCaskByApplicationPathBasename(t *testing.T) {
+	sections := reconcileManualAppSections([]toolSection{
+		{
+			Name:  "manual/installed-apps",
+			Title: "manual / Installed apps",
+			Rows: []toolRow{{
+				Name:    "Code",
+				Version: "1.123.0",
+				State:   "installed",
+				Detail:  "source: app bundle; path: /Applications/Visual Studio Code.app",
+			}},
+		},
+		{
+			Name:  "manual/homebrew-casks",
+			Title: "manual / Homebrew casks",
+			Rows: []toolRow{{
+				Name:   "Visual Studio Code",
+				State:  "brew",
+				Detail: "source: homebrew cask; cask: visual-studio-code; status: ok",
+			}},
+		},
+	})
+	if len(sections) != 1 || len(sections[0].Rows) != 1 {
+		t.Fatalf("expected one reconciled installed section, got %#v", sections)
+	}
+	row := sections[0].Rows[0]
+	if row.Name != "Code" || row.State != "brew" || !strings.Contains(row.Detail, "cask: visual-studio-code") {
+		t.Fatalf("expected app bundle row to merge Homebrew cask evidence, got %#v", row)
+	}
+	if !manualRowHiddenByDefault(sections[0], row, listOptions{provider: "manual"}) {
+		t.Fatalf("expected default manual view to hide brew-owned installed app row, got %#v", row)
+	}
+}
+
 func TestInventoryPlanAddsBrewAndVendorGuidance(t *testing.T) {
 	sections := []toolSection{
 		{
@@ -7622,6 +8213,20 @@ func TestInventoryPlanAddsBrewAndVendorGuidance(t *testing.T) {
 	if vendor.SuggestedOverride == nil || vendor.SuggestedOverride.ManagedBy != "vendor" {
 		t.Fatalf("expected vendor suggested override, got %#v", vendor.SuggestedOverride)
 	}
+	brewRow := manualPlanDetailRow(brew)
+	if len(brewRow.Actions) != 1 || !strings.Contains(brewRow.Actions[0].Value, "review-cask") {
+		t.Fatalf("expected brew plan row to expose review-cask action, got %#v", brewRow.Actions)
+	}
+	if action, target, ok := parseManualPlanDetailAction(brewRow.Actions[0].Value); !ok || action != "review-cask" || target != "firefox" {
+		t.Fatalf("unexpected parsed manual plan action: action=%q target=%q ok=%v", action, target, ok)
+	}
+	planSections := manualPlanToolSections(inventoryPlanReport{Items: []manualPlanItem{brew, vendor}})
+	if len(planSections) != 2 || planSections[0].Title != "manual / adopt-brew" || planSections[1].Title != "manual / open-vendor" {
+		t.Fatalf("expected manual plan grouped table sections by action, got %#v", planSections)
+	}
+	if len(planSections[0].Rows[0].Actions) != len(brewRow.Actions) || !strings.Contains(planSections[0].Rows[0].Detail, "summary:") {
+		t.Fatalf("expected manual grouped row to preserve actions and rich detail, got %#v", planSections[0].Rows[0])
+	}
 }
 
 func TestInventoryPlanSuggestsIgnoreLocalForUserApplications(t *testing.T) {
@@ -7637,6 +8242,10 @@ func TestInventoryPlanSuggestsIgnoreLocalForUserApplications(t *testing.T) {
 	items := manualPlanItems([]toolSection{section})
 	if len(items) != 1 || items[0].Action != "ignore-local" || items[0].ReasonCode != "manual_app_user_local" {
 		t.Fatalf("expected user-local app ignore candidate, got %#v", items)
+	}
+	row := manualPlanDetailRow(items[0])
+	if len(row.Actions) != 3 {
+		t.Fatalf("expected installed manual row to expose accept/ignore/edit actions, got %#v", row.Actions)
 	}
 }
 
@@ -7897,6 +8506,21 @@ func TestListDetailRowsIncludeItemsAndToolSections(t *testing.T) {
 	if !strings.Contains(strings.Join(rows[1].Metadata, " "), "wanted: lts") {
 		t.Fatalf("expected mise wanted version metadata, got %#v", rows[1])
 	}
+	if !strings.Contains(rows[0].Detail, "description: JSON processor") || !strings.Contains(rows[0].Detail, "identity: brew / brew / jq") || !strings.Contains(rows[0].Detail, "status: ok - desired and installed") {
+		t.Fatalf("expected inventory item detail to explain status and management state, got %#v", rows[0])
+	}
+	if !strings.Contains(strings.Join(rows[0].Metadata, " "), "name: jq") {
+		t.Fatalf("expected inventory item metadata to include item identity, got %#v", rows[0])
+	}
+	renderedInventoryDetail := strings.Join(detailBrowserExpandedLinesStyled(rows[0], 80, true), "\n")
+	for _, want := range []string{"\033[1m\033[35mdetails", "\033[36mdescription:", "\033[36midentity:", "\033[36mstatus:", "\033[1m\033[35mevidence", "\033[36mprovider:"} {
+		if !strings.Contains(renderedInventoryDetail, want) {
+			t.Fatalf("expected rendered inventory detail to contain %q:\n%q", want, renderedInventoryDetail)
+		}
+	}
+	if len(rows[0].Actions) != 0 {
+		t.Fatalf("did not expect backend route without backend evidence, got %#v", rows[0].Actions)
+	}
 }
 
 func TestListTableSectionsConvertBrewItemsToExpandableRows(t *testing.T) {
@@ -7910,8 +8534,11 @@ func TestListTableSectionsConvertBrewItemsToExpandableRows(t *testing.T) {
 	if len(sections) != 2 || sections[0].Title != "brew / brew / work" || sections[1].Title != "brew / cask / personal" {
 		t.Fatalf("expected brew item sections, got %#v", sections)
 	}
-	if sections[0].Rows[0].Name != "jq" || sections[0].Rows[0].State != "ok" || sections[0].Rows[0].Detail != "JSON processor" {
-		t.Fatalf("expected brew item detail without metadata suffix, got %#v", sections[0].Rows[0])
+	if sections[0].Rows[0].Name != "jq" || sections[0].Rows[0].State != "ok" || !strings.Contains(sections[0].Rows[0].Detail, "description: JSON processor") || !strings.Contains(sections[0].Rows[0].Detail, "identity: brew / brew / jq") {
+		t.Fatalf("expected brew item detail to include rich inventory context, got %#v", sections[0].Rows[0])
+	}
+	if len(sections[0].Rows[0].Actions) != 0 {
+		t.Fatalf("did not expect backend route without backend evidence, got %#v", sections[0].Rows[0].Actions)
 	}
 	model := newToolTableBrowserModel("updev list brew", sections, detailBrowserState{}, false)
 	view := model.View().Content
@@ -7920,6 +8547,192 @@ func TestListTableSectionsConvertBrewItemsToExpandableRows(t *testing.T) {
 			t.Fatalf("expected brew table browser to include %q:\n%s", want, view)
 		}
 	}
+	model.ToggleSelected()
+	view = model.View().Content
+	for _, want := range []string{"detail", "description: JSON processor", "identity: brew / brew / jq", "status: ok - desired and installed"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("expected expanded installed inventory row to include %q:\n%s", want, view)
+		}
+	}
+	for _, duplicate := range []string{"metadata", "version: 1.8.1", "state: ok"} {
+		if strings.Contains(view, duplicate) {
+			t.Fatalf("did not expect expanded installed inventory row to repeat table metadata %q:\n%s", duplicate, view)
+		}
+	}
+}
+
+func TestManualSectionRowsRouteToManualReview(t *testing.T) {
+	sections := manualCaskSections([]plan.Item{{Provider: "brew", Kind: "cask", Name: "demo-app", Status: plan.StatusOK}})
+	if len(sections) != 1 || len(sections[0].Rows) != 1 {
+		t.Fatalf("expected one manual cask row, got %#v", sections)
+	}
+	if len(sections[0].Rows[0].Actions) != 1 || !toolRowHasRouteAction(sections[0].Rows[0], listHubActionManual) {
+		t.Fatalf("expected manual cask row to route to manual review, got %#v", sections[0].Rows[0].Actions)
+	}
+	detail := toolDetailRow(sections[0], sections[0].Rows[0])
+	if len(detail.Actions) != 1 || !detailRowHasRouteAction(detail, listHubActionManual) || !strings.Contains(strings.Join(detail.Metadata, " "), "next action:") {
+		t.Fatalf("expected manual detail row to preserve review routing action and evidence, got %#v", detail)
+	}
+}
+
+func TestListFilteredActionRoutesDomainActionsBackToHub(t *testing.T) {
+	defaultAction := listHubActionProvider
+	pendingAction := ""
+	handled, exit := handleListFilteredAction(listHubActionBackends, true, &defaultAction, &pendingAction)
+	if !handled || exit || defaultAction != listHubActionBackends || pendingAction != listHubActionBackends {
+		t.Fatalf("expected backend row action to become pending hub action, handled=%v exit=%v default=%q pending=%q", handled, exit, defaultAction, pendingAction)
+	}
+
+	handled, exit = handleListFilteredAction(updevActionHome, true, &defaultAction, &pendingAction)
+	if !handled || exit || defaultAction != listHubActionFull {
+		t.Fatalf("expected home action to reset default action, handled=%v exit=%v default=%q", handled, exit, defaultAction)
+	}
+
+	handled, exit = handleListFilteredAction(updevActionExit, true, &defaultAction, &pendingAction)
+	if !handled || !exit {
+		t.Fatalf("expected exit action to exit, handled=%v exit=%v", handled, exit)
+	}
+}
+
+func TestListRowsRouteToCachedUpdateAndSecurityEvidence(t *testing.T) {
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	root := t.TempDir()
+	saveLastUpdateReport(updateReport{
+		Root: root,
+		Steps: []updateStep{{
+			Name:         "brew",
+			Status:       plan.StatusHeld,
+			Reason:       "security review required",
+			Updated:      []string{"jq"},
+			SkippedItems: []string{"ripgrep"},
+		}},
+		Safety: []safetyGate{{
+			Provider: "brew",
+			Status:   plan.StatusHeld,
+			Findings: []safetyFinding{{
+				Provider: "brew",
+				Kind:     "brew",
+				Name:     "ripgrep",
+				Decision: "hold",
+				Reason:   "new release is inside minimum age",
+			}},
+		}},
+	})
+	report := buildListReport(inventoryResult{Report: plan.Report{
+		Root: root,
+		Items: []plan.Item{
+			{Provider: "brew", Kind: "brew", Name: "jq", Status: plan.StatusOK, Desired: true, Live: true},
+			{Provider: "brew", Kind: "brew", Name: "ripgrep", Status: plan.StatusOK, Desired: true, Live: true},
+			{Provider: "mise", Kind: "tool", Name: "ripgrep", Status: plan.StatusOK, Desired: true, Live: true},
+		},
+	}}, listOptions{root: root})
+	sections := listTableSections(report)
+	rowsByName := map[string]toolRow{}
+	for _, section := range sections {
+		for _, row := range section.Rows {
+			rowsByName[section.Name+"/"+row.Name] = row
+		}
+	}
+	if !toolRowHasRouteAction(rowsByName["brew/brew/jq"], listHubActionUpdates) || strings.Contains(rowsByName["brew/brew/jq"].Detail, "security evidence:") {
+		t.Fatalf("expected jq row to route only to update evidence, got %#v", rowsByName["brew/brew/jq"])
+	}
+	if !toolRowHasRouteAction(rowsByName["brew/brew/ripgrep"], listHubActionUpdates) || !toolRowHasRouteAction(rowsByName["brew/brew/ripgrep"], listHubActionSecurity) || !strings.Contains(rowsByName["brew/brew/ripgrep"].Detail, "security evidence:") {
+		t.Fatalf("expected ripgrep row to route to update and security evidence, got %#v", rowsByName["brew/brew/ripgrep"])
+	}
+	if toolRowHasRouteAction(rowsByName["mise/tool/ripgrep"], listHubActionUpdates) || toolRowHasRouteAction(rowsByName["mise/tool/ripgrep"], listHubActionSecurity) {
+		t.Fatalf("did not expect brew evidence to attach to same-name mise row, got %#v", rowsByName["mise/tool/ripgrep"])
+	}
+	details := listDetailRows(report)
+	byTitle := map[string]detailBrowserRow{}
+	for _, row := range details {
+		byTitle[row.Title] = row
+	}
+	rg := byTitle["brew/brew ripgrep"]
+	if !detailRowHasRouteAction(rg, listHubActionSecurity) || !strings.Contains(strings.Join(rg.Metadata, " "), "security evidence:") {
+		t.Fatalf("expected ripgrep detail row to expose security route evidence, got %#v", rg)
+	}
+}
+
+func TestListRowsExposeBackendRouteOnlyWithMatchingEvidence(t *testing.T) {
+	report := listReport{
+		Items: []plan.Item{
+			{Provider: "brew", Kind: "brew", Name: "jq", Status: plan.StatusOK, Desired: true, Live: true},
+			{Provider: "brew", Kind: "brew", Name: "ripgrep", Status: plan.StatusOK, Desired: true, Live: true},
+			{Provider: "mise", Kind: "tool", Name: "ripgrep", Status: plan.StatusOK, Desired: true, Live: true},
+		},
+		Evidence: addBackendListEvidence(listEvidenceIndex{}, backendPlanReport{Findings: []backendFinding{{
+			Type:            "homebrew-to-mise",
+			Provider:        "brew",
+			Kind:            "brew",
+			Name:            "ripgrep",
+			RecommendedName: "ripgrep",
+			RecommendedSpec: "15.1.0",
+			Reason:          "ripgrep is already a stable mise-managed CLI",
+		}}}),
+	}
+	sections := listTableSections(report)
+	rowsByName := map[string]toolRow{}
+	for _, section := range sections {
+		for _, row := range section.Rows {
+			rowsByName[section.Name+"/"+row.Name] = row
+		}
+	}
+	if toolRowHasRouteAction(rowsByName["brew/brew/jq"], listHubActionBackends) {
+		t.Fatalf("did not expect unrelated jq row to expose backend route: %#v", rowsByName["brew/brew/jq"])
+	}
+	if !toolRowHasRouteAction(rowsByName["brew/brew/ripgrep"], listHubActionBackends) || !strings.Contains(rowsByName["brew/brew/ripgrep"].Detail, "backend evidence:") {
+		t.Fatalf("expected ripgrep row to expose focused backend route and evidence: %#v", rowsByName["brew/brew/ripgrep"])
+	}
+	if toolRowHasRouteAction(rowsByName["mise/tool/ripgrep"], listHubActionBackends) {
+		t.Fatalf("did not expect brew backend evidence to attach to same-name mise row: %#v", rowsByName["mise/tool/ripgrep"])
+	}
+}
+
+func TestBackendDetailRowsForListRouteFocusesMatchingItem(t *testing.T) {
+	report := backendPlanReport{Findings: []backendFinding{
+		{Type: "homebrew-to-mise", Provider: "brew", Kind: "brew", Name: "ripgrep", RecommendedName: "ripgrep", RecommendedSpec: "15.1.0", Reason: "ripgrep can move"},
+		{Type: "homebrew-to-mise", Provider: "brew", Kind: "brew", Name: "jq", RecommendedName: "jq", RecommendedSpec: "1.8.1", Reason: "jq can move"},
+	}}
+	rows := backendDetailRowsForListRoute(report, listRouteAction{Domain: listHubActionBackends, Provider: "brew", Kind: "brew", Name: "ripgrep"})
+	if len(rows) != 1 || !strings.Contains(rows[0].Title, "ripgrep") {
+		t.Fatalf("expected focused ripgrep backend row, got %#v", rows)
+	}
+}
+
+func toolRowHasAction(row toolRow, value string) bool {
+	for _, action := range row.Actions {
+		if action.Value == value {
+			return true
+		}
+	}
+	return false
+}
+
+func toolRowHasRouteAction(row toolRow, domain string) bool {
+	for _, action := range row.Actions {
+		if route, ok := parseListRouteAction(action.Value); ok && route.Domain == domain {
+			return true
+		}
+	}
+	return false
+}
+
+func detailRowHasAction(row detailBrowserRow, value string) bool {
+	for _, action := range row.Actions {
+		if action.Value == value {
+			return true
+		}
+	}
+	return false
+}
+
+func detailRowHasRouteAction(row detailBrowserRow, domain string) bool {
+	for _, action := range row.Actions {
+		if route, ok := parseListRouteAction(action.Value); ok && route.Domain == domain {
+			return true
+		}
+	}
+	return false
 }
 
 func TestStyledToolRowColorsProviderStatuses(t *testing.T) {
@@ -7957,7 +8770,7 @@ func TestInventoryItemHelpersColorAttentionRows(t *testing.T) {
 func TestDetailBrowserModelTogglesAndRendersExpandedDetail(t *testing.T) {
 	model := newDetailBrowserModel("details", []detailBrowserRow{
 		{Title: "one", Status: "ok", Summary: "short", Detail: "full detail"},
-		{Title: "two", Status: "held", Summary: "summary", Detail: "second detail"},
+		{Title: "two", Status: "held", Summary: "summary", Detail: "second detail", Metadata: []string{"updated: jq; git", "applyability: review-only"}, Actions: []detailBrowserAction{{Value: "demo", Label: "review", Description: "inspect evidence"}}},
 	}, detailBrowserState{}, false)
 	model.move(1)
 	if model.State.Selected != 1 {
@@ -7971,9 +8784,152 @@ func TestDetailBrowserModelTogglesAndRendersExpandedDetail(t *testing.T) {
 	if !view.AltScreen {
 		t.Fatal("expected detail browser to use alt screen for stable mouse coordinates")
 	}
-	for _, want := range []string{"Enter/Space expand", "> - held two", "detail: second detail", "mouse=off"} {
+	for _, want := range []string{"Enter/Space expand", "> - held two", "[actions:1]", "[updated:2]", "[review-only]", "focused actions: a/1=review", "details", "evidence", "actions", "action 1 [press a or 1]: review", "detail: second detail", "mouse=off"} {
 		if !strings.Contains(view.Content, want) {
 			t.Fatalf("expected detail browser view to contain %q:\n%s", want, view.Content)
+		}
+	}
+	coloredLines := strings.Join(detailBrowserExpandedLinesStyled(detailBrowserRow{
+		Detail:   "second detail",
+		Metadata: []string{"updated: jq; git"},
+		Actions:  []detailBrowserAction{{Value: "demo", Label: "review", Description: "inspect evidence"}},
+	}, 80, true), "\n")
+	for _, want := range []string{"\033[1m\033[35mdetails", "\033[36mdetail:", "\033[1m\033[35mevidence", "\033[36mupdated:", "\033[1m\033[35mactions", "\033[36maction 1 [press a or 1]:", "\033[32mreview"} {
+		if !strings.Contains(coloredLines, want) {
+			t.Fatalf("expected colored detail lines to contain %q:\n%q", want, coloredLines)
+		}
+	}
+}
+
+func TestDetailBrowserKeepsExpandedDetailVisibleNearBottom(t *testing.T) {
+	rows := []detailBrowserRow{}
+	for i := 0; i < 12; i++ {
+		detail := "detail"
+		if i == 10 {
+			detail = "description: expanded row\nidentity: manual / app / bottom\nstatus: needs-review\nnext action: open manual review"
+		}
+		rows = append(rows, detailBrowserRow{Title: fmt.Sprintf("row-%02d", i), Status: "ok", Detail: detail})
+	}
+	model := newDetailBrowserModel("details", rows, detailBrowserState{}, false)
+	model.Height = 14
+	model.move(10)
+	model.toggleSelected()
+	view := model.View().Content
+	for _, want := range []string{"row-10", "description: expanded row", "identity: manual / app / bottom", "next action: open manual review"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("expected expanded bottom detail row to stay visible with %q:\n%s", want, view)
+		}
+	}
+}
+
+func TestDetailBrowserActionKeysReturnFocusedRowAction(t *testing.T) {
+	rows := []detailBrowserRow{{
+		Title:   "action row",
+		Status:  "held",
+		Summary: "needs action",
+		Actions: []detailBrowserAction{
+			{Value: "first", Label: "first action"},
+			{Value: "second", Label: "second action"},
+		},
+	}}
+	model := newDetailBrowserModel("details", rows, detailBrowserState{}, false)
+	updated, _ := model.Update(tea.KeyPressMsg(tea.Key{Text: "a", Code: 'a'}))
+	model = updated.(detailBrowserModel)
+	if model.State.Action != "first" {
+		t.Fatalf("expected a to select first row action, got %#v", model.State)
+	}
+
+	model = newDetailBrowserModel("details", rows, detailBrowserState{}, false)
+	updated, _ = model.Update(tea.KeyPressMsg(tea.Key{Text: "2", Code: '2'}))
+	model = updated.(detailBrowserModel)
+	if model.State.Action != "second" {
+		t.Fatalf("expected 2 to select second row action, got %#v", model.State)
+	}
+}
+
+func TestDetailBrowserFocusedActionHintFitsTerminalWidth(t *testing.T) {
+	model := newDetailBrowserModel("details", []detailBrowserRow{{
+		Title:  "long actions",
+		Status: "held",
+		Actions: []detailBrowserAction{
+			{Value: "one", Label: "a deliberately long action label that should not overflow the header"},
+		},
+	}}, detailBrowserState{}, false)
+	model.Width = 36
+	view := model.View().Content
+	if !strings.Contains(view, "focused actions:") || !strings.Contains(view, "…") {
+		t.Fatalf("expected focused action hint to be truncated to terminal width:\n%s", view)
+	}
+}
+
+func TestDogfoodDetailRowsSelectManualBackendSecurityAndDashboardActions(t *testing.T) {
+	manualRows := []detailBrowserRow{manualPlanDetailRow(manualPlanItem{
+		Name:       "Google Sheets",
+		State:      "installed",
+		Action:     "needs-review",
+		Confidence: "medium",
+		NextStep:   "accept, edit, or ignore one explicit override after ownership review",
+	})}
+	if action := selectedDetailActionForKey(manualRows, tea.KeyPressMsg(tea.Key{Text: "a", Code: 'a'})); !strings.HasPrefix(action, manualPlanDetailActionPrefix+"\taccept\tGoogle Sheets") {
+		t.Fatalf("expected manual detail row to select accept action, got %q", action)
+	}
+
+	backendRows := backendDetailRows(backendPlanReport{Findings: []backendFinding{{
+		Type:            "mise-backend-rewrite",
+		Name:            "cargo:broot",
+		RecommendedName: "github:Canop/broot",
+		RewriteAllowed:  true,
+	}}})
+	if action, current, recommended, ok := parseBackendDetailAction(selectedDetailActionForKey(backendRows, tea.KeyPressMsg(tea.Key{Text: "a", Code: 'a'}))); !ok || action != "rewrite-mise" || current != "cargo:broot" || recommended != "github:Canop/broot" {
+		t.Fatalf("expected backend detail row to select rewrite action, action=%q current=%q recommended=%q ok=%v", action, current, recommended, ok)
+	}
+
+	securityRows := updateSecurityDetailRows(updateReport{Safety: []safetyGate{{
+		Provider: "brew",
+		Status:   plan.StatusHeld,
+		Findings: []safetyFinding{{Provider: "brew", Kind: "cask", Name: "demo", Decision: "hold"}},
+	}}})
+	if action, provider, kind, name, ok := parseSecurityDetailAction(selectedDetailActionForKey(securityRows, tea.KeyPressMsg(tea.Key{Text: "2", Code: '2'}))); !ok || action != "allow-custom-rerun" || provider != "brew" || kind != "cask" || name != "demo" {
+		t.Fatalf("expected security detail row to select custom allow rerun action, action=%q provider=%q kind=%q name=%q ok=%v", action, provider, kind, name, ok)
+	}
+
+	dashboardRows := updateDashboardDetailRows(updateReport{Status: plan.StatusOK}, inventoryPlanReport{}, backendPlanReport{})
+	if action := selectedDetailActionForKey(dashboardRows, tea.KeyPressMsg(tea.Key{Text: "a", Code: 'a'})); action != updateHubActionUpdatesFilter {
+		t.Fatalf("expected dashboard focused row to select update filter action, got %q", action)
+	}
+	model := newDetailBrowserModel(updateHubTitle(updateReport{Status: plan.StatusOK}), dashboardRows, detailBrowserState{}, false)
+	model.PrimaryEnterAction = true
+	updated, _ := model.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyEnter}))
+	model = updated.(detailBrowserModel)
+	if model.State.Action != updateHubActionUpdatesFilter {
+		t.Fatalf("expected dashboard Enter to select focused primary action, got %q", model.State.Action)
+	}
+}
+
+func selectedDetailActionForKey(rows []detailBrowserRow, key tea.KeyPressMsg) string {
+	model := newDetailBrowserModel("details", rows, detailBrowserState{}, false)
+	updated, _ := model.Update(key)
+	model = updated.(detailBrowserModel)
+	return model.State.Action
+}
+
+func TestDetailBrowserCollapsedBadgesSummarizeActionsAndEvidence(t *testing.T) {
+	row := detailBrowserRow{
+		Status:  "held",
+		Summary: "security review required",
+		Metadata: []string{
+			"updated: jq; git",
+			"deferred: demo held",
+			"decision: hold",
+			"release assets: compatible",
+			"applyability: applyable: rewrite current mise key",
+		},
+		Actions: []detailBrowserAction{{Value: "one", Label: "allow"}, {Value: "two", Label: "hold"}},
+	}
+	got := detailBrowserCollapsedSummary(row)
+	for _, want := range []string{"[actions:2]", "[updated:2]", "[deferred:1]", "[decision:hold]", "[assets:compatible]", "[applyable]", "security review required"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("expected collapsed summary to include %q, got %q", want, got)
 		}
 	}
 }
@@ -8108,6 +9064,62 @@ func TestToolTableBrowserPreservesGroupedTableAndExpandsDetail(t *testing.T) {
 	view = model.View().Content
 	if !strings.Contains(view, "detail: A deliberately long Node.js runtime description") {
 		t.Fatalf("expected expanded detail under table row:\n%s", view)
+	}
+}
+
+func TestToolTableBrowserExpandedActionsAreSelectable(t *testing.T) {
+	actions := []reviewui.Action{{
+		Value:       "open-backend",
+		Label:       "open backend review",
+		Description: "inspect backend recommendation",
+	}, {
+		Value:       "open-update",
+		Label:       "open update evidence",
+		Description: "inspect update evidence",
+	}, {
+		Value:       "open-security",
+		Label:       "open security review",
+		Description: "inspect security evidence",
+	}, {
+		Value:       "open-manual",
+		Label:       "open manual review",
+		Description: "inspect manual evidence",
+	}, {
+		Value:       "open-extra",
+		Label:       "open extra review",
+		Description: "inspect extra evidence",
+	}}
+	model := newToolTableBrowserModel("updev list brew", []toolSection{{
+		Name:  "brew/brew",
+		Title: "brew / brew",
+		Rows: []toolRow{{
+			Name:    "ripgrep",
+			State:   "ok",
+			Detail:  "description: ripgrep",
+			Actions: actions,
+		}},
+	}}, detailBrowserState{}, false)
+	updated, _ := model.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyEnter}))
+	model = updated.(toolTableBrowserModel)
+	view := model.View().Content
+	if !strings.Contains(view, "> action 1 [press a or 1]: open backend review") || !strings.Contains(view, "expanded actions:") {
+		t.Fatalf("expected expanded action focus in table browser:\n%s", view)
+	}
+	updated, _ = model.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyDown}))
+	model = updated.(toolTableBrowserModel)
+	view = model.View().Content
+	if !strings.Contains(view, "> action 2 [press 2]: open update evidence") {
+		t.Fatalf("expected cursor to move to second expanded action:\n%s", view)
+	}
+	for _, want := range []string{"action 3 [press 3]: open security review", "action 4 [press 4]: open manual review", "action 5 [press 5]: open extra review"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("expected expanded row to preserve all actions with %q:\n%s", want, view)
+		}
+	}
+	updated, _ = model.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyEnter}))
+	model = updated.(toolTableBrowserModel)
+	if model.State.Action != "open-update" {
+		t.Fatalf("expected Enter to run focused expanded action, got %#v", model.State)
 	}
 }
 
@@ -8374,6 +9386,31 @@ func TestToolTableBrowserKeepsSelectedRowVisibleAcrossManySections(t *testing.T)
 	}
 }
 
+func TestToolTableBrowserKeepsExpandedDetailVisibleNearBottom(t *testing.T) {
+	rows := []toolRow{}
+	for i := 0; i < 12; i++ {
+		detail := "detail"
+		if i == 10 {
+			detail = "description: expanded row\nidentity: brew / brew / bottom\nstatus: ok - desired and installed\nlinked evidence: cached update\nnext action: open update evidence"
+		}
+		rows = append(rows, toolRow{Name: fmt.Sprintf("tool-%02d", i), State: "ok", Detail: detail})
+	}
+	model := newToolTableBrowserModel("updev list brew", []toolSection{{
+		Name:  "brew/brew",
+		Title: "brew / brew",
+		Rows:  rows,
+	}}, detailBrowserState{}, false)
+	model.Height = 14
+	model.Move(10)
+	model.ToggleSelected()
+	view := model.View().Content
+	for _, want := range []string{"tool-10", "description: expanded row", "identity: brew / brew / bottom", "next action: open update evidence"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("expected expanded bottom detail to stay visible with %q:\n%s", want, view)
+		}
+	}
+}
+
 func TestBrowserModelsClearStaleNavigationAction(t *testing.T) {
 	detail := newDetailBrowserModel("details", []detailBrowserRow{{
 		Title: "one",
@@ -8442,7 +9479,7 @@ func TestListHubChoicesExposeFiltersAndNavigation(t *testing.T) {
 		Items: []plan.Item{
 			{Provider: "brew", Kind: "brew", Name: "jq", Status: plan.StatusExtra},
 		},
-	}, backendPlan)
+	}, backendPlan, updateReport{}, false)
 	if choices[0].Value != listHubActionFull || !choices[0].Selected {
 		t.Fatalf("expected installed inventory to be the default list hub choice, got %#v", choices[0])
 	}
@@ -8527,6 +9564,38 @@ func TestListFilteredDetailBrowserRequiresRows(t *testing.T) {
 	handled, exit := runListFilteredDetailBrowser("empty", empty, map[string]detailBrowserState{}, "empty", false)
 	if handled || exit {
 		t.Fatalf("expected empty report to fall back to text output")
+	}
+}
+
+func TestDetailBrowserActionKeyIndex(t *testing.T) {
+	if index, ok := detailBrowserActionKeyIndex("1"); !ok || index != 0 {
+		t.Fatalf("expected key 1 to map to first action, got index=%d ok=%v", index, ok)
+	}
+	if _, ok := detailBrowserActionKeyIndex("0"); ok {
+		t.Fatal("did not expect key 0 to map to an action")
+	}
+	if _, ok := detailBrowserActionKeyIndex("a"); ok {
+		t.Fatal("did not expect key a to map through numeric action helper")
+	}
+}
+
+func TestDetailBrowserPreservesPreformattedDetailLines(t *testing.T) {
+	lines := detailBrowserExpandedLinesWithWidth(detailBrowserRow{
+		Detail: "stdout line one\nstdout line two",
+		Metadata: []string{
+			"stderr: warning one\nwarning two",
+		},
+	}, 80)
+	joined := strings.Join(lines, "\n")
+	for _, want := range []string{
+		"detail: stdout line one",
+		"stdout line two",
+		"stderr: warning one",
+		"warning two",
+	} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("expected expanded detail to preserve %q in %#v", want, lines)
+		}
 	}
 }
 

@@ -12,7 +12,9 @@ import (
 	"time"
 	"unicode"
 
+	"github.com/webkaz-labs/updev/internal/brewfile"
 	"github.com/webkaz-labs/updev/internal/i18n"
+	"github.com/webkaz-labs/updev/internal/mise"
 	"github.com/webkaz-labs/updev/internal/plan"
 	"github.com/webkaz-labs/updev/internal/runner"
 	"github.com/webkaz-labs/updev/internal/textui"
@@ -97,6 +99,7 @@ type streamingCommandRunner interface {
 
 func parseUpdateOptions(args []string) (updateOptions, error) {
 	opts := updateOptions{format: "text", root: defaultRoot(), inventory: "fast", security: defaultUpdateSecurityMode(), policy: securityPolicyPath()}
+	plain := false
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
 		case "--format":
@@ -105,6 +108,8 @@ func parseUpdateOptions(args []string) (updateOptions, error) {
 			}
 			opts.format = args[i+1]
 			i++
+		case "--plain":
+			plain = true
 		case "--root":
 			if i+1 >= len(args) {
 				return opts, fmt.Errorf("--root requires a value")
@@ -145,6 +150,10 @@ func parseUpdateOptions(args []string) (updateOptions, error) {
 		default:
 			return opts, fmt.Errorf("unknown option: %s", args[i])
 		}
+	}
+	if plain {
+		opts.format = "text"
+		opts.noTUI = true
 	}
 	if opts.format != "text" && opts.format != "json" {
 		return opts, fmt.Errorf("unsupported format: %s", opts.format)
@@ -232,9 +241,11 @@ func runUpdate(opts updateOptions, commandRunner commandRunner) int {
 			return code
 		}
 	} else {
-		printUpdateText(report)
 		if shouldRunUpdateHub(opts, os.Stdin, os.Stdout) {
 			runUpdateHub(report)
+		} else {
+			printUpdateText(report)
+			warnInteractiveUnavailable(os.Stdin, os.Stdout, opts.format, opts.tui, opts.noTUI)
 		}
 		if !opts.dryRun && opts.inventory == "legacy" {
 			fmt.Println("refreshing legacy list...")
@@ -655,10 +666,13 @@ type lastReportOptions struct {
 	status   string
 	query    string
 	details  bool
+	tui      bool
+	noTUI    bool
 }
 
 func parseLastReportOptions(args []string) (lastReportOptions, error) {
 	opts := lastReportOptions{format: "text", section: "summary"}
+	plain := false
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
 		case "--format":
@@ -667,6 +681,8 @@ func parseLastReportOptions(args []string) (lastReportOptions, error) {
 			}
 			opts.format = args[i+1]
 			i++
+		case "--plain":
+			plain = true
 		case "--section":
 			if i+1 >= len(args) {
 				return opts, fmt.Errorf("--section requires a value")
@@ -693,11 +709,19 @@ func parseLastReportOptions(args []string) (lastReportOptions, error) {
 			i++
 		case "--details":
 			opts.details = true
+		case "--interactive", "--tui":
+			opts.tui = true
+		case "--no-interactive", "--no-tui":
+			opts.noTUI = true
 		case "--help", "-h":
-			return opts, fmt.Errorf("usage: updev last [--section summary|updates|security|inventory|logs|full] [--provider name] [--status status|attention] [--query text] [--details] [--format text|json]")
+			return opts, fmt.Errorf("usage: updev last [--section summary|updates|security|inventory|logs|full] [--provider name] [--status status|attention] [--query text] [--details] [--interactive|--no-interactive|--plain] [--format text|json]")
 		default:
 			return opts, fmt.Errorf("unknown option: %s", args[i])
 		}
+	}
+	if plain {
+		opts.format = "text"
+		opts.noTUI = true
 	}
 	if opts.format != "text" && opts.format != "json" {
 		return opts, fmt.Errorf("unsupported format: %s", opts.format)
@@ -724,8 +748,17 @@ func runLastReport(opts lastReportOptions) int {
 		}
 		return updateExitCode(entry.Report.Status)
 	}
-	printLastReportText(os.Stdout, entry, opts)
+	if shouldRunLastReportHub(opts, os.Stdin, os.Stdout) {
+		runUpdateHubWithDefault(entry.Report, lastReportHubDefaultAction(opts.section))
+	} else {
+		printLastReportText(os.Stdout, entry, opts)
+		warnInteractiveUnavailable(os.Stdin, os.Stdout, opts.format, opts.tui, opts.noTUI)
+	}
 	return updateExitCode(entry.Report.Status)
+}
+
+func shouldRunLastReportHub(opts lastReportOptions, input io.Reader, output io.Writer) bool {
+	return shouldRunUpdevInteractive(input, output, opts.format, opts.tui, opts.noTUI)
 }
 
 func printLastReportText(w io.Writer, entry updateReportCacheEntry, opts lastReportOptions) {
@@ -940,6 +973,8 @@ func updateStepMatchesQuery(step updateStep, query string) bool {
 		step.Reason,
 		step.Stdout,
 		step.Stderr,
+		strings.Join(step.Updated, " "),
+		strings.Join(step.SkippedItems, " "),
 	}, " "))
 	return strings.Contains(haystack, needle)
 }
@@ -1551,31 +1586,99 @@ const (
 	updateHubActionJSON               = "json"
 )
 
+const securityDetailActionPrefix = "security-policy"
+
 func runUpdateHub(report updateReport) {
+	runUpdateHubWithDefault(report, "")
+}
+
+func buildUpdateHubReviewPlans(root string) (inventoryPlanReport, backendPlanReport) {
+	progress := newStartupProgress(os.Stdin, os.Stderr, "text", reviewPlanProgressMessage(defaultLanguage()))
+	progress.Start()
+	manualPlan := buildInventoryPlanReport(inventoryPlanOptions{root: root, provider: manualProviderName})
+	backendPlan := buildBackendPlanReport(context.Background(), backendOptions{command: "plan", root: root})
+	progress.Done()
+	return manualPlan, backendPlan
+}
+
+func buildInventoryPlanForHub(root string) inventoryPlanReport {
+	progress := newStartupProgress(os.Stdin, os.Stderr, "text", reviewPlanProgressMessage(defaultLanguage()))
+	progress.Start()
+	report := buildInventoryPlanReport(inventoryPlanOptions{root: root, provider: manualProviderName})
+	progress.Done()
+	return report
+}
+
+func runUpdateHubWithDefault(report updateReport, preferredAction string) {
 	defaultAction := updateHubActionInventoryAll
-	manualPlan := buildInventoryPlanReport(inventoryPlanOptions{root: report.Root, provider: manualProviderName})
-	backendPlan := buildBackendPlanReport(context.Background(), backendOptions{command: "plan", root: report.Root})
+	manualPlan, backendPlan := buildUpdateHubReviewPlans(report.Root)
 	if manualPlan.AttentionCount > 0 {
 		defaultAction = updateHubActionManualPlan
 	} else if len(backendPlan.Findings) > 0 {
 		defaultAction = updateHubActionBackends
 	}
+	if updateHubActionExists(preferredAction) {
+		defaultAction = preferredAction
+	} else if updateHubActionAvailable(preferredAction, updateHubChoices(report, manualPlan, backendPlan, defaultAction)) {
+		defaultAction = preferredAction
+	}
+	pendingAction := initialUpdateHubAction(preferredAction, defaultAction)
 	detailStates := map[string]detailBrowserState{}
 	for {
-		action, err := runUpdevSelect("updev update", tr("Choose what to inspect from the cached update report.", "cached update report から確認する項目を選択します。"), updateHubChoices(report, manualPlan, backendPlan, defaultAction), defaultAction)
-		if err != nil {
-			return
+		action := pendingAction
+		pendingAction = ""
+		if action == "" {
+			action = updateHubActionDashboard
 		}
 		if action == updevActionExit {
 			return
 		}
-		defaultAction = action
+		focusAction := defaultAction
+		if action != updateHubActionDashboard {
+			defaultAction = action
+			focusAction = action
+		}
 		color := textui.ColorEnabled()
 		switch action {
 		case updateHubActionDashboard:
-			printUpdateText(report)
+			stateKey := "dashboard"
+			_, hasSummaryState := detailStates[stateKey]
+			if !hasSummaryState || focusAction == "" || focusAction == updateHubActionDashboard {
+				focusAction = updateHubActionLogs
+			}
+			state, err := runUpdateSummaryBrowser(updateHubTitle(report), report, manualPlan, backendPlan, detailStates[stateKey], focusAction, color)
+			if err != nil {
+				printUpdateText(report)
+				break
+			}
+			detailStates[stateKey] = state
+			if state.Action == updevActionExit {
+				return
+			}
+			if state.Action == updevActionBack {
+				return
+			}
+			if state.Action == updevActionHome {
+				defaultAction = updateHubActionDashboard
+				continue
+			}
+			if route, ok := parseUpdateSummaryRoute(state.Action); ok {
+				if exit := runUpdateSummaryRouteDetail(report, route, backendPlan, detailStates, color); exit {
+					return
+				}
+				defaultAction = route.Base
+				pendingAction = updateHubActionDashboard
+				continue
+			}
+			if updateHubActionExists(state.Action) {
+				defaultAction = state.Action
+				pendingAction = state.Action
+				continue
+			}
+			continue
 		case updateHubActionInventoryAll:
 			inventory := buildListReport(inventoryResult{Report: report.Inventory}, listOptions{})
+			inventory.Evidence = addBackendListEvidence(inventory.Evidence, backendPlan)
 			action, handled := runListFilteredBrowser("updev installed inventory", inventory, detailStates, color)
 			if !handled {
 				printLastInventorySection(os.Stdout, report, lastReportOptions{section: "inventory", details: true}, color)
@@ -1584,15 +1687,42 @@ func runUpdateHub(report updateReport) {
 			if action == updevActionExit {
 				return
 			}
-			if action == updevActionHome {
+			if action == updevActionBack {
 				defaultAction = updateHubActionInventoryAll
+				pendingAction = updateHubActionDashboard
+				continue
+			}
+			if action == updevActionHome {
+				defaultAction = updateHubActionDashboard
+				pendingAction = updateHubActionDashboard
+			}
+			if route, ok := parseListRouteAction(action); ok {
+				outcome := runListRouteDetail(report.Root, route, backendPlan, report, true, detailStates, color)
+				if outcome == listRouteDetailExit {
+					return
+				}
+				if outcome == listRouteDetailHome {
+					defaultAction = updateHubActionDashboard
+					pendingAction = updateHubActionDashboard
+					continue
+				}
+				if route.Domain == listHubActionBackends {
+					backendPlan = buildBackendPlanReport(context.Background(), backendOptions{command: "plan", root: report.Root})
+				}
+				defaultAction = updateHubActionInventoryAll
+				pendingAction = updateHubActionInventoryAll
+				continue
+			}
+			if routed := updateHubActionFromListAction(action); routed != "" {
+				defaultAction = routed
+				pendingAction = routed
 			}
 			continue
 		case updateHubActionInventoryAttention:
 			printLastInventorySection(os.Stdout, report, lastReportOptions{section: "inventory", status: "attention", details: false}, color)
 		case updateHubActionInventoryDetails:
 			stateKey := "inventory-details"
-			state, err := runDetailBrowserWithState("updev inventory details", updateInventoryDetailRows(report), detailStates[stateKey], color)
+			state, err := runDetailBrowserWithState("updev inventory details", updateInventoryDetailRowsWithBackend(report, backendPlan), detailStates[stateKey], color)
 			if err != nil {
 				printLastInventorySection(os.Stdout, report, lastReportOptions{section: "inventory", status: "attention", details: true}, color)
 				break
@@ -1601,16 +1731,64 @@ func runUpdateHub(report updateReport) {
 			if state.Action == updevActionExit {
 				return
 			}
+			if state.Action == updevActionBack {
+				defaultAction = updateHubActionInventoryDetails
+				pendingAction = updateHubActionDashboard
+				continue
+			}
 			if state.Action == updevActionHome {
-				defaultAction = updateHubActionInventoryAll
+				defaultAction = updateHubActionDashboard
+				continue
+			}
+			if route, ok := parseListRouteAction(state.Action); ok {
+				outcome := runListRouteDetail(report.Root, route, backendPlan, report, true, detailStates, color)
+				if outcome == listRouteDetailExit {
+					return
+				}
+				if outcome == listRouteDetailHome {
+					defaultAction = updateHubActionDashboard
+					pendingAction = updateHubActionDashboard
+					continue
+				}
+				defaultAction = updateHubActionInventoryDetails
+				pendingAction = updateHubActionInventoryDetails
+				continue
+			}
+			if routed := updateHubActionFromListAction(state.Action); routed != "" {
+				defaultAction = routed
+				pendingAction = routed
 				continue
 			}
 			continue
 		case updateHubActionManualPlan:
-			printInventoryPlanText(os.Stdout, manualPlan)
+			stateKey := "manual-plan"
+			state, err := runToolTableBrowserWithState("updev manual review plan", manualPlanToolSections(manualPlan), detailStates[stateKey], color)
+			if err != nil {
+				printInventoryPlanText(os.Stdout, manualPlan)
+				break
+			}
+			detailStates[stateKey] = state
+			if state.Action == updevActionExit {
+				return
+			}
+			if state.Action == updevActionBack {
+				defaultAction = updateHubActionManualPlan
+				pendingAction = updateHubActionDashboard
+				continue
+			}
+			if state.Action == updevActionHome {
+				defaultAction = updateHubActionDashboard
+				continue
+			}
+			if handleManualPlanDetailAction(report.Root, state.Action) {
+				manualPlan = buildInventoryPlanForHub(report.Root)
+				defaultAction = updateHubActionManualPlan
+				continue
+			}
+			continue
 		case updateHubActionBackends:
 			stateKey := "backends"
-			state, err := runDetailBrowserWithState("updev backend convergence", backendDetailRows(backendPlan), detailStates[stateKey], color)
+			state, err := runToolTableBrowserWithState("updev backend convergence", backendToolSections(backendPlan), detailStates[stateKey], color)
 			if err != nil {
 				printBackendPlanText(os.Stdout, backendPlan, color)
 				break
@@ -1619,8 +1797,18 @@ func runUpdateHub(report updateReport) {
 			if state.Action == updevActionExit {
 				return
 			}
+			if state.Action == updevActionBack {
+				defaultAction = updateHubActionBackends
+				pendingAction = updateHubActionDashboard
+				continue
+			}
 			if state.Action == updevActionHome {
-				defaultAction = updateHubActionInventoryAll
+				defaultAction = updateHubActionDashboard
+				continue
+			}
+			if handleBackendDetailAction(report.Root, state.Action) {
+				backendPlan = buildBackendPlanForHub(report.Root)
+				defaultAction = updateHubActionBackends
 				continue
 			}
 			continue
@@ -1630,7 +1818,30 @@ func runUpdateHub(report updateReport) {
 				continue
 			}
 			filtered := filterUpdateReport(report, opts)
-			printLastUpdateSteps(os.Stdout, filtered, true, color)
+			stateKey := "updates-filter:" + filterSummary(lastReportFilterMap(opts))
+			state, err := runDetailBrowserWithState("updev update steps", updateLogDetailRows(filtered), detailStates[stateKey], color)
+			if err != nil {
+				printLastUpdateSteps(os.Stdout, filtered, true, color)
+				break
+			}
+			detailStates[stateKey] = state
+			if state.Action == updevActionExit {
+				return
+			}
+			if state.Action == updevActionBack {
+				defaultAction = updateHubActionUpdatesFilter
+				pendingAction = updateHubActionDashboard
+				continue
+			}
+			if state.Action == updevActionHome {
+				defaultAction = updateHubActionDashboard
+				continue
+			}
+			if updateHubActionExists(state.Action) {
+				defaultAction = state.Action
+				pendingAction = state.Action
+				continue
+			}
 		case updateHubActionSecurity:
 			stateKey := "security"
 			state, err := runDetailBrowserWithState("updev security details", updateSecurityDetailRows(report), detailStates[stateKey], color)
@@ -1642,8 +1853,17 @@ func runUpdateHub(report updateReport) {
 			if state.Action == updevActionExit {
 				return
 			}
+			if state.Action == updevActionBack {
+				defaultAction = updateHubActionSecurity
+				pendingAction = updateHubActionDashboard
+				continue
+			}
 			if state.Action == updevActionHome {
-				defaultAction = updateHubActionInventoryAll
+				defaultAction = updateHubActionDashboard
+				continue
+			}
+			if handleSecurityDetailAction(&report, state.Action) {
+				defaultAction = updateHubActionSecurity
 				continue
 			}
 			continue
@@ -1663,8 +1883,17 @@ func runUpdateHub(report updateReport) {
 			if state.Action == updevActionExit {
 				return
 			}
+			if state.Action == updevActionBack {
+				defaultAction = updateHubActionSecurityFilter
+				pendingAction = updateHubActionDashboard
+				continue
+			}
 			if state.Action == updevActionHome {
-				defaultAction = updateHubActionInventoryAll
+				defaultAction = updateHubActionDashboard
+				continue
+			}
+			if handleSecurityDetailAction(&report, state.Action) {
+				defaultAction = updateHubActionSecurity
 				continue
 			}
 			continue
@@ -1679,13 +1908,41 @@ func runUpdateHub(report updateReport) {
 			if state.Action == updevActionExit {
 				return
 			}
+			if state.Action == updevActionBack {
+				defaultAction = updateHubActionLogs
+				pendingAction = updateHubActionDashboard
+				continue
+			}
 			if state.Action == updevActionHome {
-				defaultAction = updateHubActionInventoryAll
+				defaultAction = updateHubActionDashboard
+				continue
+			}
+			if updateHubActionExists(state.Action) {
+				defaultAction = state.Action
+				pendingAction = state.Action
 				continue
 			}
 			continue
 		case updateHubActionFull:
-			printUpdateBodyTo(os.Stdout, report, color)
+			stateKey := "full"
+			state, err := runUpdateFullReportBrowser(report, detailStates[stateKey], color)
+			if err != nil {
+				printUpdateBodyTo(os.Stdout, report, color)
+				break
+			}
+			detailStates[stateKey] = state
+			if state.Action == updevActionExit {
+				return
+			}
+			if state.Action == updevActionBack {
+				defaultAction = updateHubActionFull
+				pendingAction = updateHubActionDashboard
+				continue
+			}
+			if state.Action == updevActionHome {
+				defaultAction = updateHubActionDashboard
+				continue
+			}
 		case updateHubActionJSON:
 			entry := updateReportCacheEntry{Version: 1, Type: "update", CreatedAt: time.Now(), Report: report}
 			if cached, ok := loadLastUpdateReport(); ok {
@@ -1693,13 +1950,527 @@ func runUpdateHub(report updateReport) {
 			}
 			_ = encodeJSON(buildUpdateReportSectionView(entry, lastReportOptions{section: "full"}))
 		}
-		next, err := runPostSectionNavigation()
-		if err != nil || next == updevActionExit {
+		pendingAction = updateHubActionDashboard
+	}
+}
+
+func runUpdateSummaryRouteDetail(report updateReport, route updateSummaryRoute, backendPlan backendPlanReport, detailStates map[string]detailBrowserState, color bool) bool {
+	opts := lastReportOptions{provider: route.Provider, query: route.Query}
+	filtered := filterUpdateReport(report, opts)
+	suffix := updateSummaryRouteTitleSuffix(route)
+	switch route.Base {
+	case updateHubActionLogs:
+		stateKey := "summary:logs:" + filterSummary(lastReportFilterMap(opts))
+		state, err := runDetailBrowserWithState("updev update logs"+suffix, updateLogDetailRows(filtered), detailStates[stateKey], color)
+		if err != nil {
+			printLastUpdateLogs(os.Stdout, filtered, color)
+			return false
+		}
+		detailStates[stateKey] = state
+		return state.Action == updevActionExit
+	case updateHubActionSecurity:
+		stateKey := "summary:security:" + filterSummary(lastReportFilterMap(opts))
+		state, err := runDetailBrowserWithState("updev security details"+suffix, updateSecurityDetailRows(filtered), detailStates[stateKey], color)
+		if err != nil {
+			printLastSecuritySection(os.Stdout, filtered, true, color)
+			return false
+		}
+		detailStates[stateKey] = state
+		return state.Action == updevActionExit
+	case updateHubActionInventoryAll:
+		inventory := buildListReport(inventoryResult{Report: filtered.Inventory}, listOptions{provider: route.Provider, query: route.Query})
+		inventory.Evidence = addBackendListEvidence(inventory.Evidence, backendPlan)
+		action, handled := runListFilteredBrowser("updev installed inventory"+suffix, inventory, detailStates, color)
+		if !handled {
+			printLastInventorySection(os.Stdout, filtered, lastReportOptions{section: "inventory", provider: route.Provider, query: route.Query, details: true}, color)
+			return false
+		}
+		return action == updevActionExit
+	case updateHubActionInventoryDetails:
+		stateKey := "summary:inventory-details:" + filterSummary(lastReportFilterMap(opts))
+		state, err := runDetailBrowserWithState("updev inventory details"+suffix, updateInventoryDetailRowsWithBackend(filtered, backendPlan), detailStates[stateKey], color)
+		if err != nil {
+			printLastInventorySection(os.Stdout, filtered, lastReportOptions{section: "inventory", provider: route.Provider, query: route.Query, details: true}, color)
+			return false
+		}
+		detailStates[stateKey] = state
+		return state.Action == updevActionExit
+	default:
+		return false
+	}
+}
+
+func updateSummaryRouteTitleSuffix(route updateSummaryRoute) string {
+	parts := []string{}
+	if route.Provider != "" {
+		parts = append(parts, "provider="+route.Provider)
+	}
+	if route.Query != "" {
+		parts = append(parts, "query="+route.Query)
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return " (" + strings.Join(parts, ", ") + ")"
+}
+
+func runUpdateFullReportBrowser(report updateReport, state detailBrowserState, color bool) (detailBrowserState, error) {
+	var body strings.Builder
+	printUpdateBodyTo(&body, report, false)
+	if state.Expanded == nil {
+		state.Expanded = map[int]bool{0: true}
+	} else if len(state.Expanded) == 0 {
+		state.Expanded[0] = true
+	}
+	return runDetailBrowserWithState("updev full report", []detailBrowserRow{{
+		Title:   "full report",
+		Status:  string(report.Status),
+		Summary: tr("cached update report", "cached update report"),
+		Detail:  body.String(),
+	}}, state, color)
+}
+
+func updateHubTitle(report updateReport) string {
+	status := report.Status
+	if status == "" {
+		status = plan.StatusOK
+	}
+	return fmt.Sprintf("updev update %s", status)
+}
+
+func lastReportHubDefaultAction(section string) string {
+	switch strings.ToLower(strings.TrimSpace(section)) {
+	case "updates":
+		return updateHubActionUpdatesFilter
+	case "security":
+		return updateHubActionSecurity
+	case "inventory":
+		return updateHubActionInventoryAll
+	case "logs":
+		return updateHubActionLogs
+	case "full":
+		return updateHubActionFull
+	default:
+		return ""
+	}
+}
+
+func updateHubActionAvailable(action string, choices []updevChoice) bool {
+	if action == "" {
+		return false
+	}
+	for _, choice := range choices {
+		if choice.Value == action {
+			return true
+		}
+	}
+	return false
+}
+
+func handleManualPlanDetailAction(root string, value string) bool {
+	action, target, ok := parseManualPlanDetailAction(value)
+	if !ok {
+		return false
+	}
+	switch action {
+	case "accept", "edit", "ignore":
+		if !confirmManualPlanWriteAction(action, target) {
+			return true
+		}
+		code := runInventoryReview(inventoryReviewOptions{
+			action:   action,
+			format:   "text",
+			provider: manualProviderName,
+			query:    target,
+			root:     root,
+		})
+		if code != 0 && code != 2 {
+			fmt.Fprintf(os.Stderr, "manual review action exited with code %d\n", code)
+		}
+	case "review-cask":
+		runManualPlanProviderReview("brew", "info", "--cask", target)
+	case "review-mas":
+		runManualPlanProviderReview("mas", "info", target)
+	case "open-vendor":
+		runManualPlanProviderReview("open", target)
+	default:
+		return false
+	}
+	return true
+}
+
+func confirmManualPlanWriteAction(action string, target string) bool {
+	selected, err := runUpdevSelect("manual inventory action", fmt.Sprintf("Apply %s to %s?", action, target), []updevChoice{
+		{Value: "apply", Label: "Apply", Description: "Write the selected manual inventory override.", Selected: true},
+		{Value: updevActionBack, Label: "Back", Description: "Return without writing."},
+	}, "apply")
+	return err == nil && selected == "apply"
+}
+
+func handleBackendDetailAction(root string, value string) bool {
+	action, current, recommended, ok := parseBackendDetailAction(value)
+	if !ok {
+		return false
+	}
+	switch action {
+	case "remove-brew":
+		kind, name, ok := strings.Cut(current, ":")
+		if !ok || kind == "" || name == "" {
+			fmt.Fprintf(os.Stderr, "backend Brewfile removal failed: invalid target %q\n", current)
+			return true
+		}
+		if !confirmBackendBrewfileRemoveAction(kind, name, recommended) {
+			return true
+		}
+		changed, err := brewfile.RemoveEntry(root, kind, name)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "backend Brewfile removal failed: %v\n", err)
+			return true
+		}
+		if changed {
+			fmt.Printf("%s %s %q (mise %s owns it)\n", textui.StyleLabel("removed:", textui.ColorEnabled()), kind, name, recommended)
+		} else {
+			fmt.Printf("%s %s %q\n", textui.StyleDim("no change:", textui.ColorEnabled()), kind, name)
+		}
+	case "rewrite-mise":
+		if !confirmBackendWriteAction(current, recommended) {
+			return true
+		}
+		changed, err := mise.RenameTool(root, current, recommended)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "backend rewrite failed: %v\n", err)
+			return true
+		}
+		if changed {
+			fmt.Printf("%s %s -> %s\n", textui.StyleLabel("rewritten:", textui.ColorEnabled()), current, recommended)
+		} else {
+			fmt.Printf("%s %s -> %s\n", textui.StyleDim("no change:", textui.ColorEnabled()), current, recommended)
+		}
+	case "remove-mise":
+		if !confirmBackendRemoveAction(current, recommended) {
+			return true
+		}
+		changed, err := mise.RemoveTool(root, current)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "backend removal failed: %v\n", err)
+			return true
+		}
+		if changed {
+			fmt.Printf("%s %s (%s covers it)\n", textui.StyleLabel("removed:", textui.ColorEnabled()), current, recommended)
+		} else {
+			fmt.Printf("%s %s\n", textui.StyleDim("no change:", textui.ColorEnabled()), current)
+		}
+	default:
+		return false
+	}
+	return true
+}
+
+func confirmBackendWriteAction(current string, recommended string) bool {
+	selected, err := runUpdevSelect("backend convergence action", fmt.Sprintf(tr("Rewrite mise backend %s -> %s?", "mise backend を %s -> %s に書き換えますか?"), current, recommended), []updevChoice{
+		{Value: "apply", Label: tr("Apply", "適用"), Description: tr("Rename the mise tool key and preserve its current spec.", "現在の spec を維持したまま mise tool key を rename します。"), Selected: true},
+		{Value: updevActionBack, Label: tr("Back", "戻る"), Description: tr("Return without writing.", "書き込まずに戻ります。")},
+	}, "apply")
+	return err == nil && selected == "apply"
+}
+
+func confirmBackendRemoveAction(current string, recommended string) bool {
+	selected, err := runUpdevSelect("backend convergence action", fmt.Sprintf(tr("Remove old mise backend %s? Preferred entry %s already covers it.", "古い mise backend %s を削除しますか? 優先 entry %s が既にカバーしています。"), current, recommended), []updevChoice{
+		{Value: "apply", Label: tr("Apply", "適用"), Description: tr("Remove the current mise tool key because the preferred entry already covers it.", "優先 entry がカバー済みのため、現在の mise tool key を削除します。"), Selected: true},
+		{Value: updevActionBack, Label: tr("Back", "戻る"), Description: tr("Return without writing.", "書き込まずに戻ります。")},
+	}, "apply")
+	return err == nil && selected == "apply"
+}
+
+func confirmBackendBrewfileRemoveAction(kind string, name string, recommended string) bool {
+	selected, err := runUpdevSelect("backend convergence action", fmt.Sprintf(tr("Remove Brewfile %s %q? mise entry %s already exists.", "Brewfile の %s %q を削除しますか? mise entry %s は既に存在します。"), kind, name, recommended), []updevChoice{
+		{Value: "apply", Label: tr("Apply", "適用"), Description: tr("Remove desired-state ownership from Brewfile. This does not uninstall the Homebrew package.", "Brewfile の desired-state ownership を削除します。Homebrew package の uninstall は行いません。"), Selected: true},
+		{Value: updevActionBack, Label: tr("Back", "戻る"), Description: tr("Return without writing.", "書き込まずに戻ります。")},
+	}, "apply")
+	return err == nil && selected == "apply"
+}
+
+func handleSecurityDetailAction(report *updateReport, value string) bool {
+	action, provider, kind, name, ok := parseSecurityDetailAction(value)
+	if !ok || report == nil {
+		return false
+	}
+	decision := ""
+	reason := ""
+	expires := ""
+	switch action {
+	case "allow-7d":
+		decision = "allow"
+		reason = "accepted from updev detail browser after local review"
+		expires = time.Now().AddDate(0, 0, 7).Format("2006-01-02")
+	case "allow-7d-rerun":
+		decision = "allow"
+		reason = "accepted from updev detail browser after local review"
+		expires = time.Now().AddDate(0, 0, 7).Format("2006-01-02")
+	case "allow-custom", "allow-custom-rerun":
+		decision = "allow"
+		var ok bool
+		reason, expires, ok = promptSecurityPolicyAllowInputs(provider, kind, name)
+		if !ok {
+			return true
+		}
+	case "hold":
+		decision = "hold"
+		reason = "held from updev detail browser after local review"
+	default:
+		return false
+	}
+	if !confirmSecurityPolicyAction(decision, provider, kind, name, expires) {
+		return true
+	}
+	path := securityPolicyPath()
+	if report.Policy != nil && strings.TrimSpace(report.Policy.Path) != "" {
+		path = report.Policy.Path
+	}
+	rule := securityPolicyRule{
+		Provider: provider,
+		Kind:     kind,
+		Name:     name,
+		Decision: decision,
+		Reason:   reason,
+		Expires:  expires,
+	}
+	if err := addSecurityPolicyRule(path, rule); err != nil {
+		fmt.Fprintf(os.Stderr, "security policy update failed: %v\n", err)
+		return true
+	}
+	refreshUpdateReportSecurityPolicy(report, path)
+	if action == "allow-7d-rerun" || action == "allow-custom-rerun" {
+		rerunUpdateProvider(report, provider)
+	}
+	report.Report = saveLastUpdateReport(*report)
+	if expires != "" {
+		fmt.Printf("%s %s/%s %s -> %s until %s\n", textui.StyleLabel("policy:", textui.ColorEnabled()), provider, kind, name, decision, expires)
+	} else {
+		fmt.Printf("%s %s/%s %s -> %s\n", textui.StyleLabel("policy:", textui.ColorEnabled()), provider, kind, name, decision)
+	}
+	return true
+}
+
+func promptSecurityPolicyAllowInputs(provider string, kind string, name string) (string, string, bool) {
+	defaultReason := "accepted from updev detail browser after local review"
+	reason, err := runUpdevInput(
+		"security allow reason",
+		fmt.Sprintf(tr("Reason for allowing %s/%s %s.", "%s/%s %s を許可する理由を入力します。"), provider, kind, name),
+		tr("reviewed vendor provenance", "vendor provenance を確認済み"),
+		defaultReason,
+	)
+	if err != nil || strings.TrimSpace(reason) == "" {
+		return "", "", false
+	}
+	defaultExpiry := time.Now().AddDate(0, 0, 7).Format("2006-01-02")
+	expires, err := runUpdevInput(
+		"security allow expiry",
+		fmt.Sprintf(tr("Expiry date for %s/%s %s. YYYY-MM-DD is required for allow rules.", "%s/%s %s の期限を入力します。allow rule には YYYY-MM-DD が必要です。"), provider, kind, name),
+		defaultExpiry,
+		defaultExpiry,
+	)
+	if err != nil || strings.TrimSpace(expires) == "" {
+		return "", "", false
+	}
+	expires, err = validateSecurityPolicyAllowExpiry(expires, time.Now())
+	if err != nil {
+		if expires == "" {
+			fmt.Fprintln(os.Stderr, "security policy expiry must not be in the past")
+		} else {
+			fmt.Fprintf(os.Stderr, "security policy expiry must be YYYY-MM-DD: %s\n", expires)
+		}
+		return "", "", false
+	}
+	return strings.TrimSpace(reason), strings.TrimSpace(expires), true
+}
+
+func validateSecurityPolicyAllowExpiry(expires string, now time.Time) (string, error) {
+	trimmed := strings.TrimSpace(expires)
+	expiryDate, err := time.Parse("2006-01-02", trimmed)
+	if err != nil {
+		return trimmed, err
+	}
+	today, _ := time.Parse("2006-01-02", now.Format("2006-01-02"))
+	if expiryDate.Before(today) {
+		return "", fmt.Errorf("expiry is in the past")
+	}
+	return trimmed, nil
+}
+
+func rerunUpdateProvider(report *updateReport, provider string) {
+	if report == nil {
+		return
+	}
+	step, ok := updateStepForProvider(provider)
+	if !ok {
+		fmt.Fprintf(os.Stderr, "no update step is available for provider %s\n", provider)
+		return
+	}
+	fmt.Printf("%s %s\n", textui.StyleLabel("rerunning:", textui.ColorEnabled()), provider)
+	result := runUpdateStepWithOutput(context.Background(), runner.Local{}, step, false, "", true)
+	replaced := false
+	for index, existing := range report.Steps {
+		if existing.Name == provider {
+			report.Steps[index] = result
+			replaced = true
+			break
+		}
+	}
+	if !replaced {
+		report.Steps = append(report.Steps, result)
+	}
+	refreshUpdateReportStatus(report)
+}
+
+func updateStepForProvider(provider string) (updateStep, bool) {
+	for _, step := range updateSteps() {
+		if step.Name == provider {
+			return step, true
+		}
+	}
+	return updateStep{}, false
+}
+
+func refreshUpdateReportStatus(report *updateReport) {
+	if report == nil {
+		return
+	}
+	status := plan.StatusOK
+	for _, step := range report.Steps {
+		switch step.Status {
+		case plan.StatusError:
+			report.Status = plan.StatusError
 			return
+		case plan.StatusHeld:
+			status = plan.StatusHeld
 		}
-		if next == updevActionHome {
-			defaultAction = updateHubActionInventoryAll
+	}
+	if report.Inventory.Status == plan.StatusError {
+		report.Status = plan.StatusError
+		return
+	}
+	if status == plan.StatusOK {
+		for _, gate := range report.Safety {
+			if gate.Status == plan.StatusError {
+				report.Status = plan.StatusError
+				return
+			}
+			if gate.Status == plan.StatusHeld && report.Security == "strict" {
+				status = plan.StatusHeld
+			}
 		}
+	}
+	report.Status = status
+}
+
+func confirmSecurityPolicyAction(decision string, provider string, kind string, name string, expires string) bool {
+	description := tr("Write a local security policy rule.", "local security policy rule を書き込みます。")
+	if expires != "" {
+		description = fmt.Sprintf(tr("Write a local security policy rule that expires on %s.", "%s に期限切れになる local security policy rule を書き込みます。"), expires)
+	}
+	selected, err := runUpdevSelect("security policy action", fmt.Sprintf(tr("Mark %s/%s %s as %s?", "%s/%s %s を %s にしますか?"), provider, kind, name, decision), []updevChoice{
+		{Value: "apply", Label: tr("Apply", "適用"), Description: description, Selected: true},
+		{Value: updevActionBack, Label: tr("Back", "戻る"), Description: tr("Return without writing.", "書き込まずに戻ります。")},
+	}, "apply")
+	return err == nil && selected == "apply"
+}
+
+func refreshUpdateReportSecurityPolicy(report *updateReport, path string) {
+	if report == nil {
+		return
+	}
+	policyResult := loadSecurityPolicyForReportPath(path)
+	report.Policy = policyResult.View()
+	for index, gate := range report.Safety {
+		for findingIndex := range gate.Findings {
+			if strings.TrimSpace(gate.Findings[findingIndex].Provider) == "" {
+				gate.Findings[findingIndex].Provider = gate.Provider
+			}
+		}
+		gate.Findings = applySecurityPolicyToSafetyFindings(policyResult.Policy, gate.Findings)
+		gate.Summary = safetySummaryFromFindings(gate.Findings)
+		gate.Status = safetyGateStatusFromFindings(gate)
+		report.Safety[index] = gate
+	}
+}
+
+func safetyGateStatusFromFindings(gate safetyGate) plan.Status {
+	if strings.TrimSpace(gate.Error) != "" {
+		return plan.StatusError
+	}
+	for _, finding := range gate.Findings {
+		if !strings.EqualFold(strings.TrimSpace(finding.Decision), "allow") {
+			return plan.StatusHeld
+		}
+	}
+	return plan.StatusOK
+}
+
+func securityDetailActions(gate safetyGate, finding safetyFinding) []detailBrowserAction {
+	if strings.EqualFold(strings.TrimSpace(finding.Decision), "allow") {
+		return nil
+	}
+	provider := firstNonEmpty(finding.Provider, gate.Provider, "unknown")
+	kind := firstNonEmpty(finding.Kind, "item")
+	if strings.TrimSpace(finding.Name) == "" {
+		return nil
+	}
+	actions := []detailBrowserAction{}
+	if _, ok := updateStepForProvider(provider); ok {
+		actions = append(actions, detailBrowserAction{
+			Value:       securityDetailActionValue("allow-7d-rerun", provider, kind, finding.Name),
+			Label:       tr("allow 7 days and rerun", "7日間許可して再実行"),
+			Description: tr("add a temporary allow rule, then rerun the provider update step", "一時 allow rule を追加し、その provider update step を再実行します"),
+		})
+		actions = append(actions, detailBrowserAction{
+			Value:       securityDetailActionValue("allow-custom-rerun", provider, kind, finding.Name),
+			Label:       tr("custom allow and rerun", "理由/期限を指定して再実行"),
+			Description: tr("enter a reason and expiry, add an allow rule, then rerun the provider update step", "理由と期限を入力して allow rule を追加し、その provider update step を再実行します"),
+		})
+	}
+	actions = append(actions,
+		detailBrowserAction{
+			Value:       securityDetailActionValue("allow-custom", provider, kind, finding.Name),
+			Label:       tr("custom allow", "理由/期限を指定して許可"),
+			Description: tr("enter a reason and expiry before adding the local allow rule", "local allow rule 追加前に理由と期限を入力します"),
+		},
+		detailBrowserAction{
+			Value:       securityDetailActionValue("allow-7d", provider, kind, finding.Name),
+			Label:       tr("allow for 7 days", "7日間だけ許可"),
+			Description: tr("add a temporary local security policy allow rule after review", "確認後に一時的な local security policy allow rule を追加します"),
+		},
+		detailBrowserAction{
+			Value:       securityDetailActionValue("hold", provider, kind, finding.Name),
+			Label:       tr("keep held", "hold として記録"),
+			Description: tr("add a local security policy hold rule with a review reason", "確認理由付きの local security policy hold rule を追加します"),
+		},
+	)
+	return actions
+}
+
+func securityDetailActionValue(action string, provider string, kind string, name string) string {
+	return strings.Join([]string{securityDetailActionPrefix, action, provider, kind, name}, "\t")
+}
+
+func parseSecurityDetailAction(value string) (string, string, string, string, bool) {
+	parts := strings.SplitN(value, "\t", 5)
+	if len(parts) != 5 || parts[0] != securityDetailActionPrefix || parts[1] == "" || parts[2] == "" || parts[3] == "" || parts[4] == "" {
+		return "", "", "", "", false
+	}
+	return parts[1], parts[2], parts[3], parts[4], true
+}
+
+func runManualPlanProviderReview(name string, args ...string) {
+	command := append([]string{name}, args...)
+	fmt.Printf("%s %s\n", textui.StyleLabel("running:", textui.ColorEnabled()), strings.Join(command, " "))
+	if _, err := (runner.Local{}).LookPath(name); err != nil {
+		fmt.Fprintf(os.Stderr, "%s is not available on PATH\n", name)
+		return
+	}
+	result := (runner.Local{}).RunStreaming(context.Background(), os.Stdout, os.Stderr, name, args...)
+	if result.Err != nil {
+		fmt.Fprintf(os.Stderr, "%s exited with code %d\n", name, result.Code)
 	}
 }
 
@@ -1714,7 +2485,8 @@ func updateHubChoices(report updateReport, manualPlan inventoryPlanReport, backe
 		choices = append(choices, updevChoice{Value: updateHubActionManualPlan, Label: tr("Manual review plan", "手動アプリ確認"), Description: fmt.Sprintf(tr("Review %d manual/vendor app candidates and provider adoption suggestions.", "%d 件の手動/vendor app 候補と provider 採用提案を確認します。"), attention)})
 	}
 	if findings := len(backendPlan.Findings); findings > 0 {
-		choices = append(choices, updevChoice{Value: updateHubActionBackends, Label: tr("Backend convergence", "backend 整理"), Description: fmt.Sprintf(tr("Review %d provider/backend recommendations before platform expansion.", "%d 件の provider/backend 推奨を確認します。"), findings)})
+		actions := backendPlanActionableCount(backendPlan)
+		choices = append(choices, updevChoice{Value: updateHubActionBackends, Label: tr("Backend convergence", "backend 整理"), Description: fmt.Sprintf(tr("Review %d provider/backend recommendations; %d can be applied from details.", "%d 件の provider/backend 推奨を確認します。%d 件は詳細から適用できます。"), findings, actions)})
 	}
 	if len(report.Safety) > 0 {
 		choices = append(choices, updevChoice{Value: updateHubActionSecurity, Label: tr("Security", "security"), Description: tr("Show held/review security evidence and remediation.", "held/review の security evidence と remediation を表示します。")})
@@ -1734,6 +2506,280 @@ func updateHubChoices(report updateReport, manualPlan inventoryPlanReport, backe
 		}
 	}
 	return choices
+}
+
+func updateHubActionExists(action string) bool {
+	switch action {
+	case updateHubActionDashboard,
+		updateHubActionInventoryAll,
+		updateHubActionInventoryAttention,
+		updateHubActionInventoryDetails,
+		updateHubActionManualPlan,
+		updateHubActionBackends,
+		updateHubActionUpdatesFilter,
+		updateHubActionSecurity,
+		updateHubActionSecurityFilter,
+		updateHubActionLogs,
+		updateHubActionFull,
+		updateHubActionJSON:
+		return true
+	default:
+		return false
+	}
+}
+
+func updateHubActionFromListAction(action string) string {
+	switch action {
+	case listHubActionManual:
+		return updateHubActionManualPlan
+	case listHubActionBackends:
+		return updateHubActionBackends
+	case listHubActionUpdates:
+		return updateHubActionLogs
+	case listHubActionSecurity:
+		return updateHubActionSecurity
+	default:
+		return ""
+	}
+}
+
+func initialUpdateHubAction(preferredAction string, defaultAction string) string {
+	if strings.TrimSpace(preferredAction) != "" {
+		return defaultAction
+	}
+	return updateHubActionDashboard
+}
+
+func updateDashboardRowIndexForAction(action string) int {
+	switch action {
+	case updateHubActionSecurity, updateHubActionSecurityFilter:
+		return 1
+	case updateHubActionInventoryAll, updateHubActionInventoryAttention, updateHubActionInventoryDetails:
+		return 2
+	case updateHubActionManualPlan:
+		return 3
+	case updateHubActionBackends:
+		return 4
+	case updateHubActionFull, updateHubActionJSON:
+		return 5
+	default:
+		return 0
+	}
+}
+
+func updateDashboardDetailRows(report updateReport, manualPlan inventoryPlanReport, backendPlan backendPlanReport) []detailBrowserRow {
+	return []detailBrowserRow{
+		{
+			Title:   "Update steps",
+			Status:  string(report.Status),
+			Summary: firstNonEmpty(updateStepSummaryText(report.Steps), "no update steps"),
+			Detail:  "Review provider update outcomes, held updates, deferred items, and captured logs.",
+			Metadata: []string{
+				fmt.Sprintf("steps: %d", len(report.Steps)),
+				fmt.Sprintf("updated: %d", updateReportUpdatedItemCount(report)),
+				fmt.Sprintf("deferred: %d", updateReportDeferredItemCount(report)),
+			},
+			Actions: []detailBrowserAction{
+				{Value: updateHubActionUpdatesFilter, Label: "filter updates", Description: "choose a provider/status filter for update steps"},
+				{Value: updateHubActionLogs, Label: "open logs", Description: "inspect captured stdout and stderr"},
+			},
+		},
+		{
+			Title:   "Security",
+			Status:  string(updateDashboardSecurityStatus(report)),
+			Summary: updateDashboardSecuritySummary(report),
+			Detail:  "Review package provenance, release-age, advisory, and scanner decisions.",
+			Metadata: []string{
+				fmt.Sprintf("gates: %d", len(report.Safety)),
+				fmt.Sprintf("attention: %d", updateDashboardSecurityAttention(report)),
+				"mode: " + firstNonEmpty(report.Security, "default"),
+			},
+			Actions: []detailBrowserAction{
+				{Value: updateHubActionSecurity, Label: "open security", Description: "inspect security attention rows"},
+				{Value: updateHubActionSecurityFilter, Label: "filter security", Description: "choose security status filters"},
+			},
+		},
+		{
+			Title:   "Inventory",
+			Status:  string(report.Inventory.Status),
+			Summary: updateDashboardInventorySummary(report.Inventory),
+			Detail:  "Review installed, desired, missing, extra, held, and profile-mismatch inventory rows.",
+			Metadata: []string{
+				fmt.Sprintf("items: %d", len(report.Inventory.Items)),
+				fmt.Sprintf("attention: %d", updateDashboardInventoryAttention(report.Inventory)),
+			},
+			Actions: []detailBrowserAction{
+				{Value: updateHubActionInventoryAll, Label: "open inventory", Description: "browse grouped installed inventory"},
+				{Value: updateHubActionInventoryAttention, Label: "attention", Description: "print inventory attention rows"},
+				{Value: updateHubActionInventoryDetails, Label: "details", Description: "open inventory attention details"},
+			},
+		},
+		{
+			Title:   "Manual review",
+			Status:  manualPlanStatus(manualPlan),
+			Summary: updateDashboardManualPlanSummary(manualPlan),
+			Detail:  "Review manual/vendor app ownership decisions and write explicit overrides only after confirmation.",
+			Metadata: []string{
+				fmt.Sprintf("items: %d", len(manualPlan.Items)),
+				fmt.Sprintf("attention: %d", manualPlan.AttentionCount),
+				fmt.Sprintf("review candidates: %d", len(manualPlan.ReviewCandidates)),
+			},
+			Actions: []detailBrowserAction{
+				{Value: updateHubActionManualPlan, Label: "open manual plan", Description: "browse manual app actions"},
+			},
+		},
+		{
+			Title:   "Backend convergence",
+			Status:  string(backendPlan.Status),
+			Summary: updateDashboardBackendSummary(backendPlan),
+			Detail:  tr("Review provider preference findings and apply safe mise backend rewrites or covered-entry removals where available.", "provider/backend の優先順を確認し、安全な mise backend rewrite またはカバー済み entry の削除だけを詳細から適用します。"),
+			Metadata: []string{
+				fmt.Sprintf("findings: %d", len(backendPlan.Findings)),
+				fmt.Sprintf("safe actions: %d", backendPlanActionableCount(backendPlan)),
+				"preference: " + backendPreferenceOrderText(),
+			},
+			Actions: []detailBrowserAction{
+				{Value: updateHubActionBackends, Label: tr("open backends", "backend 整理を開く"), Description: tr("browse backend findings and safe actions", "backend 推奨と安全な action を確認します")},
+			},
+		},
+		{
+			Title:   "Full report",
+			Status:  string(report.Status),
+			Summary: "Open the full cached report text or JSON.",
+			Detail:  "Use this when the focused dashboard rows do not expose enough context.",
+			Actions: []detailBrowserAction{
+				{Value: updateHubActionFull, Label: "print full", Description: "print the full cached report"},
+				{Value: updateHubActionJSON, Label: "json", Description: "print the cached report as JSON"},
+			},
+		},
+	}
+}
+
+func manualPlanStatus(report inventoryPlanReport) string {
+	if report.AttentionCount > 0 {
+		return string(plan.StatusDrift)
+	}
+	return string(report.Status)
+}
+
+func updateDashboardManualPlanSummary(report inventoryPlanReport) string {
+	if len(report.ActionCounts) == 0 {
+		return "no manual review actions"
+	}
+	parts := make([]string, 0, len(report.ActionCounts))
+	for _, key := range sortedMapKeys(report.ActionCounts) {
+		parts = append(parts, fmt.Sprintf("%s=%d", key, report.ActionCounts[key]))
+	}
+	return strings.Join(parts, ", ")
+}
+
+func updateDashboardBackendSummary(report backendPlanReport) string {
+	if len(report.Findings) == 0 {
+		return "no backend convergence findings"
+	}
+	counts := map[string]int{}
+	for _, finding := range report.Findings {
+		counts[finding.Type]++
+	}
+	parts := make([]string, 0, len(counts))
+	for _, key := range sortedMapKeys(counts) {
+		parts = append(parts, fmt.Sprintf("%s=%d", key, counts[key]))
+	}
+	return strings.Join(parts, ", ")
+}
+
+func updateDashboardInventorySummary(report plan.Report) string {
+	if len(report.Providers) == 0 {
+		return "no inventory providers"
+	}
+	parts := []string{fmt.Sprintf("providers=%d", len(report.Providers)), fmt.Sprintf("items=%d", len(report.Items))}
+	if attention := updateDashboardInventoryAttention(report); attention > 0 {
+		parts = append(parts, fmt.Sprintf("attention=%d", attention))
+	}
+	return strings.Join(parts, ", ")
+}
+
+func updateDashboardInventoryAttention(report plan.Report) int {
+	count := 0
+	for _, item := range report.Items {
+		if isAttentionStatus(item.Status) || itemHasProfileMismatch(item) {
+			count++
+		}
+	}
+	return count
+}
+
+func updateDashboardSecuritySummary(report updateReport) string {
+	if len(report.Safety) == 0 {
+		return "no security gates"
+	}
+	parts := []string{fmt.Sprintf("gates=%d", len(report.Safety))}
+	if attention := updateDashboardSecurityAttention(report); attention > 0 {
+		parts = append(parts, fmt.Sprintf("attention=%d", attention))
+	}
+	return strings.Join(parts, ", ")
+}
+
+func updateDashboardSecurityStatus(report updateReport) plan.Status {
+	if len(report.Safety) == 0 {
+		return plan.StatusOK
+	}
+	status := plan.StatusOK
+	for _, gate := range report.Safety {
+		if gate.Status == plan.StatusError {
+			return plan.StatusError
+		}
+		if gate.Status == plan.StatusHeld || updateDashboardSecurityGateAttention(gate) > 0 {
+			status = plan.StatusHeld
+		}
+	}
+	return status
+}
+
+func updateDashboardSecurityAttention(report updateReport) int {
+	count := 0
+	for _, gate := range report.Safety {
+		count += updateDashboardSecurityGateAttention(gate)
+	}
+	return count
+}
+
+func updateDashboardSecurityGateAttention(gate safetyGate) int {
+	count := 0
+	if gate.Error != "" {
+		count++
+	}
+	count += len(gate.Warnings)
+	for _, finding := range gate.Findings {
+		if !strings.EqualFold(finding.Decision, "allow") {
+			count++
+		}
+	}
+	return count
+}
+
+func updateReportUpdatedItemCount(report updateReport) int {
+	count := 0
+	for _, step := range report.Steps {
+		count += len(step.Updated)
+	}
+	return count
+}
+
+func updateReportDeferredItemCount(report updateReport) int {
+	count := 0
+	for _, step := range report.Steps {
+		count += updateStepDeferredCount(step)
+	}
+	return count
+}
+
+func backendPreferenceOrderText() string {
+	parts := make([]string, 0, len(backendPreferenceTiers()))
+	for _, tier := range backendPreferenceTiers() {
+		parts = append(parts, tier.Label)
+	}
+	return strings.Join(parts, " > ")
 }
 
 const (
@@ -1958,6 +3004,15 @@ func updateInventoryDetailRows(report updateReport) []detailBrowserRow {
 	return listDetailRows(inventory)
 }
 
+func updateInventoryDetailRowsWithBackend(report updateReport, backendPlan backendPlanReport) []detailBrowserRow {
+	inventory := buildListReport(inventoryResult{Report: report.Inventory}, listOptions{
+		status: "attention",
+		limit:  20,
+	})
+	inventory.Evidence = addBackendListEvidence(inventory.Evidence, backendPlan)
+	return listDetailRows(inventory)
+}
+
 func updateSecurityDetailRows(report updateReport) []detailBrowserRow {
 	return updateSecurityDetailRowsWithAllow(report, false)
 }
@@ -2001,6 +3056,8 @@ func safetyFindingDetailRow(gate safetyGate, finding safetyFinding) detailBrowse
 	metadata := []string{
 		"provider: " + firstNonEmpty(finding.Provider, gate.Provider),
 		"kind: " + finding.Kind,
+		"gate status: " + string(gate.Status),
+		"decision: " + firstNonEmpty(finding.Decision, string(gate.Status)),
 	}
 	metadata = appendDetailMeta(metadata, "reason", reason)
 	metadata = appendDetailMeta(metadata, "remediation", remediation)
@@ -2030,6 +3087,7 @@ func safetyFindingDetailRow(gate safetyGate, finding safetyFinding) detailBrowse
 		Summary:  firstNonEmpty(reason, remediation, strings.Join(finding.Evidence, "; ")),
 		Detail:   firstNonEmpty(remediation, reason, strings.Join(finding.Evidence, "; ")),
 		Metadata: metadata,
+		Actions:  securityDetailActions(gate, finding),
 	}
 }
 
@@ -2044,12 +3102,36 @@ func appendDetailMeta(metadata []string, label string, value string) []string {
 func updateLogDetailRows(report updateReport) []detailBrowserRow {
 	rows := []detailBrowserRow{}
 	for _, step := range report.Steps {
+		rows = append(rows, updateStepItemDetailRows(step)...)
 		if step.Reason == "" && step.Stdout == "" && step.Stderr == "" {
 			continue
 		}
-		metadata := []string{"command: " + joinCommand(step.Command)}
+		status := string(step.Status)
+		if step.Skipped && status == string(plan.StatusOK) {
+			status = "skipped"
+		}
+		metadata := []string{
+			"provider: " + step.Name,
+			"status: " + status,
+			"command: " + joinCommand(step.Command),
+		}
+		if step.Skipped {
+			metadata = append(metadata, "skipped: true")
+		}
 		if step.Reason != "" {
 			metadata = append(metadata, "reason: "+step.Reason)
+		}
+		if len(step.Updated) > 0 {
+			metadata = append(metadata, "updated: "+strings.Join(step.Updated, "; "))
+			for _, item := range step.Updated {
+				metadata = append(metadata, tr("updated item: ", "更新 item: ")+item)
+			}
+		}
+		if len(step.SkippedItems) > 0 {
+			metadata = append(metadata, "deferred: "+strings.Join(step.SkippedItems, "; "))
+			for _, item := range step.SkippedItems {
+				metadata = append(metadata, tr("deferred item: ", "保留 item: ")+item)
+			}
 		}
 		if step.Stdout != "" {
 			metadata = append(metadata, "stdout: "+step.Stdout)
@@ -2059,13 +3141,91 @@ func updateLogDetailRows(report updateReport) []detailBrowserRow {
 		}
 		rows = append(rows, detailBrowserRow{
 			Title:    step.Name,
-			Status:   string(step.Status),
-			Summary:  firstNonEmpty(step.Reason, oneLine(step.Stdout), oneLine(step.Stderr)),
+			Status:   status,
+			Summary:  updateStepDetailSummary(step),
 			Detail:   firstNonEmpty(step.Reason, step.Stdout, step.Stderr),
 			Metadata: metadata,
+			Actions:  updateStepDetailActions(step),
 		})
 	}
 	return rows
+}
+
+func updateStepItemDetailRows(step updateStep) []detailBrowserRow {
+	rows := []detailBrowserRow{}
+	for _, item := range step.Updated {
+		item = strings.TrimSpace(item)
+		if item == "" {
+			continue
+		}
+		rows = append(rows, detailBrowserRow{
+			Title:   step.Name + " updated",
+			Status:  "updated",
+			Summary: item,
+			Detail:  tr("This item was reported as updated by the provider log.", "provider log で更新済みとして報告された item です。"),
+			Metadata: []string{
+				"provider: " + step.Name,
+				"result: updated",
+				"item: " + item,
+				"command: " + joinCommand(step.Command),
+			},
+		})
+	}
+	for _, item := range step.SkippedItems {
+		item = strings.TrimSpace(item)
+		if item == "" {
+			continue
+		}
+		status := "deferred"
+		if step.Status == plan.StatusHeld {
+			status = "held"
+		}
+		rows = append(rows, detailBrowserRow{
+			Title:   step.Name + " " + status,
+			Status:  status,
+			Summary: item,
+			Detail:  firstNonEmpty(step.Reason, tr("This item was deferred or held by the provider log.", "provider log により保留または見送りになった item です。")),
+			Metadata: []string{
+				"provider: " + step.Name,
+				"result: " + status,
+				"item: " + item,
+				"command: " + joinCommand(step.Command),
+			},
+			Actions: updateStepDetailActions(step),
+		})
+	}
+	return rows
+}
+
+func updateStepDetailActions(step updateStep) []detailBrowserAction {
+	actions := []detailBrowserAction{}
+	if step.Status == plan.StatusHeld || strings.Contains(strings.ToLower(step.Reason), "security") {
+		actions = append(actions, detailBrowserAction{
+			Value:       updateHubActionSecurity,
+			Label:       tr("open security review", "security review を開く"),
+			Description: tr("inspect held security evidence and policy actions", "保留された security evidence と policy action を確認します"),
+		})
+	}
+	return actions
+}
+
+func updateStepDetailSummary(step updateStep) string {
+	if step.Reason != "" {
+		return step.Reason
+	}
+	if len(step.Updated) > 0 && len(step.SkippedItems) > 0 {
+		return fmt.Sprintf("%d updated, %d deferred", len(step.Updated), len(step.SkippedItems))
+	}
+	if len(step.Updated) > 0 {
+		return fmt.Sprintf("%d updated: %s", len(step.Updated), step.Updated[0])
+	}
+	if len(step.SkippedItems) > 0 {
+		return fmt.Sprintf("%d deferred: %s", len(step.SkippedItems), step.SkippedItems[0])
+	}
+	if step.Status == plan.StatusError {
+		return firstNonEmpty(oneLine(step.Stderr), oneLine(step.Stdout))
+	}
+	return firstNonEmpty(oneLine(step.Stdout), oneLine(step.Stderr))
 }
 
 func printSafetyFindingDetails(w io.Writer, gates []safetyGate, color bool) {
