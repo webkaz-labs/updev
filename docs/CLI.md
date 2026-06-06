@@ -12,7 +12,8 @@ Human-facing commands should stay small:
 updev --config file --no-color ...
 updev           # update workflow, then compact review dashboard/selector on TTY
 updev update    # explicit default update workflow
-updev list      # read-only inventory hub on TTY; rich grouped inventory otherwise
+updev list      # read-only grouped inventory browser on TTY
+updev hub       # full selector menu for every list view/filter
 updev ls        # alias for list
 updev inventory # alias for fast/filterable inventory
 updev inventory scan # scan opt-in manual/vendor inventory evidence without writing
@@ -32,7 +33,8 @@ updev remove    # guided desired-manifest remove
 updev edit      # direct manifest editing with validation
 updev rollback  # restore latest manifest snapshot
 updev fix mise  # dry-run-first mise manifest hygiene fixer
-updev last      # inspect cached last update report
+updev last      # reopen cached last update dashboard/report
+updev --plain   # stable text update output without TUI
 updev version   # current implemented tool release
 updev --version # short version check; -v is an alias
 ```
@@ -49,16 +51,68 @@ updev trial ...
 
 Backend convergence is an intentional human workflow, not only an advanced
 escape hatch. `updev backends plan/doctor` remain the stable non-TTY/JSON entry
-points, while the `updev` selector and `updev list` TTY flow should offer
-a visible route into the same findings when backend recommendations exist.
+points, while the `updev` selector, dashboard rows, and `updev list` TTY flow
+offer visible routes into the same findings when backend recommendations exist.
 Backend findings expose `recommended_tier` and `preference_rank`: reliable
-`mise` core backends first, registry-backed mise external backends next, then
-store/native package evidence, native package managers, and vendor/manual
-ownership when those are stronger for the item.
+`mise` core backends first, then mise registry acceptance tiers (`mise/aqua`,
+`mise/github`, `mise/gitlab`, `mise/conda`, then language package backends such
+as `mise/pipx`, `mise/npm`, `mise/gem`, `mise/go`, `mise/cargo`, and
+`mise/dotnet`), followed by store/native package evidence, native package
+managers, and vendor/manual ownership when those are stronger for the item.
+Deprecated or legacy mise backends such as `mise/ubi` and `mise/asdf` are
+recognized for existing state and explicit overrides, but they are not default
+recommendation tiers.
+`[backends].preference_order` can reorder tier labels without creating a
+default-only config file. The plan command itself is read-only; the interactive
+`updev` and `updev list` backend detail views show an `applyability` line for
+each row and expose write actions only when the path is safe. If the preferred
+mise backend entry does not exist, a safe rewrite renames the current key after
+confirmation and preserves the current spec. If the preferred entry already
+covers the current entry's OS selectors, the detail view can remove the old
+mise key after confirmation. Brewfile ownership removal is available only when
+the target mise entry already exists; adding a missing mise entry and removing
+Homebrew ownership remains review-only.
+Metadata-inferred Homebrew or language-package moves to `mise/github` are
+reported as candidates, not direct recommendations: `npm`/`cargo` package
+metadata can identify the upstream repository, but reviewers must still verify
+GitHub release assets, version mapping, and official distribution ownership.
+When `gh` is available, `updev backends plan` samples latest-release asset names
+and records whether they appear compatible with the current OS/architecture.
+Japanese TTY output uses candidate-oriented labels and action copy for these
+rows so they are not confused with safe rewrite actions.
+For `cargo:` entries, `mise/github` is preferred only when a compatible GitHub
+release asset is visible or an explicit safe rule has equivalent evidence. If
+latest release assets are missing or do not match the current platform, the row
+keeps the current `cargo:` local-build path and explains the missing evidence.
 
 Bare `updev` is not a read-only hub. The valuable existing behavior is the
 no-argument update command, so preserve it unless the user explicitly opts into
 another mode.
+
+The interactive dashboard and shared detail browser are the primary human UX for
+post-update review. `updev` and `updev last` open the dashboard automatically
+on TTY text output; use `--plain`, `--no-interactive`, or `--format json` when
+an agent/script needs deterministic non-TUI output. Dashboard rows can open
+inventory, manual app review,
+backend convergence, security, update-step filters, and logs without dropping
+back to a separate footer-only selector when the action fits the focused row.
+Collapsed rows surface compact badges such as action count, updated/deferred
+counts, security decision, release asset status, and backend applyability, and
+the focused row always shows its `a/1`, `2`, ... action hints before expansion,
+so the user can scan the dashboard and act without falling back to a separate
+footer-only selector. Expanded detail rows separate `details`, `evidence`, and
+`actions`, include status-colored summaries, individual updated/deferred item
+rows, and numbered actions. Safe actions can be executed from the focused or
+expanded row: manual override accept/edit/ignore,
+cask/MAS/vendor evidence review, temporary security policy allow/hold decisions,
+security allow with custom reason/expiry, temporary security allow plus provider
+rerun, safe backend rewrites, covered old mise-entry removals, and safe Brewfile
+ownership removal when mise already owns the tool. Read-only rows explain the
+missing evidence or next command instead of exposing a write action.
+`updev list --interactive` installed inventory rows do not run write actions
+directly, but row actions can route the focused item to the relevant review
+domain, starting with manual app review and backend convergence. The full target
+contract is tracked in [UX.md](UX.md).
 
 Global flags:
 
@@ -71,7 +125,7 @@ Global flags:
   and `--format json`; add global verbosity only when a concrete cross-command
   diagnostic need appears.
 - `updev version`, `updev --version`, and `updev -v` report the current
-  implemented release contract, currently `updev v0.5.4`. JSON output from
+  implemented release contract, currently `updev v0.5.7`. JSON output from
   `updev version --format json` includes SemVer parts and the stable/pre-stable
   contract label.
 - Read-only aliases are supported for common commands: `ls` for `list`,
@@ -148,9 +202,12 @@ when required evidence is missing, stale, low-confidence, or policy-blocked.
 
 ## List And Inventory Flow
 
-`updev list` is read-only. The TTY default is an inventory hub: compact provider
-summary, attention items, section summaries, and selectable drill-down by
-provider/kind/category/status/query/full inventory/manual apps/details/export.
+`updev list` is read-only. The TTY default opens the full grouped installed
+inventory browser first because listing inventory is the command's primary job.
+From that browser, Back/Home returns to the full selector menu, where manual
+apps, backend convergence, cached update/security evidence, compact output, and
+filter views are one selection away. `updev hub` opens that full selector menu
+directly for users who prefer the old all-menu list of views and filters.
 
 Focused flags keep the non-TTY and agent contract deterministic:
 
@@ -170,18 +227,26 @@ updev list --format json
 rows. `--status profile-mismatch` isolates inactive-scope drift. `--provider
 manual` is opt-in and reads the manual/non-provider inventory bridge,
 structured overrides, and read-only `.app` bundle / Mac App Store receipt
-evidence without forcing Homebrew/mise live provider collection. When `mas` is
+evidence without forcing full Homebrew/mise provider collection. When `mas` is
 available, `mas list` is used as read-only Mac App Store evidence with a short
-timeout. When inventory context is already available, matching Homebrew cask
+timeout. When fresh inventory context is available, matching Homebrew cask
 evidence is reconciled into the manual row instead of rendering a duplicate app
-entry.
+entry; otherwise the default-root manual view may use a short Homebrew cask
+ownership probe (`brew list --cask -1`). Homebrew cask-owned rows are hidden
+from the default manual view to keep review focused on unmanaged apps; use
+`--status brew` or `--query <text>` to inspect that cask ownership evidence
+explicitly.
 Manual live-only app rows also emit JSON `review_candidates` with stable
 `reason_code`, `remediation_code`, `confidence`, evidence, params, and
 suggested override fields.
 
 `updev last` / `updev report` inspect the cached last update report without
-rerunning providers. Deterministic sections are `summary`, `updates`,
-`security`, `inventory`, `logs`, and `full`.
+rerunning providers. On TTY text output, `updev last` opens the same post-update
+hub from the cached report, which is useful when reviewing security/manual/
+backend details again without running provider updates. Deterministic
+non-interactive sections are available with `updev last --plain --section
+summary|updates|security|inventory|logs|full`, `--no-interactive`, or
+`--format json`.
 
 `updev inventory scan --provider manual` returns the normalized manual/vendor
 app evidence used by the manual inventory view without writing desired state.
@@ -204,6 +269,12 @@ aids only; manual inventory output does not execute vendor installers.
 `adopt-brew` previews `brew info --cask <name>`. `adopt-mas` previews
 `mas lookup <id>` when `mas list` evidence has an id, or `mas search <name>` for
 receipt-only evidence.
+
+In the interactive `updev` hub, the manual review plan opens in the shared
+detail browser. Expanded rows show provider evidence, suggested overrides,
+command previews, and numbered actions. Write actions reuse
+`updev inventory review --provider manual --action accept|edit|ignore`, ask for
+confirmation before writing, then rebuild the plan view.
 
 `updev inventory review --provider manual` previews review-needed manual app
 override entries from current scan evidence. Cached Homebrew cask inventory is

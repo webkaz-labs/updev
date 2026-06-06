@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -44,6 +45,7 @@ type listOptions struct {
 	includeVSCode  bool
 	tui            bool
 	noTUI          bool
+	hub            bool
 }
 
 type listReport struct {
@@ -56,6 +58,7 @@ type listReport struct {
 	Items            []plan.Item             `json:"items"`
 	Sections         []toolSection           `json:"sections,omitempty"`
 	ReviewCandidates []manualReviewCandidate `json:"review_candidates,omitempty"`
+	Evidence         listEvidenceIndex       `json:"-"`
 	Details          bool                    `json:"-"`
 	Limit            int                     `json:"-"`
 }
@@ -71,6 +74,7 @@ type listTranslationUpdate struct {
 
 func parseListOptions(args []string) (listOptions, error) {
 	opts := listOptions{format: "text", root: defaultRoot(), title: "updev inventory"}
+	plain := false
 	fs := flag.NewFlagSet("list", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	fs.StringVar(&opts.format, "format", opts.format, "output format: text or json")
@@ -91,8 +95,13 @@ func parseListOptions(args []string) (listOptions, error) {
 	fs.BoolVar(&opts.tui, "tui", false, "open the TTY selector")
 	fs.BoolVar(&opts.noTUI, "no-interactive", false, "disable the TTY selector")
 	fs.BoolVar(&opts.noTUI, "no-tui", false, "disable the TTY selector")
+	fs.BoolVar(&plain, "plain", false, "print text output and disable the TTY selector")
 	if err := fs.Parse(args); err != nil {
 		return opts, err
+	}
+	if plain {
+		opts.format = "text"
+		opts.noTUI = true
 	}
 	if opts.format != "text" && opts.format != "json" {
 		return opts, fmt.Errorf("unsupported format: %s", opts.format)
@@ -135,8 +144,9 @@ func runList(opts listOptions) int {
 			report = buildListReport(result, opts)
 		}
 		if shouldRunListHub(opts, os.Stdin, os.Stdout) {
-			runListHub(report)
+			runListHub(report, opts.hub)
 		} else {
+			warnInteractiveUnavailable(os.Stdin, os.Stdout, opts.format, opts.tui, opts.noTUI)
 			printListText(os.Stdout, report, opts.title, textui.ColorEnabled())
 		}
 		if translation.Message != "" {
@@ -363,8 +373,13 @@ func buildListReport(result inventoryResult, opts listOptions) listReport {
 	enriched := enrichItems(result.Report.Items, legacy, manualAppIndex(root))
 	filtered := filterItems(enriched, opts)
 	sections := legacy.toolSections(opts)
-	manualSections := manualAppSections(root, opts, enriched)
+	manualInventoryItems := enriched
+	if listManualOnly(opts) && len(manualInventoryItems) == 0 {
+		manualInventoryItems = manualCachedInventoryItems(root)
+	}
+	manualSections := manualAppSections(root, opts, manualInventoryItems)
 	sections = append(sections, manualSections...)
+	evidence := buildListEvidenceIndex(root)
 	providers := filteredProviders(result.Report.Providers, opts.provider)
 	if len(manualSections) > 0 {
 		providers = append(providers, manualProviderSummary(manualSections))
@@ -377,6 +392,7 @@ func buildListReport(result inventoryResult, opts listOptions) listReport {
 		Items:            filtered,
 		Sections:         sections,
 		ReviewCandidates: manualReviewCandidates(manualSections),
+		Evidence:         evidence,
 		Details:          opts.details,
 		Limit:            opts.limit,
 	}
@@ -653,20 +669,56 @@ const (
 	listHubActionQuery     = "query"
 	listHubActionManual    = "manual"
 	listHubActionBackends  = "backends"
+	listHubActionUpdates   = "updates"
+	listHubActionSecurity  = "security"
 	listHubActionLimited   = "limited"
 	listHubActionDetails   = "details"
 	listHubActionFull      = "full"
 )
 
-func runListHub(report listReport) {
+const listRouteActionPrefix = "list-route"
+
+type listRouteAction struct {
+	Domain   string
+	Provider string
+	Kind     string
+	Name     string
+}
+
+type listRouteDetailOutcome string
+
+const (
+	listRouteDetailBack listRouteDetailOutcome = "back"
+	listRouteDetailHome listRouteDetailOutcome = "home"
+	listRouteDetailExit listRouteDetailOutcome = "exit"
+)
+
+func runListHub(report listReport, selectorHub bool) {
 	defaultAction := listHubActionFull
-	backendPlan := buildBackendPlanReport(context.Background(), backendOptions{command: "plan", root: report.Root})
+	pendingAction := listHubActionFull
+	if selectorHub {
+		pendingAction = ""
+	}
+	backendPlan := buildBackendPlanForHub(report.Root)
+	report.Evidence = addBackendListEvidence(report.Evidence, backendPlan)
+	lastUpdate, hasLastUpdate := loadLastUpdateReport()
 	detailStates := map[string]detailBrowserState{}
 	for {
-		printListHubDashboard(os.Stdout, report, textui.ColorEnabled())
-		action, err := runUpdevSelect("updev list", tr("Choose a view or filter. Back/Home/Exit are available after each view.", "表示または filter を選択します。各 view から Back/Home/Exit できます。"), listHubChoices(report, backendPlan), defaultAction)
-		if err != nil {
-			return
+		action := pendingAction
+		pendingAction = ""
+		if action == "" {
+			var err error
+			color := textui.ColorEnabled()
+			choices := listHubChoices(report, backendPlan, lastUpdate.Report, hasLastUpdate)
+			if selectorHub {
+				printListHubDashboard(os.Stdout, report, color)
+				action, err = runUpdevSelect("updev hub", tr("Choose a view or filter. Back/Home/Exit are available after each view.", "表示または filter を選択します。各 view から Back/Home/Exit できます。"), choices, defaultAction)
+				if err != nil {
+					return
+				}
+			} else {
+				action = listHubActionFull
+			}
 		}
 		if action == updevActionExit {
 			return
@@ -681,7 +733,7 @@ func runListHub(report listReport) {
 				continue
 			}
 			defaultAction = listHubActionProvider
-			handled, exit := runListFilteredSelection("updev list "+provider, derivedListReport(report, listOptions{provider: provider}), detailStates, &defaultAction)
+			handled, exit := runListFilteredSelection("updev list "+provider, derivedListReport(report, listOptions{provider: provider}), detailStates, &defaultAction, &pendingAction, &backendPlan, lastUpdate.Report, hasLastUpdate)
 			if exit {
 				return
 			}
@@ -695,7 +747,7 @@ func runListHub(report listReport) {
 				continue
 			}
 			defaultAction = listHubActionKind
-			handled, exit := runListFilteredSelection("updev list "+kind, derivedListReport(report, listOptions{kind: kind}), detailStates, &defaultAction)
+			handled, exit := runListFilteredSelection("updev list "+kind, derivedListReport(report, listOptions{kind: kind}), detailStates, &defaultAction, &pendingAction, &backendPlan, lastUpdate.Report, hasLastUpdate)
 			if exit {
 				return
 			}
@@ -709,7 +761,7 @@ func runListHub(report listReport) {
 				continue
 			}
 			defaultAction = listHubActionCategory
-			handled, exit := runListFilteredSelection("updev list "+category, derivedListReport(report, listOptions{category: category}), detailStates, &defaultAction)
+			handled, exit := runListFilteredSelection("updev list "+category, derivedListReport(report, listOptions{category: category}), detailStates, &defaultAction, &pendingAction, &backendPlan, lastUpdate.Report, hasLastUpdate)
 			if exit {
 				return
 			}
@@ -723,7 +775,7 @@ func runListHub(report listReport) {
 				continue
 			}
 			defaultAction = listHubActionStatus
-			handled, exit := runListFilteredSelection("updev list "+status, derivedListReport(report, listOptions{status: status}), detailStates, &defaultAction)
+			handled, exit := runListFilteredSelection("updev list "+status, derivedListReport(report, listOptions{status: status}), detailStates, &defaultAction, &pendingAction, &backendPlan, lastUpdate.Report, hasLastUpdate)
 			if exit {
 				return
 			}
@@ -737,7 +789,7 @@ func runListHub(report listReport) {
 				continue
 			}
 			defaultAction = listHubActionQuery
-			handled, exit := runListFilteredSelection("updev list query", derivedListReport(report, listOptions{query: query}), detailStates, &defaultAction)
+			handled, exit := runListFilteredSelection("updev list query", derivedListReport(report, listOptions{query: query}), detailStates, &defaultAction, &pendingAction, &backendPlan, lastUpdate.Report, hasLastUpdate)
 			if exit {
 				return
 			}
@@ -748,7 +800,7 @@ func runListHub(report listReport) {
 		case listHubActionManual:
 			defaultAction = listHubActionManual
 			manualReport := derivedListReport(report, listOptions{provider: manualProviderName})
-			handled, exit := runListFilteredSelection("updev list manual", manualReport, detailStates, &defaultAction)
+			handled, exit := runListFilteredSelection("updev list manual", manualReport, detailStates, &defaultAction, &pendingAction, &backendPlan, lastUpdate.Report, hasLastUpdate)
 			if exit {
 				return
 			}
@@ -759,7 +811,7 @@ func runListHub(report listReport) {
 		case listHubActionBackends:
 			defaultAction = listHubActionBackends
 			stateKey := "list-backends"
-			state, err := runDetailBrowserWithState("updev backend convergence", backendDetailRows(backendPlan), detailStates[stateKey], textui.ColorEnabled())
+			state, err := runToolTableBrowserWithState("updev backend convergence", backendToolSections(backendPlan), detailStates[stateKey], textui.ColorEnabled())
 			if err != nil {
 				printBackendPlanText(os.Stdout, backendPlan, textui.ColorEnabled())
 				break
@@ -770,6 +822,60 @@ func runListHub(report listReport) {
 			}
 			if state.Action == updevActionHome {
 				defaultAction = listHubActionFull
+				continue
+			}
+			if handleBackendDetailAction(report.Root, state.Action) {
+				backendPlan = buildBackendPlanForHub(report.Root)
+				defaultAction = listHubActionBackends
+				continue
+			}
+			continue
+		case listHubActionUpdates:
+			defaultAction = listHubActionUpdates
+			if !hasLastUpdate {
+				continue
+			}
+			stateKey := "list-updates"
+			state, err := runDetailBrowserWithState("updev update evidence", updateLogDetailRows(lastUpdate.Report), detailStates[stateKey], textui.ColorEnabled())
+			if err != nil {
+				printLastUpdateLogs(os.Stdout, lastUpdate.Report, textui.ColorEnabled())
+				break
+			}
+			detailStates[stateKey] = state
+			if state.Action == updevActionExit {
+				return
+			}
+			if state.Action == updevActionHome {
+				defaultAction = listHubActionFull
+				continue
+			}
+			if state.Action == listHubActionSecurity || state.Action == updateHubActionSecurity {
+				pendingAction = listHubActionSecurity
+				defaultAction = listHubActionSecurity
+			}
+			continue
+		case listHubActionSecurity:
+			defaultAction = listHubActionSecurity
+			if !hasLastUpdate {
+				continue
+			}
+			stateKey := "list-security"
+			state, err := runDetailBrowserWithState("updev security review", updateSecurityDetailRows(lastUpdate.Report), detailStates[stateKey], textui.ColorEnabled())
+			if err != nil {
+				printLastSecuritySection(os.Stdout, lastUpdate.Report, true, textui.ColorEnabled())
+				break
+			}
+			detailStates[stateKey] = state
+			if state.Action == updevActionExit {
+				return
+			}
+			if state.Action == updevActionHome {
+				defaultAction = listHubActionFull
+				continue
+			}
+			if handleSecurityDetailAction(&lastUpdate.Report, state.Action) {
+				hasLastUpdate = true
+				defaultAction = listHubActionSecurity
 				continue
 			}
 			continue
@@ -797,8 +903,31 @@ func runListHub(report listReport) {
 			if action == updevActionExit {
 				return
 			}
-			if action == updevActionHome {
+			if action == updevActionHome || action == updevActionBack {
+				selectorHub = true
 				defaultAction = listHubActionFull
+				pendingAction = ""
+				continue
+			}
+			if route, ok := parseListRouteAction(action); ok {
+				outcome := runListRouteDetail(report.Root, route, backendPlan, lastUpdate.Report, hasLastUpdate, detailStates, textui.ColorEnabled())
+				if outcome == listRouteDetailExit {
+					return
+				}
+				if outcome == listRouteDetailHome {
+					defaultAction = listHubActionFull
+					continue
+				}
+				if route.Domain == listHubActionBackends {
+					backendPlan = buildBackendPlanForHub(report.Root)
+				}
+				defaultAction = listHubActionFull
+				pendingAction = listHubActionFull
+				continue
+			}
+			if listHubActionExists(action) {
+				defaultAction = action
+				pendingAction = action
 				continue
 			}
 			if handled {
@@ -816,6 +945,27 @@ func runListHub(report listReport) {
 	}
 }
 
+func buildBackendPlanForHub(root string) backendPlanReport {
+	progress := newStartupProgress(os.Stdin, os.Stderr, "text", reviewPlanProgressMessage(defaultLanguage()))
+	progress.Start()
+	report := buildBackendPlanReport(context.Background(), backendOptions{command: "plan", root: root})
+	progress.Done()
+	return report
+}
+
+func listHubActionExists(action string) bool {
+	switch action {
+	case listHubActionAttention, listHubActionProvider, listHubActionKind,
+		listHubActionCategory, listHubActionStatus, listHubActionQuery,
+		listHubActionManual, listHubActionBackends, listHubActionUpdates,
+		listHubActionSecurity, listHubActionLimited, listHubActionDetails,
+		listHubActionFull:
+		return true
+	default:
+		return false
+	}
+}
+
 func printListHubDashboard(w io.Writer, report listReport, color bool) {
 	fmt.Fprintf(w, "%s %s\n", textui.StyleHeading("updev list", color), textui.StyleStatus(string(report.Status), color))
 	fmt.Fprintf(w, "%s %s\n", textui.StyleLabel(tr("root:", "ルート:"), color), report.Root)
@@ -827,7 +977,7 @@ func printListHubDashboard(w io.Writer, report listReport, color bool) {
 	printProviderSummary(w, report.Providers, color)
 }
 
-func listHubChoices(report listReport, backendPlan backendPlanReport) []updevChoice {
+func listHubChoices(report listReport, backendPlan backendPlanReport, lastUpdate updateReport, hasLastUpdate bool) []updevChoice {
 	choices := []updevChoice{
 		{Value: listHubActionFull, Label: tr("Installed inventory", "インストール済み一覧"), Description: fmt.Sprintf(tr("Review all %d installed and desired inventory rows with grouping, filters, and expansion.", "全 %d 件の installed / desired inventory 行を grouping / filter / 展開付きで確認します。"), listInventoryReviewCount(report)), Selected: true},
 		{Value: listHubActionAttention, Label: tr("Attention items", "注意項目"), Description: tr("Show only rows needing attention.", "対応が必要な行だけを表示します。")},
@@ -839,7 +989,16 @@ func listHubChoices(report listReport, backendPlan backendPlanReport) []updevCho
 		{Value: listHubActionManual, Label: tr("Manual apps", "手動管理アプリ"), Description: tr("Review read-only manual, vendor, App Store, and non-provider app rows.", "manual / vendor / App Store / provider 外アプリを read-only で確認します。")},
 	}
 	if findings := len(backendPlan.Findings); findings > 0 {
-		choices = append(choices, updevChoice{Value: listHubActionBackends, Label: tr("Backend convergence", "backend 整理"), Description: fmt.Sprintf(tr("Review %d provider/backend recommendations.", "%d 件の provider/backend 推奨を確認します。"), findings)})
+		actions := backendPlanActionableCount(backendPlan)
+		choices = append(choices, updevChoice{Value: listHubActionBackends, Label: tr("Backend convergence", "backend 整理"), Description: fmt.Sprintf(tr("Review %d provider/backend recommendations; %d can be applied from details.", "%d 件の provider/backend 推奨を確認します。%d 件は詳細から適用できます。"), findings, actions)})
+	}
+	if hasLastUpdate && listEvidenceMatchesRoot(report.Root, lastUpdate.Root) {
+		if updateRows := updateReportUpdatedItemCount(lastUpdate) + updateReportDeferredItemCount(lastUpdate); updateRows > 0 || len(lastUpdate.Steps) > 0 {
+			choices = append(choices, updevChoice{Value: listHubActionUpdates, Label: tr("Update evidence", "update evidence"), Description: fmt.Sprintf(tr("Review cached provider update evidence from %d steps.", "%d 件の cached provider update evidence を確認します。"), len(lastUpdate.Steps))})
+		}
+		if updateDashboardSecurityAttention(lastUpdate) > 0 {
+			choices = append(choices, updevChoice{Value: listHubActionSecurity, Label: tr("Security review", "security review"), Description: tr("Review cached security holds, advisories, and policy actions.", "cached security hold / advisory / policy action を確認します。")})
+		}
 	}
 	choices = append(choices,
 		updevChoice{Value: listHubActionLimited, Label: tr("Compact list", "compact list"), Description: tr("Show at most 10 rows per section.", "各 section 最大 10 行で表示します。")},
@@ -934,8 +1093,33 @@ func selectListQuery() (string, bool) {
 	return value, true
 }
 
-func runListFilteredSelection(title string, report listReport, detailStates map[string]detailBrowserState, defaultAction *string) (bool, bool) {
-	action, handled := runListFilteredBrowser(title, report, detailStates, textui.ColorEnabled())
+func runListFilteredSelection(title string, report listReport, detailStates map[string]detailBrowserState, defaultAction *string, pendingAction *string, backendPlan *backendPlanReport, lastUpdate updateReport, hasLastUpdate bool) (bool, bool) {
+	for {
+		action, handled := runListFilteredBrowser(title, report, detailStates, textui.ColorEnabled())
+		if route, ok := parseListRouteAction(action); ok {
+			outcome := runListRouteDetail(report.Root, route, *backendPlan, lastUpdate, hasLastUpdate, detailStates, textui.ColorEnabled())
+			if outcome == listRouteDetailExit {
+				return true, true
+			}
+			if outcome == listRouteDetailHome {
+				if defaultAction != nil {
+					*defaultAction = listHubActionFull
+				}
+				if pendingAction != nil {
+					*pendingAction = ""
+				}
+				return true, false
+			}
+			if route.Domain == listHubActionBackends {
+				*backendPlan = buildBackendPlanReport(context.Background(), backendOptions{command: "plan", root: report.Root})
+			}
+			continue
+		}
+		return handleListFilteredAction(action, handled, defaultAction, pendingAction)
+	}
+}
+
+func handleListFilteredAction(action string, handled bool, defaultAction *string, pendingAction *string) (bool, bool) {
 	switch action {
 	case updevActionExit:
 		return handled, true
@@ -945,6 +1129,15 @@ func runListFilteredSelection(title string, report listReport, detailStates map[
 		}
 		return true, false
 	default:
+		if listHubActionExists(action) {
+			if defaultAction != nil {
+				*defaultAction = action
+			}
+			if pendingAction != nil {
+				*pendingAction = action
+			}
+			return true, false
+		}
 		return handled, false
 	}
 }
@@ -997,12 +1190,12 @@ func listBrowserStateKey(report listReport) string {
 }
 
 func listTableSections(report listReport) []toolSection {
-	sections := itemToolSections(displayListItems(report.Items, report.Sections))
+	sections := itemToolSections(displayListItems(report.Items, report.Sections), report.Evidence)
 	sections = append(sections, report.Sections...)
 	return sections
 }
 
-func itemToolSections(items []plan.Item) []toolSection {
+func itemToolSections(items []plan.Item, evidence listEvidenceIndex) []toolSection {
 	grouped := map[string][]toolRow{}
 	order := []string{}
 	for _, item := range items {
@@ -1010,7 +1203,7 @@ func itemToolSections(items []plan.Item) []toolSection {
 		if _, ok := grouped[key]; !ok {
 			order = append(order, key)
 		}
-		grouped[key] = append(grouped[key], itemToolRow(item))
+		grouped[key] = append(grouped[key], itemToolRow(item, evidence))
 	}
 	sections := make([]toolSection, 0, len(order))
 	for _, name := range order {
@@ -1031,13 +1224,463 @@ func itemToolSectionTitle(name string) string {
 	return strings.ReplaceAll(name, "/", " / ")
 }
 
-func itemToolRow(item plan.Item) toolRow {
+func itemToolRow(item plan.Item, evidence listEvidenceIndex) toolRow {
+	itemEvidence := itemListEvidence(item, evidence)
+	actions := itemToolRowActions(item, evidence)
 	return toolRow{
 		Name:    item.Name,
 		Version: item.Version,
 		State:   inventoryItemStatusLabel(item),
-		Detail:  item.Detail,
+		Detail:  inventoryItemDetail(item, itemEvidence, detailActionsFromReviewActions(actions)),
+		Actions: actions,
 	}
+}
+
+func itemToolRowActions(item plan.Item, evidence listEvidenceIndex) []reviewui.Action {
+	actions := []reviewui.Action{}
+	if item.Provider == manualProviderName {
+		actions = append(actions, manualReviewRouteAction(item))
+	}
+	itemEvidence := itemListEvidence(item, evidence)
+	if len(itemEvidence.Backends) > 0 {
+		actions = append(actions, reviewui.Action{
+			Value:       listRouteActionValue(listHubActionBackends, item),
+			Label:       tr("open backend review", "backend 整理を開く"),
+			Description: firstNonEmpty(itemEvidence.Backends...),
+		})
+	}
+	if len(itemEvidence.Updates) > 0 {
+		actions = append(actions, reviewui.Action{
+			Value:       listRouteActionValue(listHubActionUpdates, item),
+			Label:       tr("open update evidence", "update evidence を開く"),
+			Description: firstNonEmpty(itemEvidence.Updates...),
+		})
+	}
+	if len(itemEvidence.Security) > 0 {
+		actions = append(actions, reviewui.Action{
+			Value:       listRouteActionValue(listHubActionSecurity, item),
+			Label:       tr("open security review", "security review を開く"),
+			Description: firstNonEmpty(itemEvidence.Security...),
+		})
+	}
+	return actions
+}
+
+func manualReviewRouteAction(item plan.Item) reviewui.Action {
+	return manualReviewRouteActionForTarget(item.Name, item.Provider, item.Kind)
+}
+
+func manualReviewRouteActionForTarget(name string, provider string, kind string) reviewui.Action {
+	return reviewui.Action{
+		Value:       listRouteActionValueForTarget(listHubActionManual, provider, kind, name),
+		Label:       tr("open manual review", "manual review を開く"),
+		Description: tr("open manual app review rows for this item", "この項目に関係する manual app review 行を開きます"),
+	}
+}
+
+func listRouteActionValue(domain string, item plan.Item) string {
+	return listRouteActionValueForTarget(domain, item.Provider, item.Kind, item.Name)
+}
+
+func listRouteActionValueForTarget(domain string, provider string, kind string, name string) string {
+	return strings.Join([]string{listRouteActionPrefix, domain, provider, kind, name}, "\t")
+}
+
+func parseListRouteAction(value string) (listRouteAction, bool) {
+	parts := strings.SplitN(value, "\t", 5)
+	if len(parts) != 5 || parts[0] != listRouteActionPrefix {
+		return listRouteAction{}, false
+	}
+	return listRouteAction{Domain: parts[1], Provider: parts[2], Kind: parts[3], Name: parts[4]}, true
+}
+
+func runListRouteDetail(root string, route listRouteAction, backendPlan backendPlanReport, lastUpdate updateReport, hasLastUpdate bool, detailStates map[string]detailBrowserState, color bool) listRouteDetailOutcome {
+	stateKey := "route:" + route.Domain + ":" + route.Provider + ":" + route.Kind + ":" + route.Name
+	var rows []detailBrowserRow
+	title := routeDetailTitle(route)
+	switch route.Domain {
+	case listHubActionManual:
+		manualPlan := buildInventoryPlanReport(inventoryPlanOptions{root: root, provider: manualProviderName, query: route.Name})
+		rows = manualPlanDetailRows(manualPlan)
+	case listHubActionBackends:
+		rows = backendDetailRowsForListRoute(backendPlan, route)
+	case listHubActionUpdates:
+		if hasLastUpdate {
+			filtered := filterUpdateReport(lastUpdate, lastReportOptions{section: "logs", provider: route.Provider, query: route.Name})
+			rows = updateLogDetailRows(filtered)
+		}
+	case listHubActionSecurity:
+		if hasLastUpdate {
+			opts := lastReportOptions{section: "security", provider: route.Provider, query: route.Name}
+			filtered := filterUpdateReport(lastUpdate, opts)
+			rows = updateSecurityDetailRowsForFilter(filtered, opts)
+		}
+	default:
+		return listRouteDetailBack
+	}
+	if len(rows) == 0 {
+		rows = []detailBrowserRow{emptyRouteDetailRow(route)}
+	}
+	state, err := runDetailBrowserWithState(title, rows, detailStates[stateKey], color)
+	if err != nil {
+		return listRouteDetailBack
+	}
+	detailStates[stateKey] = state
+	if state.Action == updevActionExit {
+		return listRouteDetailExit
+	}
+	if state.Action == updevActionHome {
+		return listRouteDetailHome
+	}
+	if state.Action == updevActionBack {
+		return listRouteDetailBack
+	}
+	switch route.Domain {
+	case listHubActionManual:
+		_ = handleManualPlanDetailAction(root, state.Action)
+	case listHubActionBackends:
+		_ = handleBackendDetailAction(root, state.Action)
+	case listHubActionSecurity:
+		if hasLastUpdate {
+			_ = handleSecurityDetailAction(&lastUpdate, state.Action)
+		}
+	}
+	return listRouteDetailBack
+}
+
+func routeDetailTitle(route listRouteAction) string {
+	target := strings.TrimSpace(route.Name)
+	if target == "" {
+		target = strings.Trim(strings.Join([]string{route.Provider, route.Kind}, " "), " ")
+	}
+	switch route.Domain {
+	case listHubActionManual:
+		return "updev manual review: " + target
+	case listHubActionBackends:
+		return "updev backend convergence: " + target
+	case listHubActionUpdates:
+		return "updev update evidence: " + target
+	case listHubActionSecurity:
+		return "updev security review: " + target
+	default:
+		return "updev detail: " + target
+	}
+}
+
+func emptyRouteDetailRow(route listRouteAction) detailBrowserRow {
+	return detailBrowserRow{
+		Title:   route.Name,
+		Status:  "review-only",
+		Summary: tr("no matching focused evidence", "対象項目に一致する詳細 evidence はありません"),
+		Detail:  tr("The installed inventory row exposed a route, but no focused detail row matched the item. Return and open the full domain list if broader review is needed.", "installed inventory 行から導線はありますが、この項目に絞った詳細行は見つかりません。広く確認する場合は戻って domain 全体を開きます。"),
+		Metadata: []string{
+			"domain: " + route.Domain,
+			"provider: " + route.Provider,
+			"kind: " + route.Kind,
+			"name: " + route.Name,
+		},
+	}
+}
+
+func backendDetailRowsForListRoute(report backendPlanReport, route listRouteAction) []detailBrowserRow {
+	filtered := report
+	filtered.Findings = nil
+	for _, finding := range report.Findings {
+		if backendFindingMatchesListRoute(finding, route) {
+			filtered.Findings = append(filtered.Findings, finding)
+		}
+	}
+	return backendDetailRows(filtered)
+}
+
+func backendFindingMatchesListRoute(finding backendFinding, route listRouteAction) bool {
+	name := listEvidenceNameKey(route.Name)
+	if name == "" {
+		return false
+	}
+	values := []string{
+		finding.Name,
+		finding.RecommendedName,
+		finding.Kind + ":" + finding.Name,
+		finding.Provider + ":" + finding.Name,
+	}
+	for _, value := range values {
+		candidate := listEvidenceNameKey(value)
+		if candidate == "" {
+			continue
+		}
+		if candidate == name || strings.Contains(candidate, name) || strings.Contains(name, candidate) {
+			return true
+		}
+	}
+	return false
+}
+
+type listEvidenceIndex struct {
+	Updates  map[string][]string
+	Security map[string][]string
+	Backends map[string][]string
+}
+
+type listItemEvidence struct {
+	Updates  []string
+	Security []string
+	Backends []string
+}
+
+func buildListEvidenceIndex(root string) listEvidenceIndex {
+	index := listEvidenceIndex{
+		Updates:  map[string][]string{},
+		Security: map[string][]string{},
+		Backends: map[string][]string{},
+	}
+	entry, ok := loadLastUpdateReport()
+	if !ok || !listEvidenceMatchesRoot(root, entry.Report.Root) {
+		return index
+	}
+	for _, step := range entry.Report.Steps {
+		for _, item := range step.Updated {
+			listEvidenceAdd(index.Updates, listEvidenceProviderNameKey(step.Name, item), fmt.Sprintf("%s updated: %s", step.Name, strings.TrimSpace(item)))
+			if strings.TrimSpace(step.Name) == "" {
+				listEvidenceAdd(index.Updates, listEvidenceNameKey(item), fmt.Sprintf("updated: %s", strings.TrimSpace(item)))
+			}
+		}
+		for _, item := range step.SkippedItems {
+			status := "deferred"
+			if step.Status == plan.StatusHeld {
+				status = "held"
+			}
+			detail := firstNonEmpty(step.Reason, status)
+			listEvidenceAdd(index.Updates, listEvidenceProviderNameKey(step.Name, item), fmt.Sprintf("%s %s: %s", step.Name, status, detail))
+			if strings.TrimSpace(step.Name) == "" {
+				listEvidenceAdd(index.Updates, listEvidenceNameKey(item), fmt.Sprintf("%s: %s", status, strings.TrimSpace(item)))
+			}
+		}
+	}
+	for _, gate := range entry.Report.Safety {
+		for _, finding := range gate.Findings {
+			detail := strings.TrimSpace(firstNonEmpty(finding.Decision, string(gate.Status), finding.Reason))
+			if detail == "" {
+				detail = "security review"
+			}
+			for _, key := range listEvidenceFindingKeys(gate, finding) {
+				listEvidenceAdd(index.Security, key, fmt.Sprintf("%s/%s %s: %s", firstNonEmpty(finding.Provider, gate.Provider), finding.Kind, finding.Name, detail))
+			}
+		}
+	}
+	return index
+}
+
+func addBackendListEvidence(index listEvidenceIndex, report backendPlanReport) listEvidenceIndex {
+	if index.Backends == nil {
+		index.Backends = map[string][]string{}
+	}
+	for _, finding := range report.Findings {
+		detail := strings.TrimSpace(firstNonEmpty(finding.Reason, finding.Action, finding.Type))
+		if detail == "" {
+			detail = "backend convergence review"
+		}
+		for _, key := range listEvidenceBackendFindingKeys(finding) {
+			listEvidenceAdd(index.Backends, key, detail)
+		}
+	}
+	return index
+}
+
+func listEvidenceBackendFindingKeys(finding backendFinding) []string {
+	keys := []string{}
+	if finding.Provider != "" || finding.Kind != "" || finding.Name != "" {
+		keys = append(keys, listEvidenceExactKey(finding.Provider, finding.Kind, finding.Name))
+	}
+	if finding.Provider != "" || finding.Name != "" {
+		keys = append(keys, listEvidenceProviderNameKey(finding.Provider, finding.Name))
+	}
+	return keys
+}
+
+func listEvidenceMatchesRoot(root string, reportRoot string) bool {
+	root = strings.TrimSpace(root)
+	reportRoot = strings.TrimSpace(reportRoot)
+	if root == "" || reportRoot == "" {
+		return true
+	}
+	return filepath.Clean(root) == filepath.Clean(reportRoot)
+}
+
+func listEvidenceFindingKeys(gate safetyGate, finding safetyFinding) []string {
+	provider := firstNonEmpty(finding.Provider, gate.Provider)
+	keys := []string{
+		listEvidenceExactKey(provider, finding.Kind, finding.Name),
+		listEvidenceProviderNameKey(provider, finding.Name),
+	}
+	if strings.TrimSpace(provider) == "" {
+		keys = append(keys, listEvidenceNameKey(finding.Name))
+	}
+	return keys
+}
+
+func itemListEvidence(item plan.Item, index listEvidenceIndex) listItemEvidence {
+	keys := []string{
+		listEvidenceExactKey(item.Provider, item.Kind, item.Name),
+		listEvidenceProviderNameKey(item.Provider, item.Name),
+		listEvidenceNameKey(item.Name),
+	}
+	return listItemEvidence{
+		Updates:  listEvidenceLookup(index.Updates, keys),
+		Security: listEvidenceLookup(index.Security, keys),
+		Backends: listEvidenceLookup(index.Backends, keys),
+	}
+}
+
+func listEvidenceLookup(index map[string][]string, keys []string) []string {
+	out := []string{}
+	seen := map[string]bool{}
+	for _, key := range keys {
+		for _, value := range index[key] {
+			if strings.TrimSpace(value) == "" || seen[value] {
+				continue
+			}
+			seen[value] = true
+			out = append(out, value)
+		}
+	}
+	return out
+}
+
+func listEvidenceAdd(index map[string][]string, key string, value string) {
+	key = strings.TrimSpace(key)
+	value = strings.TrimSpace(value)
+	if key == "" || value == "" {
+		return
+	}
+	for _, existing := range index[key] {
+		if existing == value {
+			return
+		}
+	}
+	index[key] = append(index[key], value)
+}
+
+func listEvidenceExactKey(provider string, kind string, name string) string {
+	provider = listEvidenceToken(provider)
+	kind = listEvidenceToken(kind)
+	name = listEvidenceToken(name)
+	if provider == "" || kind == "" || name == "" {
+		return ""
+	}
+	return provider + "/" + kind + "/" + name
+}
+
+func listEvidenceProviderNameKey(provider string, name string) string {
+	provider = listEvidenceToken(provider)
+	name = listEvidenceToken(name)
+	if provider == "" || name == "" {
+		return ""
+	}
+	return provider + "/" + name
+}
+
+func listEvidenceNameKey(name string) string {
+	return listEvidenceToken(name)
+}
+
+func listEvidenceToken(value string) string {
+	return strings.ToLower(strings.Trim(strings.TrimSpace(value), `"'`))
+}
+
+func (e listItemEvidence) Metadata() []string {
+	metadata := []string{}
+	for _, value := range e.Updates {
+		metadata = append(metadata, "update evidence: "+value)
+	}
+	for _, value := range e.Security {
+		metadata = append(metadata, "security evidence: "+value)
+	}
+	for _, value := range e.Backends {
+		metadata = append(metadata, "backend evidence: "+value)
+	}
+	return metadata
+}
+
+func (e listItemEvidence) Summary() string {
+	parts := []string{}
+	if len(e.Updates) > 0 {
+		parts = append(parts, fmt.Sprintf("%d update evidence", len(e.Updates)))
+	}
+	if len(e.Security) > 0 {
+		parts = append(parts, fmt.Sprintf("%d security evidence", len(e.Security)))
+	}
+	if len(e.Backends) > 0 {
+		parts = append(parts, fmt.Sprintf("%d backend evidence", len(e.Backends)))
+	}
+	return strings.Join(parts, ", ")
+}
+
+func itemDetailWithEvidence(detail string, evidence listItemEvidence) string {
+	parts := []string{}
+	if strings.TrimSpace(detail) != "" {
+		parts = append(parts, strings.TrimSpace(detail))
+	}
+	parts = append(parts, evidence.Metadata()...)
+	return strings.Join(parts, "\n")
+}
+
+func inventoryItemDetail(item plan.Item, evidence listItemEvidence, actions []detailBrowserAction) string {
+	parts := []string{}
+	if strings.TrimSpace(item.Detail) != "" {
+		parts = append(parts, "description: "+strings.TrimSpace(item.Detail))
+	} else {
+		parts = append(parts, "summary: "+inventoryItemStatusSummary(item))
+	}
+	parts = append(parts, "identity: "+inventoryItemIdentity(item))
+	parts = append(parts, "status: "+inventoryItemStatusSummary(item))
+	if strings.TrimSpace(item.Category) != "" {
+		parts = append(parts, "category: "+item.Category+" - "+categoryDescription(item.Category))
+	}
+	if summary := evidence.Summary(); summary != "" {
+		parts = append(parts, "linked evidence: "+summary)
+	}
+	parts = append(parts, evidence.Metadata()...)
+	for _, action := range actions {
+		parts = append(parts, "next action: "+detailActionSummary(action))
+	}
+	return strings.Join(parts, "\n")
+}
+
+func inventoryItemIdentity(item plan.Item) string {
+	parts := []string{item.Provider, item.Kind, item.Name}
+	out := []string{}
+	for _, part := range parts {
+		if strings.TrimSpace(part) != "" {
+			out = append(out, strings.TrimSpace(part))
+		}
+	}
+	return strings.Join(out, " / ")
+}
+
+func inventoryItemStatusSummary(item plan.Item) string {
+	return inventoryItemStatusLabel(item) + " - " + inventoryItemManagementSummary(item)
+}
+
+func inventoryItemManagementSummary(item plan.Item) string {
+	switch {
+	case item.Desired && item.Live:
+		return tr("desired and installed", "desired かつ installed")
+	case item.Desired && !item.Live:
+		return tr("desired but missing locally", "desired だが local にありません")
+	case !item.Desired && item.Live:
+		return tr("installed but not in desired state", "installed だが desired state にはありません")
+	default:
+		return tr("not desired and not installed", "desired でも installed でもありません")
+	}
+}
+
+func detailActionSummary(action detailBrowserAction) string {
+	summary := strings.TrimSpace(action.Label)
+	if strings.TrimSpace(action.Description) != "" {
+		summary += " - " + strings.TrimSpace(action.Description)
+	}
+	return summary
 }
 
 func derivedListReport(report listReport, opts listOptions) listReport {
@@ -1055,6 +1698,7 @@ func derivedListReport(report listReport, opts listOptions) listReport {
 	}
 	derived := buildListReport(result, opts)
 	derived.CacheAge = report.CacheAge
+	derived.Evidence = report.Evidence
 	return derived
 }
 
@@ -1075,7 +1719,7 @@ func displayListItems(items []plan.Item, sections []toolSection) []plan.Item {
 func listDetailRows(report listReport) []detailBrowserRow {
 	rows := []detailBrowserRow{}
 	for _, item := range displayListItems(report.Items, report.Sections) {
-		rows = append(rows, itemDetailRow(item))
+		rows = append(rows, itemDetailRow(item, report.Evidence))
 	}
 	for _, section := range report.Sections {
 		for _, row := range limitedToolRows(section.Rows, report.Limit) {
@@ -1085,10 +1729,12 @@ func listDetailRows(report listReport) []detailBrowserRow {
 	return rows
 }
 
-func itemDetailRow(item plan.Item) detailBrowserRow {
+func itemDetailRow(item plan.Item, evidence listEvidenceIndex) detailBrowserRow {
 	metadata := []string{
+		"status: " + inventoryItemStatusLabel(item),
 		"provider: " + item.Provider,
 		"kind: " + item.Kind,
+		"name: " + item.Name,
 		fmt.Sprintf("desired: %t", item.Desired),
 		fmt.Sprintf("live: %t", item.Live),
 	}
@@ -1098,12 +1744,17 @@ func itemDetailRow(item plan.Item) detailBrowserRow {
 	if item.Category != "" {
 		metadata = append(metadata, "category: "+item.Category)
 	}
+	itemEvidence := itemListEvidence(item, evidence)
+	metadata = append(metadata, itemEvidence.Metadata()...)
+	actions := detailActionsFromReviewActions(itemToolRowActions(item, evidence))
+	metadata = append(metadata, actionRouteEvidence(actions)...)
 	return detailBrowserRow{
 		Title:    item.Provider + "/" + item.Kind + " " + item.Name,
 		Status:   inventoryItemStatusLabel(item),
-		Summary:  firstNonEmpty(item.Detail, item.Version),
-		Detail:   item.Detail,
+		Summary:  firstNonEmpty(item.Detail, itemEvidence.Summary(), item.Version),
+		Detail:   inventoryItemDetail(item, itemEvidence, actions),
 		Metadata: metadata,
+		Actions:  actions,
 	}
 }
 
@@ -1116,13 +1767,46 @@ func toolDetailRow(section toolSection, row toolRow) detailBrowserRow {
 	if row.Wanted != "" {
 		metadata = append(metadata, "wanted: "+row.Wanted)
 	}
+	actions := detailActionsFromReviewActions(row.Actions)
+	metadata = append(metadata, actionRouteEvidence(actions)...)
 	return detailBrowserRow{
 		Title:    section.Title + " " + row.Name,
 		Status:   state,
 		Summary:  firstNonEmpty(row.Detail, row.Version),
 		Detail:   row.Detail,
 		Metadata: metadata,
+		Actions:  actions,
 	}
+}
+
+func detailActionsFromReviewActions(actions []reviewui.Action) []detailBrowserAction {
+	out := make([]detailBrowserAction, 0, len(actions))
+	for _, action := range actions {
+		if strings.TrimSpace(action.Value) == "" || strings.TrimSpace(action.Label) == "" {
+			continue
+		}
+		out = append(out, detailBrowserAction{
+			Value:       action.Value,
+			Label:       action.Label,
+			Description: action.Description,
+		})
+	}
+	return out
+}
+
+func actionRouteEvidence(actions []detailBrowserAction) []string {
+	if len(actions) == 0 {
+		return nil
+	}
+	lines := make([]string, 0, len(actions))
+	for _, action := range actions {
+		detail := strings.TrimSpace(action.Label)
+		if strings.TrimSpace(action.Description) != "" {
+			detail += " - " + strings.TrimSpace(action.Description)
+		}
+		lines = append(lines, "next action: "+detail)
+	}
+	return lines
 }
 
 func listKindCounts(report listReport) map[string]int {

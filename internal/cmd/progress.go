@@ -136,6 +136,13 @@ func descriptionTranslationProgressMessage(lang string) string {
 	)
 }
 
+func reviewPlanProgressMessage(lang string) string {
+	return i18n.Pick(lang,
+		"Preparing review actions...",
+		"確認アクションを準備中...",
+	)
+}
+
 func securityScanProgressMessage(lang string) string {
 	return i18n.Pick(lang,
 		"Collecting security evidence...",

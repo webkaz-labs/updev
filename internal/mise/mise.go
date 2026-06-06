@@ -412,6 +412,39 @@ func RemoveTool(root string, name string) (bool, error) {
 	return true, nil
 }
 
+func RenameTool(root string, current string, recommended string) (bool, error) {
+	current = strings.TrimSpace(current)
+	recommended = strings.TrimSpace(recommended)
+	if current == "" || recommended == "" {
+		return false, fmt.Errorf("mise tool names are required")
+	}
+	if current == recommended {
+		return false, nil
+	}
+	if HasTool(root, recommended) {
+		return false, fmt.Errorf("recommended mise tool already exists: %s", recommended)
+	}
+	paths, err := ManifestPaths(root)
+	if err != nil {
+		return false, err
+	}
+	for _, path := range paths {
+		text, mode, err := readConfig(path)
+		if err != nil {
+			return false, err
+		}
+		updated, changed := renameToolLine(string(text), current, recommended)
+		if !changed {
+			continue
+		}
+		if err := os.WriteFile(path, []byte(updated), mode); err != nil {
+			return false, err
+		}
+		return true, nil
+	}
+	return false, nil
+}
+
 func readConfig(path string) ([]byte, os.FileMode, error) {
 	info, err := os.Stat(path)
 	if err != nil {
@@ -478,6 +511,37 @@ func removeToolLine(text string, name string) string {
 		out.WriteString(line)
 	}
 	return out.String()
+}
+
+func renameToolLine(text string, current string, recommended string) (string, bool) {
+	lines := strings.SplitAfter(text, "\n")
+	var out strings.Builder
+	inTools := false
+	changed := false
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(stripComment(line))
+		if strings.HasPrefix(trimmed, "[") && strings.HasSuffix(trimmed, "]") {
+			inTools = trimmed == "[tools]"
+			out.WriteString(line)
+			continue
+		}
+		if inTools && !changed {
+			toolName, _, ok := parseToolAssignment(trimmed)
+			if ok && toolName == current {
+				indent := line[:len(line)-len(strings.TrimLeft(line, " \t"))]
+				eqIndex := strings.Index(line, "=")
+				if eqIndex < 0 {
+					out.WriteString(line)
+					continue
+				}
+				out.WriteString(indent + quoteToolName(recommended) + " " + strings.TrimLeft(line[eqIndex:], " \t"))
+				changed = true
+				continue
+			}
+		}
+		out.WriteString(line)
+	}
+	return out.String(), changed
 }
 
 func quoteToolName(name string) string {
