@@ -20,13 +20,20 @@ type Section struct {
 }
 
 type Row struct {
-	Name              string `json:"name"`
-	Version           string `json:"version,omitempty"`
-	Wanted            string `json:"wanted,omitempty"`
-	State             string `json:"state,omitempty"`
-	Detail            string `json:"detail,omitempty"`
-	TranslationKey    string `json:"-"`
-	TranslationSource string `json:"-"`
+	Name              string   `json:"name"`
+	Version           string   `json:"version,omitempty"`
+	Wanted            string   `json:"wanted,omitempty"`
+	State             string   `json:"state,omitempty"`
+	Detail            string   `json:"detail,omitempty"`
+	Actions           []Action `json:"-"`
+	TranslationKey    string   `json:"-"`
+	TranslationSource string   `json:"-"`
+}
+
+type Action struct {
+	Value       string
+	Label       string
+	Description string
 }
 
 type State struct {
@@ -119,6 +126,9 @@ func RowMatches(section Section, row Row, query string) bool {
 		row.State,
 		row.Detail,
 	}, " "))
+	for _, action := range row.Actions {
+		haystack += " " + strings.ToLower(action.Label+" "+action.Description)
+	}
 	return strings.Contains(haystack, query)
 }
 
@@ -164,7 +174,7 @@ func PrintSections(w io.Writer, sections []Section, limit int, labels Labels, co
 		if index > 0 {
 			fmt.Fprintln(w)
 		}
-		fmt.Fprintf(w, "%s %s\n", textui.StyleHeading(section.Title, color), textui.StyleCount(fmt.Sprintf("(%d)", len(section.Rows)), color))
+		fmt.Fprintf(w, "%s %s\n", textui.StyleSection(section.Title, color), textui.StyleCount(fmt.Sprintf("(%d)", len(section.Rows)), color))
 		visible := LimitedRows(section.Rows, limit)
 		includeWanted := false
 		for _, row := range visible {
@@ -215,24 +225,90 @@ func ExpandedLines(row Row, labels Labels) []string {
 }
 
 func ExpandedLinesWithWidth(row Row, labels Labels, width int) []string {
+	return ExpandedLinesWithWidthStyled(row, labels, width, false)
+}
+
+func ExpandedLinesWithWidthStyled(row Row, labels Labels, width int, color bool) []string {
+	return ExpandedLinesWithWidthStyledFocus(row, labels, width, color, -1)
+}
+
+func ExpandedLinesWithWidthStyledFocus(row Row, labels Labels, width int, color bool, actionFocus int) []string {
 	labels = fillLabels(labels)
 	lines := []string{}
 	if strings.TrimSpace(row.Detail) != "" {
-		lines = append(lines, textui.WrapText(labels.Detail+": "+strings.TrimSpace(row.Detail), expandedDetailWidth(width))...)
+		lines = append(lines, textui.StyleSection(labels.Detail, color))
+		lines = append(lines, expandedKeyValueLines(labels.Detail, row.Detail, expandedDetailWidth(width), color)...)
 	}
-	if row.Version != "" {
-		lines = append(lines, labels.Version+": "+row.Version)
-	}
-	if row.Wanted != "" {
-		lines = append(lines, labels.Wanted+": "+row.Wanted)
-	}
-	if row.State != "" {
-		lines = append(lines, labels.State+": "+row.State)
+	if len(row.Actions) > 0 {
+		if len(lines) > 0 {
+			lines = append(lines, "")
+		}
+		lines = append(lines, textui.StyleSection("actions", color))
+		for index, action := range row.Actions {
+			if strings.TrimSpace(action.Label) == "" {
+				continue
+			}
+			key := fmt.Sprintf("%d", index+1)
+			if index == 0 {
+				key = "a or 1"
+			}
+			prefix := "  "
+			if index == actionFocus {
+				prefix = textui.StyleRequested("> ", color)
+			}
+			line := prefix + textui.StyleKey(fmt.Sprintf("action %d [press %s]:", index+1, key), color) + " " + textui.StyleAction(action.Label, color)
+			if strings.TrimSpace(action.Description) != "" {
+				line += textui.StyleDim(" - "+strings.TrimSpace(action.Description), color)
+			}
+			lines = append(lines, textui.WrapText(line, expandedDetailWidth(width))...)
+		}
 	}
 	if len(lines) == 0 {
 		lines = append(lines, labels.NoExtraDetail)
 	}
 	return lines
+}
+
+func expandedKeyValueLines(label string, value string, width int, color bool) []string {
+	lines := []string{}
+	rawLines := splitNonEmptyLines(strings.ReplaceAll(value, "\r\n", "\n"))
+	for index, rawLine := range rawLines {
+		line := strings.TrimSpace(rawLine)
+		if isExpandedKeyValueLine(line) {
+			lines = append(lines, textui.WrapText(expandedKeyValueLine(line, color), width)...)
+			continue
+		}
+		key := label
+		if index > 0 {
+			key = "note"
+		}
+		lines = append(lines, textui.WrapText(textui.StyleKey(key+":", color)+" "+line, width)...)
+	}
+	return lines
+}
+
+func expandedKeyValueLine(line string, color bool) string {
+	key, value, ok := strings.Cut(strings.TrimSpace(line), ":")
+	if !ok {
+		return line
+	}
+	return textui.StyleKey(strings.TrimSpace(key)+":", color) + " " + strings.TrimSpace(value)
+}
+
+func isExpandedKeyValueLine(line string) bool {
+	key, _, ok := strings.Cut(strings.TrimSpace(line), ":")
+	key = strings.TrimSpace(key)
+	return ok && key != "" && !strings.ContainsAny(key, " \t/") && len([]rune(key)) <= 32
+}
+
+func splitNonEmptyLines(value string) []string {
+	out := []string{}
+	for _, line := range strings.Split(value, "\n") {
+		if strings.TrimSpace(line) != "" {
+			out = append(out, strings.TrimSpace(line))
+		}
+	}
+	return out
 }
 
 func expandedDetailWidth(width int) int {
@@ -249,6 +325,16 @@ func tableDetail(value string) string {
 	value = strings.TrimSpace(value)
 	if value == "" {
 		return ""
+	}
+	for _, line := range splitNonEmptyLines(strings.ReplaceAll(value, "\r\n", "\n")) {
+		value = line
+		break
+	}
+	if key, rest, ok := strings.Cut(value, ":"); ok {
+		switch strings.ToLower(strings.TrimSpace(key)) {
+		case "description", "summary":
+			value = strings.TrimSpace(rest)
+		}
 	}
 	withoutURLs := detailURLPattern.ReplaceAllString(value, "")
 	return strings.TrimSpace(strings.Join(strings.Fields(withoutURLs), " "))
@@ -296,9 +382,9 @@ func styleDetail(value string, status string, color bool) string {
 	switch strings.ToLower(strings.TrimSpace(status)) {
 	case "inactive":
 		return textui.StyleDim(value, color)
-	case "missing", "extra", "drift", "held", "hold", "review", "unavailable", "attention", "skipped", "deferred":
+	case "missing", "extra", "drift", "held", "hold", "review", "unavailable", "attention", "skipped", "deferred", "needs-review", "ignore-local", "adopt-brew", "adopt-mas", "open-vendor":
 		return textui.StyleWarning(value, color)
-	case "error", "blocked":
+	case "error", "blocked", "block":
 		return textui.StyleError(value, color)
 	default:
 		return textui.StyleLabel(value, color)

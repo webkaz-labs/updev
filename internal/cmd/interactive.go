@@ -40,6 +40,9 @@ func shouldRunUpdevInteractive(input io.Reader, output io.Writer, format string,
 	if format != "" && format != "text" {
 		return false
 	}
+	if !isTerminal(input) || !isTerminal(output) {
+		return false
+	}
 	if force {
 		return true
 	}
@@ -54,7 +57,20 @@ func shouldRunUpdevInteractive(input io.Reader, output io.Writer, format string,
 			return true
 		}
 	}
-	return isTerminal(input) && isTerminal(output)
+	return true
+}
+
+func warnInteractiveUnavailable(input io.Reader, output io.Writer, format string, force bool, disabled bool) {
+	if !force || disabled || os.Getenv(updevInteractiveEnv) == updevInteractiveDisable {
+		return
+	}
+	if format != "" && format != "text" {
+		return
+	}
+	if isTerminal(input) && isTerminal(output) {
+		return
+	}
+	fmt.Fprintln(os.Stderr, "updev: --interactive requires a TTY; falling back to text output")
 }
 
 func isTerminal(value any) bool {

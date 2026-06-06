@@ -81,6 +81,24 @@ description_translation = "manual"
 [inventory]
 overrides = "~/.config/updev/manual-overrides.local.toml"
 
+[backends]
+preference_order = [
+  "mise/core",
+  "mise/aqua",
+  "mise/github",
+  "mise/gitlab",
+  "mise/conda",
+  "mise/pipx",
+  "mise/npm",
+  "mise/gem",
+  "mise/go",
+  "mise/cargo",
+  "mise/dotnet",
+  "store/native",
+  "package-manager/native",
+  "vendor/manual",
+]
+
 [[inventory.reports]]
 name = "manual-apps"
 providers = ["manual", "mas", "vendor", "external"]
@@ -168,11 +186,26 @@ evidence:
   failing the whole report.
 
 `backendPlanReport` findings include read-only migration evidence. In addition
-to current and recommended provider names, findings record candidate command
-names, whether those commands are currently on PATH, the current/recommended
-mise specs when known, and OS selectors from those specs. This lets reviewers
-preserve `os = [...]` conditions before moving a Homebrew entry to mise or
-rewriting a mise backend.
+to current and target provider names, findings record whether a row is a direct
+`recommendation` or a review-only `candidate`, candidate command names, whether
+those commands are currently on PATH, the current/recommended mise specs when
+known, and OS selectors from those specs. GitHub metadata candidates can also
+include the current platform, latest-release asset status, matching asset names,
+and a limited asset sample when `gh` is available. This lets reviewers preserve
+`os = [...]` conditions and check architecture compatibility before moving a
+Homebrew entry to mise or rewriting a mise backend. `cargo:` to `mise/github`
+rows stay local-build preserving when latest-release assets are missing or do
+not match the current platform.
+
+Interactive backend detail rows derive write actions from this evidence instead
+of adding separate mutation state to the JSON schema. Safe `mise` rewrites are
+available only for direct `mise-backend-rewrite` recommendations with explicit
+rewrite permission. When the recommended mise key already exists, the old key is
+removed only if the recommended entry's OS selectors cover the current entry;
+otherwise the row remains review-only so platform-specific conditions are not
+lost. Homebrew ownership removal is available only for direct
+`homebrew-to-mise` recommendations where the recommended mise entry already
+exists. Candidate rows and missing-target migrations never expose write actions.
 
 Inventory config is intentionally narrow. `state_dir` changes where updev stores
 inventory scan/cache state, and `overrides` points to a structured TOML file for
@@ -195,6 +228,17 @@ read-only TOML preview for the configured overrides file and returns exit `2`
 while review is needed. Write actions are explicit: `--action accept` appends
 the suggested override, `--action edit` opens the snippet first, and
 `--action ignore` appends a local-only override.
+
+`[backends].preference_order` is a rank override for provider/backend tier
+labels. It accepts known labels such as `mise/core`, `mise/aqua`,
+`mise/github`, `mise/gitlab`, `mise/conda`, `mise/pipx`, `mise/npm`,
+`mise/gem`, `mise/go`, `mise/cargo`, `mise/dotnet`, `store/native`,
+`package-manager/native`, and `vendor/manual`; future labels may use the same
+`provider/backend` shape. Deprecated or legacy mise labels such as `mise/ubi`,
+`mise/vfox`, and `mise/asdf` are recognized when already present or explicitly
+configured, but they are not appended by the default order. The setting is
+intentionally order-only: backend findings still need provider evidence, command
+evidence, and explicit safe write paths before any mutation is offered.
 
 Override entries currently support manual app identity reconciliation:
 

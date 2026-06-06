@@ -16,6 +16,8 @@ import (
 
 var manualPlanURLPattern = regexp.MustCompile(`https?://[^)\s;]+`)
 
+const manualPlanDetailActionPrefix = "manual-plan"
+
 type inventoryPlanOptions struct {
 	action   string
 	format   string
@@ -580,6 +582,119 @@ func manualPlanItemsWithTextDetails(items []manualPlanItem) []manualPlanItem {
 		return out[:8]
 	}
 	return out
+}
+
+func manualPlanDetailRows(report inventoryPlanReport) []detailBrowserRow {
+	rows := make([]detailBrowserRow, 0, len(report.Items))
+	for _, item := range report.Items {
+		rows = append(rows, manualPlanDetailRow(item))
+	}
+	return rows
+}
+
+func manualPlanToolSections(report inventoryPlanReport) []toolSection {
+	return detailRowsToToolSections(manualPlanDetailRows(report), func(row detailBrowserRow) (string, string) {
+		status := firstNonEmpty(row.Status, "review")
+		return "manual/" + status, "manual / " + status
+	})
+}
+
+func manualPlanDetailRow(item manualPlanItem) detailBrowserRow {
+	metadata := []string{
+		"provider: " + item.Provider,
+		"suggested_provider: " + firstNonEmpty(item.SuggestedProvider, "-"),
+		"confidence: " + firstNonEmpty(item.Confidence, "-"),
+		"reason: " + firstNonEmpty(item.ReasonCode, "-"),
+		"remediation: " + firstNonEmpty(item.RemediationCode, "-"),
+	}
+	if item.ReviewURL != "" {
+		metadata = append(metadata, "url: "+item.ReviewURL)
+	}
+	if item.InstallHint != "" {
+		metadata = append(metadata, "hint: "+item.InstallHint)
+	}
+	for _, command := range item.CommandPreview {
+		metadata = append(metadata, "cmd: "+command)
+	}
+	for _, evidence := range item.Evidence {
+		metadata = append(metadata, manualPlanEvidenceDetail(evidence))
+	}
+	if item.SuggestedOverride != nil {
+		metadata = append(metadata, "suggested_override: managed_by="+firstNonEmpty(item.SuggestedOverride.ManagedBy, "-")+" lifecycle="+firstNonEmpty(item.SuggestedOverride.Lifecycle, "-"))
+		if len(item.SuggestedOverride.Aliases) > 0 {
+			metadata = append(metadata, "aliases: "+strings.Join(item.SuggestedOverride.Aliases, ", "))
+		}
+	}
+	return detailBrowserRow{
+		Title:    item.Name,
+		Status:   item.Action,
+		Summary:  manualPlanDisplayNextStep(item),
+		Detail:   item.Detail,
+		Metadata: metadata,
+		Actions:  manualPlanDetailActions(item),
+	}
+}
+
+func manualPlanEvidenceDetail(evidence manualReviewEvidence) string {
+	parts := []string{"evidence"}
+	if evidence.Scanner != "" {
+		parts = append(parts, "scanner="+evidence.Scanner)
+	}
+	if evidence.Source != "" {
+		parts = append(parts, "source="+evidence.Source)
+	}
+	if evidence.Path != "" {
+		parts = append(parts, "path="+evidence.Path)
+	}
+	if evidence.BundleID != "" {
+		parts = append(parts, "bundle_id="+evidence.BundleID)
+	}
+	if evidence.MASID != "" {
+		parts = append(parts, "mas_id="+evidence.MASID)
+	}
+	if evidence.Version != "" {
+		parts = append(parts, "version="+evidence.Version)
+	}
+	return strings.Join(parts, " ")
+}
+
+func manualPlanDetailActions(item manualPlanItem) []detailBrowserAction {
+	actions := []detailBrowserAction{}
+	if item.State == "installed" && manualPlanActionNeedsReview(item.Action) {
+		actions = append(actions,
+			detailBrowserAction{Value: manualPlanDetailActionValue("accept", item.Name), Label: tr("accept override", "override を採用"), Description: tr("append the suggested manual inventory override", "提案された manual inventory override を追記します")},
+			detailBrowserAction{Value: manualPlanDetailActionValue("ignore", item.Name), Label: tr("ignore local app", "local app として無視"), Description: tr("append a local-only ignore override", "local-only の ignore override を追記します")},
+			detailBrowserAction{Value: manualPlanDetailActionValue("edit", item.Name), Label: tr("edit override", "override を編集"), Description: tr("open the suggested override before writing", "書き込む前に提案 override を editor で開きます")},
+		)
+	}
+	if item.Action == "adopt-brew" {
+		if cask := manualDetailValue(item.Detail, "cask"); cask != "" {
+			actions = append(actions, detailBrowserAction{Value: manualPlanDetailActionValue("review-cask", cask), Label: tr("review cask", "cask を確認"), Description: tr("run brew info --cask for ownership evidence", "ownership evidence として brew info --cask を実行します")})
+		}
+	}
+	if item.Action == "adopt-mas" {
+		if masID := manualDetailValue(item.Detail, "mas_id"); masID != "" {
+			actions = append(actions, detailBrowserAction{Value: manualPlanDetailActionValue("review-mas", masID), Label: tr("review App Store", "App Store を確認"), Description: tr("run mas info when mas is available", "mas が使える場合は mas info を実行します")})
+		}
+	}
+	if item.Action == "open-vendor" {
+		if url := item.ReviewURL; url != "" {
+			actions = append(actions, detailBrowserAction{Value: manualPlanDetailActionValue("open-vendor", url), Label: tr("open vendor", "vendor を開く"), Description: tr("open the vendor source URL", "vendor source URL を開きます")})
+		}
+	}
+	return actions
+}
+
+func manualPlanDetailActionValue(action string, value string) string {
+	return manualPlanDetailActionPrefix + "\t" + action + "\t" + value
+}
+
+func parseManualPlanDetailAction(value string) (string, string, bool) {
+	parts := strings.SplitN(value, "\t", 3)
+	if len(parts) != 3 || parts[0] != manualPlanDetailActionPrefix || parts[1] == "" || parts[2] == "" {
+		return "", "", false
+	}
+	return parts[1], parts[2], true
 }
 
 func manualPlanActionSummary(counts map[string]int) string {

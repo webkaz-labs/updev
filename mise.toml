@@ -13,6 +13,14 @@ run = "/usr/bin/time -p go test -count=1 ./..."
 description = "Run updev Go tests verbosely without cache"
 run = "/usr/bin/time -p go test -count=1 -v ./..."
 
+[tasks.test-e2e]
+description = "Run updev built-binary PTY smoke tests for release/TTY UX gates"
+run = "GOCACHE=${GOCACHE:-/private/tmp/updev-gocache} /usr/bin/time -p go test -tags=e2e -count=1 ./test/e2e"
+
+[tasks.test-e2e-smoke]
+description = "Run the dashboard-only built-binary PTY smoke"
+run = "GOCACHE=${GOCACHE:-/private/tmp/updev-gocache} /usr/bin/time -p go test -tags=e2e -count=1 ./test/e2e -run 'TestInteractivePTYSmoke/dashboard optimized routes'"
+
 [tasks.vet]
 description = "Run updev Go vet"
 run = "go vet ./..."

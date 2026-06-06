@@ -60,8 +60,8 @@ review queue, and JSON output for automation.
 - Manual/vendor app inventory is review-first. It can surface local-only apps,
   cask/Mac App Store ownership evidence, and adoption candidates without
   automatically taking over the machine.
-- The same commands work in terminals and automation: color-aware human output
-  for interactive runs, `--no-color` and JSON for scripts.
+- The same commands work in terminals and automation: TTY-first dashboards for
+  humans, `--plain` for stable text logs, and JSON for scripts.
 - Configuration is additive. A default-only `config.toml` is not created or
   required, which keeps first-run setup small.
 
@@ -73,9 +73,9 @@ review queue, and JSON output for automation.
   new, policy-blocked, advisory-matched, or missing release-age/provenance
   evidence. Strict mode can stop mutation until evidence is good enough.
 - **Readable inventory**: `updev list` is a first-class review surface for
-  desired/live package and runtime state. It groups by provider, category, and
-  status, stays compact by default, and adds focused filters, detail views, and
-  JSON when you need to drill in.
+  desired/live package and runtime state. TTY runs open the grouped inventory
+  list first, with drill-down tables grouped by provider, category, and status;
+  `updev hub` opens the full view/filter selector when you want the menu first.
 - **Desired-state checks**: `updev check`, `updev sync`, and `updev status`
   find missing, extra, drifted, blocked, and unavailable entries.
 - **mise hygiene**: `updev fix mise` previews rewrites for unsafe `latest` pins
@@ -86,9 +86,9 @@ review queue, and JSON output for automation.
 - **Manual/vendor app inventory**: `updev inventory scan|plan|review
   --provider manual` finds macOS `.app` bundles, Mac App Store evidence,
   Homebrew cask ownership, and local-only apps that need a decision.
-- **Interactive or scriptable UX**: TTY runs can open compact selectors and
-  detail views; scripts can use `--format json`, `--no-color`, and focused
-  filters.
+- **Interactive or scriptable UX**: `updev`, `updev list`, and `updev last`
+  open review dashboards/browsers on TTY; scripts can use `--plain`,
+  `--format json`, `--no-color`, and focused filters.
 
 ## Install
 
@@ -239,10 +239,12 @@ adds its own mise update gate.
 | `updev` | Run the update workflow. |
 | `updev --dry-run` | Preview the update workflow without applying updates. |
 | `updev list` / `updev ls` | Show grouped desired/live inventory. |
+| `updev hub` | Open the full inventory view/filter selector menu. |
+| `updev --plain` / `updev list --plain` | Print stable text output without opening TUI. |
 | `updev status` / `updev st` | Show compact current state. |
 | `updev check` / `updev ck` | Validate manifests and provider consistency. |
 | `updev sync` | Compare desired and live state without mutating. |
-| `updev last` | Re-open the cached last update report. |
+| `updev last` | Re-open the cached last update dashboard on TTY. |
 | `updev fix mise` | Preview or apply safe mise manifest pin fixes. |
 | `updev security scan` | Run explicit broad security checks. |
 | `updev security gate` | Evaluate pending update safety. |
@@ -286,6 +288,24 @@ security = "strict"
 [ui]
 language = "ja"
 description_translation = "manual" # auto | manual | off
+
+[backends]
+preference_order = [
+  "mise/core",
+  "mise/aqua",
+  "mise/github",
+  "mise/gitlab",
+  "mise/conda",
+  "mise/pipx",
+  "mise/npm",
+  "mise/gem",
+  "mise/go",
+  "mise/cargo",
+  "mise/dotnet",
+  "store/native",
+  "package-manager/native",
+  "vendor/manual",
+]
 ```
 
 `description_translation` controls only `updev list` description-cache updates.
@@ -295,6 +315,14 @@ used, and `off` disables both automatic and explicit translation attempts.
 Codex is optional; when it is missing, `updev` leaves English descriptions in
 place and `updev doctor dependencies` reports the optional backend as
 unavailable.
+
+`preference_order` is optional. Omit it to use the built-in provider/backend
+order. When present, labels listed first receive the highest ranks and omitted
+known tiers keep their default relative order after them. Future provider labels
+can use the same `provider/backend` shape. Deprecated mise backends such as
+`mise/ubi` and legacy plugin backends such as `mise/asdf` are recognized when
+already present or explicitly configured, but they are not part of the default
+recommendation order.
 
 ## Support Status
 

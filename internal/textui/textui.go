@@ -9,14 +9,15 @@ import (
 )
 
 const (
-	ansiReset  = "\033[0m"
-	ansiBold   = "\033[1m"
-	ansiDim    = "\033[2m"
-	ansiGreen  = "\033[32m"
-	ansiBlue   = "\033[34m"
-	ansiYellow = "\033[33m"
-	ansiRed    = "\033[31m"
-	ansiCyan   = "\033[36m"
+	ansiReset   = "\033[0m"
+	ansiBold    = "\033[1m"
+	ansiDim     = "\033[2m"
+	ansiGreen   = "\033[32m"
+	ansiBlue    = "\033[34m"
+	ansiYellow  = "\033[33m"
+	ansiRed     = "\033[31m"
+	ansiMagenta = "\033[35m"
+	ansiCyan    = "\033[36m"
 )
 
 type Column struct {
@@ -47,11 +48,11 @@ func PrintTable(w io.Writer, columns []Column, rows [][]string, color bool) {
 
 func StyleStatus(status string, color bool) string {
 	switch status {
-	case "ok", "allow", "active", "updated":
+	case "ok", "allow", "active", "updated", "keep-manual":
 		return Style(status, ansiGreen, color)
-	case "missing", "extra", "drift", "held", "hold", "review", "unavailable", "inactive", "attention", "skipped", "deferred":
+	case "missing", "extra", "drift", "held", "hold", "review", "unavailable", "inactive", "attention", "skipped", "deferred", "needs-review", "ignore-local", "adopt-brew", "adopt-mas", "open-vendor":
 		return Style(status, ansiYellow, color)
-	case "error", "blocked":
+	case "error", "blocked", "block":
 		return Style(status, ansiRed, color)
 	default:
 		return Style(status, ansiCyan, color)
@@ -64,6 +65,18 @@ func StyleDim(value string, color bool) string {
 
 func StyleHeading(value string, color bool) string {
 	return Style(value, ansiBold, color)
+}
+
+func StyleSection(value string, color bool) string {
+	return Style(value, ansiBold+ansiMagenta, color)
+}
+
+func StyleKey(value string, color bool) string {
+	return Style(value, ansiCyan, color)
+}
+
+func StyleAction(value string, color bool) string {
+	return Style(value, ansiGreen, color)
 }
 
 func StyleLabel(value string, color bool) string {

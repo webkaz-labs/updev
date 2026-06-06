@@ -50,3 +50,18 @@ func TestColorEnabledRequiresTerm(t *testing.T) {
 		t.Fatal("expected NO_COLOR to disable color")
 	}
 }
+
+func TestStyleStatusColorsManualAndPolicyAttentionStates(t *testing.T) {
+	for _, status := range []string{"needs-review", "adopt-brew", "adopt-mas", "open-vendor", "ignore-local"} {
+		got := StyleStatus(status, true)
+		if !strings.Contains(got, ansiYellow) {
+			t.Fatalf("expected %s to be warning-colored, got %q", status, got)
+		}
+	}
+	if got := StyleStatus("block", true); !strings.Contains(got, ansiRed) {
+		t.Fatalf("expected block to be error-colored, got %q", got)
+	}
+	if got := StyleStatus("keep-manual", true); !strings.Contains(got, ansiGreen) {
+		t.Fatalf("expected keep-manual to be ok-colored, got %q", got)
+	}
+}
