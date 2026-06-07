@@ -137,10 +137,10 @@ func buildMiseManifestFixReport(ctx context.Context, opts miseManifestFixOptions
 			Line:                  issue.Line,
 			Current:               issue.Version,
 			Command:               []string{"mise", "latest", issue.Tool},
-			AgePolicyActive:       report.MiseMinimumReleaseAge.Active,
+			AgePolicyActive:       boolValue(report.MiseMinimumReleaseAge.Active),
 			AgePolicyValue:        report.MiseMinimumReleaseAge.Value,
 			AgePolicySource:       report.MiseMinimumReleaseAge.Source,
-			CommandShapeSupported: report.MiseMinimumReleaseAge.CommandShapeSupported,
+			CommandShapeSupported: boolValue(report.MiseMinimumReleaseAge.CommandShapeSupported),
 			Status:                plan.StatusUnavailable,
 		}
 		resolved, reason := resolveMiseLatestVersion(ctx, commandRunner, issue.Tool)
@@ -373,11 +373,19 @@ func printMiseManifestFixText(w io.Writer, report miseManifestFixReport, color b
 }
 
 func miseMinimumReleaseAgeText(evidence miseMinimumReleaseAgeEvidence) string {
-	shape := "latest flag unsupported"
-	if evidence.CommandShapeSupported {
+	shape := "latest flag support unknown"
+	if evidence.CommandShapeSupported != nil && *evidence.CommandShapeSupported {
 		shape = "latest flag supported"
+	} else if evidence.CommandShapeSupported != nil {
+		shape = "latest flag unsupported"
 	}
-	if evidence.Active {
+	if evidence.Active == nil {
+		if evidence.Reason != "" {
+			return "unknown; " + evidence.Reason + "; " + shape
+		}
+		return "unknown; " + shape
+	}
+	if *evidence.Active {
 		if evidence.Source != "" {
 			return "active " + evidence.Value + " from " + evidence.Source + "; " + shape
 		}
