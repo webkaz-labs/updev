@@ -143,9 +143,9 @@ make every other surface reference or embed it:
 - `docs/agent/SKILL.md` is the planned installable skill artifact. It stays
   short and procedural, and points to `updev help`, `updev help agent`, and
   `docs/agent/USAGE.md` instead of duplicating full command reference.
-- `updev skill` should print the embedded `docs/agent/SKILL.md`; `updev skill
-  --full` should include the deeper usage guide. The CLI must embed these files
-  directly rather than carrying a second copy in Go strings.
+- `updev skill` should print the embedded `docs/agent/SKILL.md`;
+  `updev skill --full` should include the deeper usage guide. The CLI must
+  embed these files directly rather than carrying a second copy in Go strings.
 - README should only advertise that agent guidance exists and show the minimal
   discovery commands. It should not duplicate the workflow recipes.
 - CLI flag and command details remain owned by live command help and
