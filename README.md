@@ -217,8 +217,8 @@ updev inventory plan --provider manual --format json
 `updev` can evaluate pending updates before mutation. It can hold or require
 review for:
 
-- Homebrew releases and VS Code extension updates that are newer than the
-  configured updev age threshold;
+- Homebrew releases and VS Code extension updates that are newer than their
+  configured minimum-age policy;
 - Homebrew casks, URL casks, and non-official taps that need provenance review;
 - advisory matches from OSV or GitHub Advisory evidence where package identity
   is reliable;
