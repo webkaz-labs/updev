@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 	"unicode"
 
@@ -168,7 +169,7 @@ func parseUpdateOptions(args []string) (updateOptions, error) {
 }
 
 func defaultUpdateSecurityMode() string {
-	mode := "warn"
+	mode := "strict"
 	if configured := loadUpdevConfig().Update.Security; configured != nil && validUpdateSecurityMode(*configured) {
 		mode = strings.ToLower(strings.TrimSpace(*configured))
 	}
@@ -1595,8 +1596,19 @@ func runUpdateHub(report updateReport) {
 func buildUpdateHubReviewPlans(root string) (inventoryPlanReport, backendPlanReport) {
 	progress := newStartupProgress(os.Stdin, os.Stderr, "text", reviewPlanProgressMessage(defaultLanguage()))
 	progress.Start()
-	manualPlan := buildInventoryPlanReport(inventoryPlanOptions{root: root, provider: manualProviderName})
-	backendPlan := buildBackendPlanReport(context.Background(), backendOptions{command: "plan", root: root})
+	var manualPlan inventoryPlanReport
+	var backendPlan backendPlanReport
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		manualPlan = buildInventoryPlanReport(inventoryPlanOptions{root: root, provider: manualProviderName})
+	}()
+	go func() {
+		defer wg.Done()
+		backendPlan = buildBackendPlanReport(context.Background(), backendOptions{command: "plan", root: root})
+	}()
+	wg.Wait()
 	progress.Done()
 	return manualPlan, backendPlan
 }
@@ -1610,347 +1622,30 @@ func buildInventoryPlanForHub(root string) inventoryPlanReport {
 }
 
 func runUpdateHubWithDefault(report updateReport, preferredAction string) {
-	defaultAction := updateHubActionInventoryAll
-	manualPlan, backendPlan := buildUpdateHubReviewPlans(report.Root)
-	if manualPlan.AttentionCount > 0 {
-		defaultAction = updateHubActionManualPlan
-	} else if len(backendPlan.Findings) > 0 {
-		defaultAction = updateHubActionBackends
-	}
-	if updateHubActionExists(preferredAction) {
-		defaultAction = preferredAction
-	} else if updateHubActionAvailable(preferredAction, updateHubChoices(report, manualPlan, backendPlan, defaultAction)) {
-		defaultAction = preferredAction
-	}
-	pendingAction := initialUpdateHubAction(preferredAction, defaultAction)
-	detailStates := map[string]detailBrowserState{}
+	manualPlan := inventoryPlanReport{}
+	backendPlan := backendPlanReport{}
+	manualLoading := true
+	backendLoading := true
 	for {
-		action := pendingAction
-		pendingAction = ""
-		if action == "" {
-			action = updateHubActionDashboard
-		}
-		if action == updevActionExit {
+		defaultAction := updateHubDefaultAction(manualPlan, backendPlan, preferredAction, report)
+		result, err := runUpdateHubRouter(report, manualPlan, manualLoading, backendPlan, backendLoading, preferredAction, defaultAction, textui.ColorEnabled())
+		if err != nil {
+			printUpdateText(report)
 			return
 		}
-		focusAction := defaultAction
-		if action != updateHubActionDashboard {
-			defaultAction = action
-			focusAction = action
+		if result.ManualReady {
+			manualPlan = result.ManualPlan
+			manualLoading = false
 		}
-		color := textui.ColorEnabled()
-		switch action {
-		case updateHubActionDashboard:
-			stateKey := "dashboard"
-			_, hasSummaryState := detailStates[stateKey]
-			if !hasSummaryState || focusAction == "" || focusAction == updateHubActionDashboard {
-				focusAction = updateHubActionLogs
-			}
-			state, err := runUpdateSummaryBrowser(updateHubTitle(report), report, manualPlan, backendPlan, detailStates[stateKey], focusAction, color)
-			if err != nil {
-				printUpdateText(report)
-				break
-			}
-			detailStates[stateKey] = state
-			if state.Action == updevActionExit {
-				return
-			}
-			if state.Action == updevActionBack {
-				return
-			}
-			if state.Action == updevActionHome {
-				defaultAction = updateHubActionDashboard
-				continue
-			}
-			if route, ok := parseUpdateSummaryRoute(state.Action); ok {
-				if exit := runUpdateSummaryRouteDetail(report, route, backendPlan, detailStates, color); exit {
-					return
-				}
-				defaultAction = route.Base
-				pendingAction = updateHubActionDashboard
-				continue
-			}
-			if updateHubActionExists(state.Action) {
-				defaultAction = state.Action
-				pendingAction = state.Action
-				continue
-			}
-			continue
-		case updateHubActionInventoryAll:
-			inventory := buildListReport(inventoryResult{Report: report.Inventory}, listOptions{})
-			inventory.Evidence = addBackendListEvidence(inventory.Evidence, backendPlan)
-			action, handled := runListFilteredBrowser("updev installed inventory", inventory, detailStates, color)
-			if !handled {
-				printLastInventorySection(os.Stdout, report, lastReportOptions{section: "inventory", details: true}, color)
-				break
-			}
-			if action == updevActionExit {
-				return
-			}
-			if action == updevActionBack {
-				defaultAction = updateHubActionInventoryAll
-				pendingAction = updateHubActionDashboard
-				continue
-			}
-			if action == updevActionHome {
-				defaultAction = updateHubActionDashboard
-				pendingAction = updateHubActionDashboard
-			}
-			if route, ok := parseListRouteAction(action); ok {
-				outcome := runListRouteDetail(report.Root, route, backendPlan, report, true, detailStates, color)
-				if outcome == listRouteDetailExit {
-					return
-				}
-				if outcome == listRouteDetailHome {
-					defaultAction = updateHubActionDashboard
-					pendingAction = updateHubActionDashboard
-					continue
-				}
-				if route.Domain == listHubActionBackends {
-					backendPlan = buildBackendPlanReport(context.Background(), backendOptions{command: "plan", root: report.Root})
-				}
-				defaultAction = updateHubActionInventoryAll
-				pendingAction = updateHubActionInventoryAll
-				continue
-			}
-			if routed := updateHubActionFromListAction(action); routed != "" {
-				defaultAction = routed
-				pendingAction = routed
-			}
-			continue
-		case updateHubActionInventoryAttention:
-			printLastInventorySection(os.Stdout, report, lastReportOptions{section: "inventory", status: "attention", details: false}, color)
-		case updateHubActionInventoryDetails:
-			stateKey := "inventory-details"
-			state, err := runDetailBrowserWithState("updev inventory details", updateInventoryDetailRowsWithBackend(report, backendPlan), detailStates[stateKey], color)
-			if err != nil {
-				printLastInventorySection(os.Stdout, report, lastReportOptions{section: "inventory", status: "attention", details: true}, color)
-				break
-			}
-			detailStates[stateKey] = state
-			if state.Action == updevActionExit {
-				return
-			}
-			if state.Action == updevActionBack {
-				defaultAction = updateHubActionInventoryDetails
-				pendingAction = updateHubActionDashboard
-				continue
-			}
-			if state.Action == updevActionHome {
-				defaultAction = updateHubActionDashboard
-				continue
-			}
-			if route, ok := parseListRouteAction(state.Action); ok {
-				outcome := runListRouteDetail(report.Root, route, backendPlan, report, true, detailStates, color)
-				if outcome == listRouteDetailExit {
-					return
-				}
-				if outcome == listRouteDetailHome {
-					defaultAction = updateHubActionDashboard
-					pendingAction = updateHubActionDashboard
-					continue
-				}
-				defaultAction = updateHubActionInventoryDetails
-				pendingAction = updateHubActionInventoryDetails
-				continue
-			}
-			if routed := updateHubActionFromListAction(state.Action); routed != "" {
-				defaultAction = routed
-				pendingAction = routed
-				continue
-			}
-			continue
-		case updateHubActionManualPlan:
-			stateKey := "manual-plan"
-			state, err := runToolTableBrowserWithState("updev manual review plan", manualPlanToolSections(manualPlan), detailStates[stateKey], color)
-			if err != nil {
-				printInventoryPlanText(os.Stdout, manualPlan)
-				break
-			}
-			detailStates[stateKey] = state
-			if state.Action == updevActionExit {
-				return
-			}
-			if state.Action == updevActionBack {
-				defaultAction = updateHubActionManualPlan
-				pendingAction = updateHubActionDashboard
-				continue
-			}
-			if state.Action == updevActionHome {
-				defaultAction = updateHubActionDashboard
-				continue
-			}
-			if handleManualPlanDetailAction(report.Root, state.Action) {
-				manualPlan = buildInventoryPlanForHub(report.Root)
-				defaultAction = updateHubActionManualPlan
-				continue
-			}
-			continue
-		case updateHubActionBackends:
-			stateKey := "backends"
-			state, err := runToolTableBrowserWithState("updev backend convergence", backendToolSections(backendPlan), detailStates[stateKey], color)
-			if err != nil {
-				printBackendPlanText(os.Stdout, backendPlan, color)
-				break
-			}
-			detailStates[stateKey] = state
-			if state.Action == updevActionExit {
-				return
-			}
-			if state.Action == updevActionBack {
-				defaultAction = updateHubActionBackends
-				pendingAction = updateHubActionDashboard
-				continue
-			}
-			if state.Action == updevActionHome {
-				defaultAction = updateHubActionDashboard
-				continue
-			}
-			if handleBackendDetailAction(report.Root, state.Action) {
-				backendPlan = buildBackendPlanForHub(report.Root)
-				defaultAction = updateHubActionBackends
-				continue
-			}
-			continue
-		case updateHubActionUpdatesFilter:
-			opts, ok := selectUpdateStepFilter(report)
-			if !ok {
-				continue
-			}
-			filtered := filterUpdateReport(report, opts)
-			stateKey := "updates-filter:" + filterSummary(lastReportFilterMap(opts))
-			state, err := runDetailBrowserWithState("updev update steps", updateLogDetailRows(filtered), detailStates[stateKey], color)
-			if err != nil {
-				printLastUpdateSteps(os.Stdout, filtered, true, color)
-				break
-			}
-			detailStates[stateKey] = state
-			if state.Action == updevActionExit {
-				return
-			}
-			if state.Action == updevActionBack {
-				defaultAction = updateHubActionUpdatesFilter
-				pendingAction = updateHubActionDashboard
-				continue
-			}
-			if state.Action == updevActionHome {
-				defaultAction = updateHubActionDashboard
-				continue
-			}
-			if updateHubActionExists(state.Action) {
-				defaultAction = state.Action
-				pendingAction = state.Action
-				continue
-			}
-		case updateHubActionSecurity:
-			stateKey := "security"
-			state, err := runDetailBrowserWithState("updev security details", updateSecurityDetailRows(report), detailStates[stateKey], color)
-			if err != nil {
-				printLastSecuritySection(os.Stdout, report, true, color)
-				break
-			}
-			detailStates[stateKey] = state
-			if state.Action == updevActionExit {
-				return
-			}
-			if state.Action == updevActionBack {
-				defaultAction = updateHubActionSecurity
-				pendingAction = updateHubActionDashboard
-				continue
-			}
-			if state.Action == updevActionHome {
-				defaultAction = updateHubActionDashboard
-				continue
-			}
-			if handleSecurityDetailAction(&report, state.Action) {
-				defaultAction = updateHubActionSecurity
-				continue
-			}
-			continue
-		case updateHubActionSecurityFilter:
-			opts, ok := selectUpdateSecurityFilter(report)
-			if !ok {
-				continue
-			}
-			filtered := filterUpdateReport(report, opts)
-			stateKey := "security-filter:" + filterSummary(lastReportFilterMap(opts))
-			state, err := runDetailBrowserWithState("updev security filter", updateSecurityDetailRowsForFilter(filtered, opts), detailStates[stateKey], color)
-			if err != nil {
-				printLastSecuritySection(os.Stdout, filtered, true, color)
-				break
-			}
-			detailStates[stateKey] = state
-			if state.Action == updevActionExit {
-				return
-			}
-			if state.Action == updevActionBack {
-				defaultAction = updateHubActionSecurityFilter
-				pendingAction = updateHubActionDashboard
-				continue
-			}
-			if state.Action == updevActionHome {
-				defaultAction = updateHubActionDashboard
-				continue
-			}
-			if handleSecurityDetailAction(&report, state.Action) {
-				defaultAction = updateHubActionSecurity
-				continue
-			}
-			continue
-		case updateHubActionLogs:
-			stateKey := "logs"
-			state, err := runDetailBrowserWithState("updev update logs", updateLogDetailRows(report), detailStates[stateKey], color)
-			if err != nil {
-				printLastUpdateLogs(os.Stdout, report, color)
-				break
-			}
-			detailStates[stateKey] = state
-			if state.Action == updevActionExit {
-				return
-			}
-			if state.Action == updevActionBack {
-				defaultAction = updateHubActionLogs
-				pendingAction = updateHubActionDashboard
-				continue
-			}
-			if state.Action == updevActionHome {
-				defaultAction = updateHubActionDashboard
-				continue
-			}
-			if updateHubActionExists(state.Action) {
-				defaultAction = state.Action
-				pendingAction = state.Action
-				continue
-			}
-			continue
-		case updateHubActionFull:
-			stateKey := "full"
-			state, err := runUpdateFullReportBrowser(report, detailStates[stateKey], color)
-			if err != nil {
-				printUpdateBodyTo(os.Stdout, report, color)
-				break
-			}
-			detailStates[stateKey] = state
-			if state.Action == updevActionExit {
-				return
-			}
-			if state.Action == updevActionBack {
-				defaultAction = updateHubActionFull
-				pendingAction = updateHubActionDashboard
-				continue
-			}
-			if state.Action == updevActionHome {
-				defaultAction = updateHubActionDashboard
-				continue
-			}
-		case updateHubActionJSON:
-			entry := updateReportCacheEntry{Version: 1, Type: "update", CreatedAt: time.Now(), Report: report}
-			if cached, ok := loadLastUpdateReport(); ok {
-				entry = cached
-			}
-			_ = encodeJSON(buildUpdateReportSectionView(entry, lastReportOptions{section: "full"}))
+		if result.BackendReady {
+			backendPlan = result.BackendPlan
+			backendLoading = false
 		}
-		pendingAction = updateHubActionDashboard
+		nextAction, done := handleUpdateHubExternalAction(&report, &manualPlan, &backendPlan, result.Action)
+		if done {
+			return
+		}
+		preferredAction = nextAction
 	}
 }
 
@@ -2015,19 +1710,23 @@ func updateSummaryRouteTitleSuffix(route updateSummaryRoute) string {
 }
 
 func runUpdateFullReportBrowser(report updateReport, state detailBrowserState, color bool) (detailBrowserState, error) {
-	var body strings.Builder
-	printUpdateBodyTo(&body, report, false)
 	if state.Expanded == nil {
 		state.Expanded = map[int]bool{0: true}
 	} else if len(state.Expanded) == 0 {
 		state.Expanded[0] = true
 	}
-	return runDetailBrowserWithState("updev full report", []detailBrowserRow{{
+	return runDetailBrowserWithState("updev full report", updateFullReportRows(report), state, color)
+}
+
+func updateFullReportRows(report updateReport) []detailBrowserRow {
+	var body strings.Builder
+	printUpdateBodyTo(&body, report, false)
+	return []detailBrowserRow{{
 		Title:   "full report",
 		Status:  string(report.Status),
 		Summary: tr("cached update report", "cached update report"),
 		Detail:  body.String(),
-	}}, state, color)
+	}}
 }
 
 func updateHubTitle(report updateReport) string {
@@ -2077,16 +1776,7 @@ func handleManualPlanDetailAction(root string, value string) bool {
 		if !confirmManualPlanWriteAction(action, target) {
 			return true
 		}
-		code := runInventoryReview(inventoryReviewOptions{
-			action:   action,
-			format:   "text",
-			provider: manualProviderName,
-			query:    target,
-			root:     root,
-		})
-		if code != 0 && code != 2 {
-			fmt.Fprintf(os.Stderr, "manual review action exited with code %d\n", code)
-		}
+		_ = applyConfirmedManualPlanDetailAction(root, action, target)
 	case "review-cask":
 		runManualPlanProviderReview("brew", "info", "--cask", target)
 	case "review-mas":
@@ -2095,6 +1785,33 @@ func handleManualPlanDetailAction(root string, value string) bool {
 		runManualPlanProviderReview("open", target)
 	default:
 		return false
+	}
+	return true
+}
+
+func manualPlanDetailActionRequiresConfirmation(action string) bool {
+	switch action {
+	case "accept", "edit", "ignore":
+		return true
+	default:
+		return false
+	}
+}
+
+func applyConfirmedManualPlanDetailAction(root string, action string, target string) bool {
+	if !manualPlanDetailActionRequiresConfirmation(action) {
+		return false
+	}
+	opts := inventoryReviewOptions{
+		action:   action,
+		format:   "text",
+		provider: manualProviderName,
+		query:    target,
+		root:     root,
+	}
+	report := buildInventoryReviewReport(opts)
+	if _, _, err := applyInventoryReviewAction(opts, report); err != nil {
+		fmt.Fprintf(os.Stderr, "manual review action failed: %v\n", err)
 	}
 	return true
 }
@@ -2122,6 +1839,40 @@ func handleBackendDetailAction(root string, value string) bool {
 		if !confirmBackendBrewfileRemoveAction(kind, name, recommended) {
 			return true
 		}
+		_ = applyConfirmedBackendDetailAction(root, action, current, recommended)
+	case "rewrite-mise":
+		if !confirmBackendWriteAction(current, recommended) {
+			return true
+		}
+		_ = applyConfirmedBackendDetailAction(root, action, current, recommended)
+	case "remove-mise":
+		if !confirmBackendRemoveAction(current, recommended) {
+			return true
+		}
+		_ = applyConfirmedBackendDetailAction(root, action, current, recommended)
+	default:
+		return false
+	}
+	return true
+}
+
+func backendDetailActionRequiresConfirmation(action string) bool {
+	switch action {
+	case "remove-brew", "rewrite-mise", "remove-mise":
+		return true
+	default:
+		return false
+	}
+}
+
+func applyConfirmedBackendDetailAction(root string, action string, current string, recommended string) bool {
+	switch action {
+	case "remove-brew":
+		kind, name, ok := strings.Cut(current, ":")
+		if !ok || kind == "" || name == "" {
+			fmt.Fprintf(os.Stderr, "backend Brewfile removal failed: invalid target %q\n", current)
+			return true
+		}
 		changed, err := brewfile.RemoveEntry(root, kind, name)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "backend Brewfile removal failed: %v\n", err)
@@ -2133,9 +1884,6 @@ func handleBackendDetailAction(root string, value string) bool {
 			fmt.Printf("%s %s %q\n", textui.StyleDim("no change:", textui.ColorEnabled()), kind, name)
 		}
 	case "rewrite-mise":
-		if !confirmBackendWriteAction(current, recommended) {
-			return true
-		}
 		changed, err := mise.RenameTool(root, current, recommended)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "backend rewrite failed: %v\n", err)
@@ -2147,9 +1895,6 @@ func handleBackendDetailAction(root string, value string) bool {
 			fmt.Printf("%s %s -> %s\n", textui.StyleDim("no change:", textui.ColorEnabled()), current, recommended)
 		}
 	case "remove-mise":
-		if !confirmBackendRemoveAction(current, recommended) {
-			return true
-		}
 		changed, err := mise.RemoveTool(root, current)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "backend removal failed: %v\n", err)
@@ -2222,6 +1967,52 @@ func handleSecurityDetailAction(report *updateReport, value string) bool {
 	}
 	if !confirmSecurityPolicyAction(decision, provider, kind, name, expires) {
 		return true
+	}
+	_ = applyConfirmedSecurityDetailAction(report, action, provider, kind, name, reason, expires)
+	return true
+}
+
+func securityDetailActionRequiresConfirmation(action string) bool {
+	switch action {
+	case "allow-7d", "allow-7d-rerun", "allow-custom", "allow-custom-rerun", "hold":
+		return true
+	default:
+		return false
+	}
+}
+
+func securityDetailActionRequiresCustomInput(action string) bool {
+	switch action {
+	case "allow-custom", "allow-custom-rerun":
+		return true
+	default:
+		return false
+	}
+}
+
+func defaultSecurityDetailActionInputs(action string) (string, string, string, bool) {
+	switch action {
+	case "allow-7d", "allow-7d-rerun":
+		return "allow", "accepted from updev detail browser after local review", time.Now().AddDate(0, 0, 7).Format("2006-01-02"), true
+	case "hold":
+		return "hold", "held from updev detail browser after local review", "", true
+	default:
+		return "", "", "", false
+	}
+}
+
+func applyConfirmedSecurityDetailAction(report *updateReport, action string, provider string, kind string, name string, reason string, expires string) bool {
+	if report == nil {
+		return false
+	}
+	decision := ""
+	switch action {
+	case "allow-7d", "allow-7d-rerun", "allow-custom", "allow-custom-rerun":
+		decision = "allow"
+	case "hold":
+		decision = "hold"
+	default:
+		return false
 	}
 	path := securityPolicyPath()
 	if report.Policy != nil && strings.TrimSpace(report.Policy.Path) != "" {

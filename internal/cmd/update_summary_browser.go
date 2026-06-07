@@ -63,7 +63,11 @@ func runActionSummaryBrowserModel(model updateSummaryBrowserModel) (reviewui.Sta
 }
 
 func newUpdateSummaryBrowserModel(title string, report updateReport, manualPlan inventoryPlanReport, backendPlan backendPlanReport, state reviewui.State, focusAction string, color bool) updateSummaryBrowserModel {
-	return newActionSummaryBrowserModel(title, updateSummaryBrowserLines(report, manualPlan, backendPlan, color), state, focusAction, color)
+	return newUpdateSummaryBrowserModelWithLoading(title, report, manualPlan, false, backendPlan, false, state, focusAction, color)
+}
+
+func newUpdateSummaryBrowserModelWithLoading(title string, report updateReport, manualPlan inventoryPlanReport, manualLoading bool, backendPlan backendPlanReport, backendLoading bool, state reviewui.State, focusAction string, color bool) updateSummaryBrowserModel {
+	return newActionSummaryBrowserModel(title, updateSummaryBrowserLinesWithLoading(report, manualPlan, manualLoading, backendPlan, backendLoading, color), state, focusAction, color)
 }
 
 func newActionSummaryBrowserModel(title string, lines []updateSummaryLine, state reviewui.State, focusAction string, color bool) updateSummaryBrowserModel {
@@ -77,6 +81,10 @@ func newActionSummaryBrowserModel(title string, lines []updateSummaryLine, state
 }
 
 func updateSummaryBrowserLines(report updateReport, manualPlan inventoryPlanReport, backendPlan backendPlanReport, color bool) []updateSummaryLine {
+	return updateSummaryBrowserLinesWithLoading(report, manualPlan, false, backendPlan, false, color)
+}
+
+func updateSummaryBrowserLinesWithLoading(report updateReport, manualPlan inventoryPlanReport, manualLoading bool, backendPlan backendPlanReport, backendLoading bool, color bool) []updateSummaryLine {
 	var styled bytes.Buffer
 	var plain bytes.Buffer
 	printUpdateBodyTo(&styled, report, color)
@@ -159,7 +167,7 @@ func updateSummaryBrowserLines(report updateReport, manualPlan inventoryPlanRepo
 			Kind:            kind,
 		})
 	}
-	reviewLines := updateSummaryReviewActionLines(manualPlan, backendPlan, color)
+	reviewLines := updateSummaryReviewActionLinesWithLoading(manualPlan, manualLoading, backendPlan, backendLoading, color)
 	if len(reviewLines) > 0 {
 		out = append(out, updateSummaryLine{})
 		out = append(out, updateSummaryLine{Text: tr("review actions", "確認アクション"), Kind: updateSummaryLineSection})
@@ -234,8 +242,19 @@ func updateSummaryReviewHeaderLine(color bool) string {
 }
 
 func updateSummaryReviewActionLines(manualPlan inventoryPlanReport, backendPlan backendPlanReport, color bool) []updateSummaryLine {
+	return updateSummaryReviewActionLinesWithLoading(manualPlan, false, backendPlan, false, color)
+}
+
+func updateSummaryReviewActionLinesWithLoading(manualPlan inventoryPlanReport, manualLoading bool, backendPlan backendPlanReport, backendLoading bool, color bool) []updateSummaryLine {
 	lines := []updateSummaryLine{}
-	if manualPlan.AttentionCount > 0 {
+	if manualLoading {
+		lines = append(lines, updateSummaryLine{
+			Text:            updateSummaryReviewRowLine(tr("manual review", "手動アプリ確認"), tr("loading - preparing manual/vendor app candidates", "loading - 手動/vendor app 候補を準備中"), color),
+			Action:          updateHubActionManualPlan,
+			Label:           tr("open manual review", "手動アプリ確認を開く"),
+			HideInlineBadge: true,
+		})
+	} else if manualPlan.AttentionCount > 0 {
 		lines = append(lines, updateSummaryLine{
 			Text:            updateSummaryReviewRowLine(tr("manual review", "手動アプリ確認"), fmt.Sprintf("%s - %s", manualPlanStatus(manualPlan), updateDashboardManualPlanSummary(manualPlan)), color),
 			Action:          updateHubActionManualPlan,
@@ -243,7 +262,14 @@ func updateSummaryReviewActionLines(manualPlan inventoryPlanReport, backendPlan 
 			HideInlineBadge: true,
 		})
 	}
-	if len(backendPlan.Findings) > 0 {
+	if backendLoading {
+		lines = append(lines, updateSummaryLine{
+			Text:            updateSummaryReviewRowLine(tr("backend convergence", "backend 整理"), tr("loading - preparing backend evidence", "loading - backend evidence を準備中"), color),
+			Action:          updateHubActionBackends,
+			Label:           tr("open backend convergence", "backend 整理を開く"),
+			HideInlineBadge: true,
+		})
+	} else if len(backendPlan.Findings) > 0 {
 		lines = append(lines, updateSummaryLine{
 			Text:            updateSummaryReviewRowLine(tr("backend convergence", "backend 整理"), fmt.Sprintf("%s - %s", backendPlan.Status, updateDashboardBackendSummary(backendPlan)), color),
 			Action:          updateHubActionBackends,

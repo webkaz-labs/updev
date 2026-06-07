@@ -38,6 +38,31 @@ brew "webkaz/tap/cmux-intel"
 	}
 }
 
+func TestDesiredAddsImplicitTapForQualifiedEntries(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "Brewfile.tmpl")
+	content := `
+cask "webkaz/tap/cmux-intel"
+brew "owner/tools/example"
+`
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	items, err := DesiredFromPath(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]bool{}
+	for _, item := range items {
+		got[item.Kind+":"+item.Name] = true
+	}
+	for _, want := range []string{"cask:cmux-intel", "brew:example", "tap:webkaz/tap", "tap:owner/tools"} {
+		if !got[want] {
+			t.Fatalf("missing implicit desired item %s in %#v", want, got)
+		}
+	}
+}
+
 func TestProviderDesiredExcludesVSCodeByDefault(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("HOME", filepath.Join(root, "home"))
@@ -155,12 +180,14 @@ brew "desired-dependency"
 		"brew:desired-dependency",
 		"brew:leaf-only",
 		"cask:visual-studio-code",
-		"tap:homebrew/core",
 		"vscode:ms-vscode.go",
 	} {
 		if !got[want] {
 			t.Fatalf("missing live item %s in %#v", want, got)
 		}
+	}
+	if got["tap:homebrew/core"] {
+		t.Fatalf("default Homebrew tap should not be reported as live drift unless desired explicitly: %#v", got)
 	}
 	if got["brew:transient-dependency"] {
 		t.Fatalf("transient dependency should not be reported as live formula: %#v", got)
@@ -189,7 +216,7 @@ func TestExplicitFormulaeUseInstallReceipts(t *testing.T) {
 	}
 }
 
-func TestLiveExcludesImplicitTapForQualifiedDesiredCask(t *testing.T) {
+func TestLiveIncludesImplicitTapForQualifiedDesiredCask(t *testing.T) {
 	root := t.TempDir()
 	home := filepath.Join(root, "home")
 	t.Setenv("HOME", home)
@@ -218,8 +245,8 @@ cask "webkaz/tap/cmux-intel"
 	for _, item := range items {
 		got[item.Kind+":"+item.Name] = true
 	}
-	if got["tap:webkaz/tap"] {
-		t.Fatalf("implicit tap should not be reported as live drift: %#v", got)
+	if !got["tap:webkaz/tap"] {
+		t.Fatalf("implicit tap should be reported as live inventory, got %#v", got)
 	}
 	if !got["cask:cmux-intel"] {
 		t.Fatalf("expected qualified cask to stay live, got %#v", got)
@@ -258,6 +285,40 @@ cask "webkaz/tap/cmux-intel"
 	}
 	if !got["tap:webkaz/tap"] {
 		t.Fatalf("explicit tap should remain live, got %#v", got)
+	}
+}
+
+func TestLiveKeepsExplicitDefaultTap(t *testing.T) {
+	root := t.TempDir()
+	home := filepath.Join(root, "home")
+	t.Setenv("HOME", home)
+	if err := os.MkdirAll(home, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(home, "Brewfile"), []byte(`
+tap "homebrew/core"
+`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	fake := fakeRunner{
+		results: map[string]runner.Result{
+			"brew\x00list\x00--formula\x00-1": {Stdout: ""},
+			"brew\x00leaves":                  {Stdout: ""},
+			"brew\x00list\x00--cask\x00-1":    {Stdout: ""},
+			"brew\x00tap":                     {Stdout: "homebrew/core\n"},
+		},
+		paths: map[string]bool{"brew": true},
+	}
+	items, err := (Provider{Root: root, Runner: fake, UseHomeDesired: true}).Live(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]bool{}
+	for _, item := range items {
+		got[item.Kind+":"+item.Name] = true
+	}
+	if !got["tap:homebrew/core"] {
+		t.Fatalf("explicit default tap should remain live, got %#v", got)
 	}
 }
 

@@ -15,6 +15,12 @@ import (
 	"time"
 )
 
+const (
+	e2eScreenTimeout = 30 * time.Second
+	e2eExitTimeout   = 10 * time.Second
+	e2ePollInterval  = 50 * time.Millisecond
+)
+
 func TestInteractivePTYSmoke(t *testing.T) {
 	if _, err := exec.LookPath("tmux"); err != nil {
 		t.Skip("tmux is required for PTY smoke")
@@ -32,27 +38,20 @@ func TestInteractivePTYSmoke(t *testing.T) {
 		pty.waitScreen(t, regexp.MustCompile(`a/1=open update details|a/1=更新詳細を開く`))
 		pty.sendKey(t, "Enter")
 		pty.waitScreen(t, regexp.MustCompile(`updev update logs`))
-		pty.sendLiteral(t, "b")
-		pty.waitScreen(t, regexp.MustCompile(`updev update (ok|held|drift|error)`))
-		pty.sendLiteral(t, "k")
-		pty.sendKey(t, "Enter")
-		pty.waitScreen(t, regexp.MustCompile(`updev full report`))
-		pty.sendLiteral(t, "b")
-		pty.waitScreen(t, regexp.MustCompile(`updev update (ok|held|drift|error)`))
-
-		pty.sendKey(t, "End")
-		pty.sendKey(t, "Enter")
-		pty.waitScreen(t, regexp.MustCompile(`updev backend convergence`))
-		pty.sendLiteral(t, "a")
-		pty.waitScreen(t, regexp.MustCompile(`backend convergence action|Remove Brewfile|Rewrite mise backend|Remove old mise backend`))
-		pty.sendKey(t, "C-c")
-		pty.waitScreen(t, regexp.MustCompile(`updev update (ok|held|drift|error)`))
-		pty.sendLiteral(t, "q")
+		pty.sendKey(t, "Left")
+		pty.waitScreen(t, regexp.MustCompile(`review actions|確認アクション`))
+		pty.waitScreen(t, regexp.MustCompile(`backend convergence|backend 整理`))
+		pty.sendKey(t, "q")
 		pty.waitExit(t)
 	})
 
 	t.Run("list opens installed inventory and scoped backend detail", func(t *testing.T) {
 		pty := startPTY(t, exe, "list", "--interactive", "--refresh")
+		pty.waitScreen(t, regexp.MustCompile(`updev installed inventory`))
+		pty.waitScreen(t, regexp.MustCompile(`Tab switch view`))
+		pty.sendKey(t, "Tab")
+		pty.waitScreen(t, regexp.MustCompile(`updev list manual`))
+		pty.sendKey(t, "Tab")
 		pty.waitScreen(t, regexp.MustCompile(`updev installed inventory`))
 		pty.sendKey(t, "Enter")
 		pty.waitScreen(t, regexp.MustCompile(`updev installed inventory|installed inventory`))
@@ -63,9 +62,9 @@ func TestInteractivePTYSmoke(t *testing.T) {
 		pty.waitScreen(t, regexp.MustCompile(`open backend review`))
 		pty.sendLiteral(t, "a")
 		pty.waitScreen(t, regexp.MustCompile(`updev backend convergence: ripgrep[\s\S]*row 1/1`))
-		pty.sendLiteral(t, "b")
+		pty.sendKey(t, "Left")
 		pty.waitScreen(t, regexp.MustCompile(`updev installed inventory[\s\S]*filter="ripgrep"`))
-		pty.sendLiteral(t, "q")
+		pty.sendKey(t, "q")
 		pty.waitExit(t)
 	})
 
@@ -75,7 +74,7 @@ func TestInteractivePTYSmoke(t *testing.T) {
 
 		pty := env.start(t, exe, "last", "--interactive", "--section", "security")
 		pty.waitScreen(t, regexp.MustCompile(`updev security details|updev update (ok|held|drift|error)|updev last`))
-		pty.sendLiteral(t, "q")
+		pty.sendKey(t, "q")
 		pty.waitExit(t)
 	})
 }
@@ -88,6 +87,7 @@ type ptySession struct {
 
 type ptyEnv struct {
 	home string
+	bin  string
 }
 
 func buildBinary(t *testing.T) string {
@@ -120,16 +120,67 @@ func newPTYEnv(t *testing.T) *ptyEnv {
 	t.Helper()
 	tmpRoot := t.TempDir()
 	home := filepath.Join(tmpRoot, "home")
+	bin := filepath.Join(tmpRoot, "bin")
 	for _, dir := range []string{
 		filepath.Join(home, ".config"),
 		filepath.Join(home, ".local", "share"),
 		filepath.Join(home, ".cache"),
+		bin,
 	} {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			t.Fatal(err)
 		}
 	}
-	return &ptyEnv{home: home}
+	writeFakeProviderTools(t, bin)
+	return &ptyEnv{home: home, bin: bin}
+}
+
+func writeFakeProviderTools(t *testing.T, bin string) {
+	t.Helper()
+	scripts := map[string]string{
+		"brew": `#!/bin/sh
+case "$*" in
+  "list --formula -1") printf 'ripgrep\njq\n' ;;
+  "list --cask -1") ;;
+  "info --json=v2"*) printf '{"formulae":[],"casks":[]}\n' ;;
+  "outdated --json=v2") printf '{"formulae":[],"casks":[]}\n' ;;
+  "--version") printf 'Homebrew 9.9.9\n' ;;
+  *) exit 0 ;;
+esac
+`,
+		"mise": `#!/bin/sh
+if [ "$1" = "--version" ]; then
+  printf 'mise 2099.1.0\n'
+  exit 0
+fi
+if [ "$1" = "settings" ] && [ "$2" = "ls" ]; then
+  printf '{}\n'
+  exit 0
+fi
+if [ "$1" = "ls" ] && [ "$2" = "--current" ] && [ "$3" = "--json" ]; then
+  printf '{"ripgrep":[{"version":"14.1.1","requested_version":"latest","installed":true,"active":true}],"node":[{"version":"24.16.0","requested_version":"lts","installed":true,"active":true}]}\n'
+  exit 0
+fi
+if [ "$1" = "ls" ] && [ "$2" = "--json" ]; then
+  case "$3" in
+    ripgrep) printf '[{"version":"14.1.1","requested_version":"latest","installed":true,"active":true}]\n' ;;
+    node) printf '[{"version":"24.16.0","requested_version":"lts","installed":true,"active":true}]\n' ;;
+    *) printf '[]\n' ;;
+  esac
+  exit 0
+fi
+exit 0
+`,
+		"gh": `#!/bin/sh
+exit 1
+`,
+	}
+	for name, content := range scripts {
+		path := filepath.Join(bin, name)
+		if err := os.WriteFile(path, []byte(content), 0o755); err != nil {
+			t.Fatalf("write fake %s: %v", name, err)
+		}
+	}
 }
 
 func (e *ptyEnv) start(t *testing.T, exe string, args ...string) *ptySession {
@@ -180,6 +231,7 @@ func (e *ptyEnv) shellEnv() string {
 func (e *ptyEnv) processEnv() []string {
 	return []string{
 		"HOME=" + e.home,
+		"PATH=" + e.bin + string(os.PathListSeparator) + os.Getenv("PATH"),
 		"XDG_CONFIG_HOME=" + filepath.Join(e.home, ".config"),
 		"XDG_DATA_HOME=" + filepath.Join(e.home, ".local", "share"),
 		"XDG_CACHE_HOME=" + filepath.Join(e.home, ".cache"),
@@ -193,7 +245,7 @@ func (e *ptyEnv) processEnv() []string {
 
 func (p *ptySession) waitScreen(t *testing.T, pattern *regexp.Regexp) string {
 	t.Helper()
-	deadline := time.Now().Add(60 * time.Second)
+	deadline := time.Now().Add(e2eScreenTimeout)
 	var screen string
 	for time.Now().Before(deadline) {
 		screen = p.capture(t)
@@ -203,7 +255,7 @@ func (p *ptySession) waitScreen(t *testing.T, pattern *regexp.Regexp) string {
 		if p.exited() {
 			t.Fatalf("PTY exited before %s\n%s", pattern, screen)
 		}
-		time.Sleep(200 * time.Millisecond)
+		time.Sleep(e2ePollInterval)
 	}
 	t.Fatalf("timeout waiting for %s\n%s", pattern, screen)
 	return ""
@@ -211,14 +263,14 @@ func (p *ptySession) waitScreen(t *testing.T, pattern *regexp.Regexp) string {
 
 func (p *ptySession) waitExit(t *testing.T) {
 	t.Helper()
-	deadline := time.Now().Add(20 * time.Second)
+	deadline := time.Now().Add(e2eExitTimeout)
 	var screen string
 	for time.Now().Before(deadline) {
 		if p.exited() {
 			return
 		}
 		screen = p.capture(t)
-		time.Sleep(200 * time.Millisecond)
+		time.Sleep(e2ePollInterval)
 	}
 	t.Fatalf("PTY did not exit\n%s", screen)
 }
@@ -239,7 +291,7 @@ func (p *ptySession) sendKey(t *testing.T, value string) {
 
 func (p *ptySession) capture(t *testing.T) string {
 	t.Helper()
-	out, err := p.tmux("capture-pane", "-t", p.name, "-p", "-S", "-100").CombinedOutput()
+	out, err := p.tmux("capture-pane", "-t", p.name, "-p").CombinedOutput()
 	if err != nil {
 		return ""
 	}
@@ -272,6 +324,7 @@ func sourceRoot(t *testing.T) string {
 		t.Fatal(err)
 	}
 	brewfile := strings.Join([]string{
+		`brew "bat"`,
 		`brew "ripgrep"`,
 		`brew "jq"`,
 		"",

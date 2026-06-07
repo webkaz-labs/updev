@@ -73,6 +73,8 @@ func DesiredFromPath(path string) ([]plan.Item, error) {
 
 	lineRe := regexp.MustCompile(`^\s*(brew|cask|tap|vscode)\s+"([^"]+)"`)
 	items := []plan.Item{}
+	explicitTaps := map[string]bool{}
+	implicitTaps := map[string]string{}
 	category := "work"
 	scanner := bufio.NewScanner(file)
 	for scanner.Scan() {
@@ -85,8 +87,34 @@ func DesiredFromPath(path string) ([]plan.Item, error) {
 			continue
 		}
 		kind := match[1]
-		name := normalizeName(kind, match[2])
+		rawName := strings.TrimSpace(match[2])
+		name := normalizeName(kind, rawName)
+		if kind == "tap" {
+			explicitTaps[name] = true
+		} else if tap := tapNameFromQualifiedPackage(rawName); tap != "" {
+			if _, ok := implicitTaps[tap]; !ok {
+				implicitTaps[tap] = category
+			}
+		}
 		items = append(items, plan.Item{Provider: "brew", Kind: kind, Name: name, Category: category, Detail: trailingComment(line)})
+	}
+	implicitTapNames := make([]string, 0, len(implicitTaps))
+	for tap := range implicitTaps {
+		implicitTapNames = append(implicitTapNames, tap)
+	}
+	sort.Strings(implicitTapNames)
+	for _, tap := range implicitTapNames {
+		if explicitTaps[tap] {
+			continue
+		}
+		category := implicitTaps[tap]
+		items = append(items, plan.Item{
+			Provider: "brew",
+			Kind:     "tap",
+			Name:     tap,
+			Category: category,
+			Detail:   "qualified brew/cask 由来の tap",
+		})
 	}
 	return items, scanner.Err()
 }
@@ -104,7 +132,8 @@ func (p Provider) Live(ctx context.Context) ([]plan.Item, error) {
 		items = append(items, item)
 	}
 
-	desiredFormulae := p.desiredFormulae(ctx)
+	desiredItems, _ := p.Desired(ctx)
+	desiredFormulae := desiredFormulaeFromItems(desiredItems)
 	installedFormulae, _ := p.installedFormulae(ctx)
 	requestedFormulae, ok := p.installedOnRequestFormulae(ctx, installedFormulae)
 	if ok {
@@ -134,7 +163,7 @@ func (p Provider) Live(ctx context.Context) ([]plan.Item, error) {
 		}
 	}
 
-	tapInfo, _ := desiredTapInfoFromPath(p.desiredPath())
+	desiredTaps := desiredTapsFromItems(desiredItems)
 	for _, query := range []struct {
 		kind string
 		args []string
@@ -147,7 +176,7 @@ func (p Provider) Live(ctx context.Context) ([]plan.Item, error) {
 			continue
 		}
 		for _, name := range splitLines(result.Stdout) {
-			if query.kind == "tap" && tapInfo.IsImplicitOnly(name) {
+			if query.kind == "tap" && isHomebrewDefaultTap(name) && !desiredTaps[normalizeName("tap", name)] {
 				continue
 			}
 			addItem(query.kind, name)
@@ -203,43 +232,6 @@ func (p Provider) installedFormulae(ctx context.Context) (map[string]bool, error
 	return formulae, nil
 }
 
-type desiredTapInfo struct {
-	Explicit map[string]bool
-	Implicit map[string]bool
-}
-
-func (info desiredTapInfo) IsImplicitOnly(name string) bool {
-	name = normalizeName("tap", name)
-	return info.Implicit[name] && !info.Explicit[name]
-}
-
-func desiredTapInfoFromPath(path string) (desiredTapInfo, error) {
-	info := desiredTapInfo{Explicit: map[string]bool{}, Implicit: map[string]bool{}}
-	file, err := os.Open(path)
-	if err != nil {
-		return info, err
-	}
-	defer file.Close()
-	lineRe := regexp.MustCompile(`^\s*(brew|cask|tap)\s+"([^"]+)"`)
-	scanner := bufio.NewScanner(file)
-	for scanner.Scan() {
-		match := lineRe.FindStringSubmatch(scanner.Text())
-		if match == nil {
-			continue
-		}
-		kind := match[1]
-		name := strings.TrimSpace(match[2])
-		if kind == "tap" {
-			info.Explicit[normalizeName("tap", name)] = true
-			continue
-		}
-		if tap := tapNameFromQualifiedPackage(name); tap != "" {
-			info.Implicit[tap] = true
-		}
-	}
-	return info, scanner.Err()
-}
-
 func tapNameFromQualifiedPackage(name string) string {
 	parts := strings.Split(strings.TrimSpace(name), "/")
 	if len(parts) < 3 || parts[0] == "" || parts[1] == "" {
@@ -248,11 +240,16 @@ func tapNameFromQualifiedPackage(name string) string {
 	return parts[0] + "/" + parts[1]
 }
 
-func (p Provider) desiredFormulae(ctx context.Context) map[string]bool {
-	items, err := p.Desired(ctx)
-	if err != nil {
-		return nil
+func isHomebrewDefaultTap(name string) bool {
+	switch normalizeName("tap", name) {
+	case "homebrew/core", "homebrew/cask":
+		return true
+	default:
+		return false
 	}
+}
+
+func desiredFormulaeFromItems(items []plan.Item) map[string]bool {
 	formulae := map[string]bool{}
 	for _, item := range items {
 		if item.Kind == "brew" {
@@ -260,6 +257,16 @@ func (p Provider) desiredFormulae(ctx context.Context) map[string]bool {
 		}
 	}
 	return formulae
+}
+
+func desiredTapsFromItems(items []plan.Item) map[string]bool {
+	taps := map[string]bool{}
+	for _, item := range items {
+		if item.Kind == "tap" {
+			taps[normalizeName("tap", item.Name)] = true
+		}
+	}
+	return taps
 }
 
 func (p Provider) installedOnRequestFormulae(ctx context.Context, installed map[string]bool) (map[string]bool, bool) {

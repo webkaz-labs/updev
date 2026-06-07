@@ -188,6 +188,10 @@ func manualCaskDisplayName(name string) string {
 	return strings.Join(parts, " ")
 }
 
+func manualHomebrewTapSectionTitle(title string) bool {
+	return strings.Contains(title, "Homebrew Tap") || strings.Contains(title, "自動配布")
+}
+
 func reconcileManualAppSections(sections []toolSection) []toolSection {
 	if len(sections) == 0 {
 		return sections
@@ -245,7 +249,7 @@ func reconcileManualAppSections(sections []toolSection) []toolSection {
 }
 
 func manualEvidenceSection(name string) bool {
-	return name == "manual/installed-apps" || name == "manual/mac-app-store" || name == "manual/homebrew-casks"
+	return name == "manual/installed-apps" || name == "manual/mac-app-store" || name == "manual/homebrew-casks" || name == "manual/homebrew-tap"
 }
 
 type manualRowRef struct {
@@ -314,6 +318,7 @@ func mergeManualLiveRow(row *toolRow, live toolRow) {
 		row.State = "managed"
 	}
 	row.Detail = joinManualDetails(row.Detail, live.Detail)
+	row.Actions = mergeReviewActions(row.Actions, live.Actions)
 }
 
 func mergeManualEvidenceRow(row *toolRow, live toolRow) {
@@ -326,6 +331,7 @@ func mergeManualEvidenceRow(row *toolRow, live toolRow) {
 		row.State = "installed"
 	}
 	row.Detail = joinManualDetails(row.Detail, live.Detail)
+	row.Actions = mergeReviewActions(row.Actions, live.Actions)
 }
 
 func joinManualDetails(left string, right string) string {
@@ -341,8 +347,24 @@ func joinManualDetails(left string, right string) string {
 	case strings.Contains(right, left):
 		return right
 	default:
-		return left + "; " + right
+		return joinManualDetailParts(left, right)
 	}
+}
+
+func joinManualDetailParts(values ...string) string {
+	parts := []string{}
+	seen := map[string]bool{}
+	for _, value := range values {
+		for _, part := range strings.Split(value, ";") {
+			part = strings.TrimSpace(part)
+			if part == "" || seen[part] {
+				continue
+			}
+			seen[part] = true
+			parts = append(parts, part)
+		}
+	}
+	return strings.Join(parts, "; ")
 }
 
 func manualDetailValue(detail string, key string) string {
@@ -492,7 +514,9 @@ func manualProviderSummary(sections []toolSection) plan.ProviderSummary {
 				summary.Desired++
 				summary.Live++
 			case "brew":
-				summary.Desired++
+				if !manualRowIsHomebrewTapEvidence(row) {
+					summary.Desired++
+				}
 				summary.Live++
 			case "local-only", "ignored":
 				if manualRowHasLiveEvidence(row) {
@@ -510,6 +534,10 @@ func manualRowHasLiveEvidence(row toolRow) bool {
 	return manualDetailValue(row.Detail, "path") != "" ||
 		manualDetailValue(row.Detail, "mas_id") != "" ||
 		strings.Contains(row.Detail, "source: homebrew cask")
+}
+
+func manualRowIsHomebrewTapEvidence(row toolRow) bool {
+	return row.State == "brew" && strings.Contains(row.Detail, "source: homebrew tap docs")
 }
 
 func manualReviewCandidates(sections []toolSection) []manualReviewCandidate {
@@ -687,11 +715,31 @@ func manualAppIndex(root string) map[string]toolRow {
 	return index
 }
 
+func manualHomebrewTapIndex(root string) map[string]toolRow {
+	index := map[string]toolRow{}
+	content, err := os.ReadFile(filepath.Join(root, "docs", "apps.md"))
+	if err != nil {
+		return index
+	}
+	for _, section := range parseManualAppSections(string(content)) {
+		if section.Name != "manual/homebrew-tap" {
+			continue
+		}
+		for _, row := range section.Rows {
+			addManualIndexRow(index, row, nil)
+		}
+	}
+	return index
+}
+
 func addManualIndexRow(index map[string]toolRow, row toolRow, aliases []string) {
 	for _, key := range manualAppKeys(row.Name) {
 		if key != "" {
 			index[key] = row
 		}
+	}
+	if cask := manualDetailValue(row.Detail, "cask"); cask != "" {
+		aliases = append(aliases, cask)
 	}
 	for _, alias := range aliases {
 		if key := normalizedManualAppKey(alias); key != "" {
@@ -853,6 +901,9 @@ func manualAppRowsFromTable(sectionTitle string, headers []string, cells []strin
 	if appIndex < 0 || appIndex >= len(cells) {
 		return nil
 	}
+	if manualHomebrewTapSectionTitle(sectionTitle) {
+		return manualHomebrewTapRowsFromTable(sectionTitle, headers, cells, appIndex)
+	}
 	details := []string{strings.TrimPrefix(sectionTitle, "manual / ")}
 	for index, cell := range cells {
 		if index == appIndex || index >= len(headers) {
@@ -867,6 +918,39 @@ func manualAppRowsFromTable(sectionTitle string, headers []string, cells []strin
 	rows := []toolRow{}
 	for _, name := range splitManualAppNames(cells[appIndex]) {
 		rows = append(rows, manualAppRow(name, sectionTitle, strings.Join(details, "; ")))
+	}
+	return rows
+}
+
+func manualHomebrewTapRowsFromTable(sectionTitle string, headers []string, cells []string, appIndex int) []toolRow {
+	cask := ""
+	details := []string{strings.TrimPrefix(sectionTitle, "manual / "), "source: homebrew tap docs"}
+	for index, cell := range cells {
+		if index == appIndex || index >= len(headers) {
+			continue
+		}
+		header := cleanManualMarkdown(headers[index])
+		value := cleanManualMarkdown(cell)
+		if value == "" {
+			continue
+		}
+		if strings.Contains(header, "Cask") {
+			cask = value
+			details = append(details, "cask: "+value)
+			continue
+		}
+		details = append(details, header+": "+value)
+	}
+	rows := []toolRow{}
+	for _, name := range splitManualAppNames(cells[appIndex]) {
+		row := manualAppRow(name, sectionTitle, strings.Join(details, "; "))
+		row.State = "brew"
+		if cask != "" {
+			row.Actions = []reviewui.Action{
+				manualReviewRouteActionForTarget(name, "brew", "cask"),
+			}
+		}
+		rows = append(rows, row)
 	}
 	return rows
 }

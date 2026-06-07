@@ -41,9 +41,12 @@ evidence inspection.
      the old footer selector. Back from the summary hub exits the hub.
 2. `updev list`
    - Opens the grouped installed inventory browser first on TTY.
+   - `Tab` / `Shift+Tab` switches directly between installed inventory and
+     manual app rows while preserving each view's cursor, filter, and expanded
+     rows.
    - Back/Home from the top inventory browser opens the full selector menu so
-     manual app rows, backend convergence, cached update/security evidence, and
-     filter views are easy to switch to.
+     backend convergence, cached update/security evidence, and filter views are
+     easy to switch to.
    - `updev hub` opens that full selector menu directly when a user wants the
      all-menu list of views and filters first.
    - The installed inventory rows are primarily read-only.
@@ -57,8 +60,66 @@ evidence inspection.
    - Collapsed rows show status, badges, concise summary, and action count.
    - The focused row always shows `a/1`, `2`, ... action hints before expansion
      when actions exist.
+   - Header height remains stable when focus moves between rows with and
+     without actions; action hints may appear or disappear, but the body must
+     not jump.
    - Expanded rows separate detail, evidence, and actions.
    - Write actions always require confirmation before changing local state.
+4. Transition and performance model
+   - Screen-to-screen navigation should feel like moving inside one TUI, not
+     like repeatedly exiting and starting separate programs.
+   - Long-running preparation must not block the first useful screen. Render
+     the screen with the data already available, show an explicit loading or
+     preparing state for the missing block, and refresh that block when the
+     evidence arrives.
+   - Progress should be domain-scoped when possible: inventory, backend
+     convergence, manual review, update evidence, and security evidence can
+     become ready independently instead of forcing one all-or-nothing wait.
+   - Independent review data should be prepared concurrently when it does not
+     change behavior.
+   - The long-term target is a single Bubble Tea router that owns dashboard,
+     table, detail, and confirmation views in one `tea.Program`; until then,
+     new subprogram transitions are treated as UX debt and should be reduced.
+
+## Current Performance Model
+
+The current `v0.5.7` baseline optimizes post-report review, not the entire
+provider execution pipeline.
+
+- `updev`, `updev last`, and `updev list` keep common review navigation inside
+  one routed TUI once the first screen is open.
+- Manual review and backend convergence preparation are asynchronous review
+  blocks. The dashboard/list screen renders with loading rows, then refreshes
+  those rows when evidence is ready.
+- Query input, value filters, item-scoped detail routing, and safe write
+  confirmations are in-router views.
+- Real provider updates stream logs while the provider command runs, and those
+  logs remain available in expanded detail rows.
+- Non-TTY, `--plain`, and JSON modes stay deterministic and do not use TTY
+  streaming behavior.
+
+The current baseline does not yet open a live dashboard while provider update,
+security, inventory, or translation work is still running. Those blocks still
+produce the structured report first, with startup/progress feedback where
+available.
+
+## Next Performance Track
+
+The next performance target is `v0.5.8` and should be implemented before, or
+explicitly deferred before, starting `v0.6.0` provider-gate work.
+
+- Open a stable TTY dashboard shell as soon as there is enough context to show
+  root/config/security mode and planned provider blocks.
+- Convert update, security, inventory, translation, manual review, and backend
+  convergence work into domain result messages that can refresh the same router.
+- Keep one stable progress row per domain with elapsed time, current state, and
+  last useful provider message.
+- Preserve provider stdout/stderr for expanded evidence while keeping generic
+  progress noise out of outcome summaries.
+- Define cancellation semantics for `q`, Back, and Ctrl+C while background
+  domains are still running.
+- Keep `test-e2e-fast` as the default local TTY loop and reserve full PTY route
+  coverage for release gates or explicit dogfood.
 
 ## Row Contract
 
@@ -166,7 +227,7 @@ the real TTY, not only in renderer tests:
      version mapping, platform, and distribution ownership evidence are strong
      enough to apply.
 
-## Tracking Checklist
+## v0.5.7 Tracking Checklist
 
 - [x] Shared table browser rows can carry TTY-only routing actions and expose
   `a/1`, `2`, ... action hints like the detail browser.
@@ -178,6 +239,8 @@ the real TTY, not only in renderer tests:
   item matches security or update evidence.
 - [x] `updev list` starts with the installed inventory browser, while
   `updev hub` opens the full view/filter selector menu directly.
+- [x] `updev list` can switch between installed inventory and manual app rows
+  with `Tab` / `Shift+Tab` without visiting the full selector menu.
 - [x] Installed inventory expanded rows show enough evidence to explain why a
   routing action exists.
 - [x] Filtered `updev list --interactive` views propagate row routing actions
@@ -196,12 +259,54 @@ the real TTY, not only in renderer tests:
 - [x] Installed inventory row actions carry item identity and open item-scoped
   manual/backend/update/security detail rows before returning to the inventory
   browser.
+- [x] Shared table/detail browsers reserve the focused-action hint line so body
+  rows do not jump when focus moves between actionable and non-actionable rows.
+- [x] Bare `updev` prepares manual review and backend convergence plans in
+  parallel before opening the dashboard.
+- [x] Bare `updev` uses a single routed TUI model for the update dashboard and
+  common dashboard/table/detail review screens, so logs, inventory, manual
+  review, backend convergence, security, and full-report detail routes do not
+  repeatedly leave and restart the alt-screen.
+- [x] `updev list` uses a routed TUI model for the installed inventory, manual
+  app inventory, backend convergence, cached update/security evidence, and
+  compact detail views, so common list-domain navigation no longer repeatedly
+  leaves and restarts the alt-screen.
 - [x] TTY dogfood covers `updev --dry-run --interactive`,
   `updev list --interactive`, and `updev last --section security`.
+- [x] Value-based filter selectors for `updev list`, update evidence, and
+  security evidence stay inside the routed TUI model.
+- [x] Query input for `updev list`, update evidence, and security evidence stays
+  inside the routed TUI model.
+- [x] Safe write-action confirmation views for manual overrides, backend
+  convergence rewrites/removals, and security allow/hold rules stay inside the
+  routed TUI model.
+- [x] External review/open actions and manual override edit remain explicit
+  non-goals for routed execution because they intentionally run provider
+  commands, `open`, or an editor.
+- [x] `updev list` opens the installed inventory immediately and refreshes
+  backend convergence evidence/actions asynchronously when that background
+  block becomes ready.
+- [x] Bare `updev` and `updev last --interactive` open the update dashboard
+  before manual review and backend convergence plans finish, then refresh those
+  review-action blocks asynchronously.
 
 ## Release Boundary
 
-The `v0.5.x` UX baseline is not complete until the tracking checklist above is
-green in real TTY dogfood. `v0.6.0` can start after the baseline is true and
-verified, because the mise update gate should build on the same action-review
-model instead of creating a separate flow.
+The `v0.5.7` UX baseline is complete: the tracking checklist above is green and
+the real-terminal dogfood pass has accepted the routed dashboard/list/detail
+flow. `v0.6.0` can start after the `v0.5.8` performance track is either
+complete or explicitly deferred, because provider gates should build on the
+same action-review model instead of creating a separate flow.
+
+## v0.5.8 Performance Checklist
+
+- [ ] Continue reducing PTY route-suite runtime; fast PTY smoke is the default
+  local TTY check, while the full route suite remains for release gates or
+  explicit dogfood.
+- [ ] Add the streaming dashboard shell so provider update, security,
+  inventory, and translation domains can refresh the already-open TUI instead
+  of waiting for a completed report.
+- [ ] Define and test cancellation/partial-result behavior for background TTY
+  domains.
+- [ ] Keep non-TTY, `--plain`, and JSON output deterministic while adding TTY
+  streaming behavior.

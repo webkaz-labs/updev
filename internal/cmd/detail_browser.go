@@ -340,13 +340,16 @@ func (m detailBrowserModel) View() tea.View {
 	}
 	fmt.Fprintf(&out, "%s %s\n", textui.StyleDim(m.positionText(), m.Color), textui.StyleDim("mouse="+string(m.MouseMode), m.Color))
 	line++
-	if hint := m.selectedActionHint(); hint != "" {
-		if m.Width > 0 {
-			hint = textTruncate(hint, m.Width)
-		}
-		fmt.Fprintf(&out, "%s\n", textui.StyleDim(hint, m.Color))
-		line++
+	hint := m.selectedActionHint()
+	if m.Width > 0 {
+		hint = textTruncate(hint, m.Width)
 	}
+	if hint != "" {
+		fmt.Fprintf(&out, "%s\n", textui.StyleDim(hint, m.Color))
+	} else {
+		fmt.Fprintln(&out)
+	}
+	line++
 	fmt.Fprintln(&out)
 	line++
 	if m.Help {
@@ -586,11 +589,8 @@ func (m *detailBrowserModel) ensureSelectedVisible() {
 }
 
 func (m detailBrowserModel) headerLineCount() int {
-	lines := 4
+	lines := 5
 	if m.Filtering {
-		lines++
-	}
-	if m.selectedActionHint() != "" {
 		lines++
 	}
 	return lines
@@ -776,9 +776,38 @@ func detailBrowserMetadataLine(line string, color bool) string {
 }
 
 func isDetailBrowserKeyValueLine(line string) bool {
-	key, _, ok := strings.Cut(strings.TrimSpace(line), ":")
+	key, value, ok := strings.Cut(strings.TrimSpace(line), ":")
 	key = strings.TrimSpace(key)
-	return ok && key != "" && !strings.ContainsAny(key, " \t/") && len([]rune(key)) <= 32
+	if !ok || key == "" || len([]rune(key)) > 32 || strings.Contains(key, "/") || strings.Contains(key, "\t") {
+		return false
+	}
+	if keyLooksLikeURLSchemePrefix(key, value) {
+		return false
+	}
+	if !strings.Contains(key, " ") {
+		return true
+	}
+	switch strings.ToLower(key) {
+	case "linked evidence", "update evidence", "security evidence", "backend evidence", "next action":
+		return true
+	case "関連 evidence", "次の操作":
+		return true
+	default:
+		return false
+	}
+}
+
+func keyLooksLikeURLSchemePrefix(key string, value string) bool {
+	if !strings.HasPrefix(strings.TrimSpace(value), "//") {
+		return false
+	}
+	lower := strings.ToLower(strings.TrimSpace(key))
+	for _, scheme := range []string{"http", "https", "file", "ssh"} {
+		if lower == scheme || strings.HasSuffix(lower, scheme) {
+			return true
+		}
+	}
+	return false
 }
 
 func detailBrowserActionLine(index int, action detailBrowserAction, color bool) string {
@@ -789,7 +818,7 @@ func detailBrowserActionLine(index int, action detailBrowserAction, color bool) 
 	label := textui.StyleAction(strings.TrimSpace(action.Label), color)
 	line := textui.StyleKey(key, color) + " " + label
 	if strings.TrimSpace(action.Description) != "" {
-		line += textui.StyleDim(" - "+strings.TrimSpace(action.Description), color)
+		line += textui.StyleDim(" - "+localizedListEvidenceText(action.Description), color)
 	}
 	return line
 }

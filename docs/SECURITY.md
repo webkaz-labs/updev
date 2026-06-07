@@ -34,14 +34,15 @@ security platform.
 
 Done for v1 means:
 
-- `updev update` runs with security evidence enabled by default, shows what was
-  held or skipped, and holds risky Homebrew mutations in strict mode;
+- `updev update` runs with strict security evidence enabled by default, shows
+  what was held or skipped, and holds risky Homebrew and mise mutations in
+  strict mode;
 - VS Code extension safety evidence exists as an opt-in path;
 - `updev security scan` collects normalized evidence from package inventory,
   project manifests, provider-native audits, selected scanners,
   registry/repository posture, and local policy;
-- `updev security gate` evaluates pending Homebrew update candidates before
-  mutation;
+- `updev security gate` evaluates pending Homebrew and mise update candidates
+  before mutation;
 - `updev security review` gives enough package/source/remediation context for a
   human or future agent decision;
 - `updev security policy` supports temporary local decisions with reasons,
@@ -81,22 +82,18 @@ Mode semantics:
 | Mode | Behavior |
 |------|----------|
 | `warn` | May proceed with stale or missing non-critical evidence, but must show the gap. |
-| `strict` | Holds mutation when required evidence is missing, stale, low-confidence, or policy-blocked. |
+| `strict` | Default. Holds mutation when required evidence is missing, stale, low-confidence, or policy-blocked. |
 | `off` | Skips mutation gates and makes that mode visible in the report. |
 
 Default update gate scope:
 
 - Homebrew formula/cask candidates from the pending update set.
+- mise candidates from `mise outdated --json --cd <root>`. Until
+  backend-specific release-age evidence is available for every mise backend,
+  update candidates default to `review` and strict mode holds `mise upgrade`;
+  a temporary policy `allow` can unblock an accepted candidate.
 - Brewfile-managed VS Code extensions only when opted in.
 - Local policy evaluation for those candidates.
-
-mise is not part of the default update gate today. `updev` validates mise
-manifests for exact pins, rejects unsafe `latest` entries, and can rewrite
-resolvable `latest` pins through `updev fix mise`. When mise
-`minimum_release_age` is configured, mise applies that policy while resolving
-versions; `updev` detects and reports that effective policy in dependency
-diagnostics and `updev fix mise`. `updev` does not silently mutate mise config
-to add a provider-native age setting.
 
 The provider direction is to converge on one gate vocabulary for every provider:
 provider-native age policy is detected as evidence, while updev-owned gates
@@ -156,7 +153,7 @@ Provider scope:
 | Option | Scope |
 |--------|-------|
 | no provider | Installed/desired package scan, project native audits, default external scanners. |
-| `--provider mise` | mise inventory evidence only. |
+| `--provider mise` | mise pending-update gate from `mise outdated --json`; current candidates default to review until provider-specific release-age evidence is available. |
 | `--provider brew` | Homebrew posture/advisory evidence; VS Code excluded unless opted in. |
 | `--provider vscode` | Brewfile-managed VS Code posture/advisory evidence only. |
 | `--provider project` | Project native audits and external source/directory scanners. |

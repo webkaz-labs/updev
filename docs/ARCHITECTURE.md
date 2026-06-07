@@ -59,7 +59,7 @@ Initial providers:
 
 | Provider | OS | Desired source | Notes |
 |----------|----|----------------|-------|
-| `brew` | macOS | `Brewfile`, `Brewfile.tmpl`, or rendered `~/Brewfile` for the default root | Formulae, casks, taps. VS Code entries are opt-in. Explicit formula detection should avoid treating dependencies as drift. Tap drift is explicit-only unless `tap "owner/tap"` is desired. |
+| `brew` | macOS | `Brewfile`, `Brewfile.tmpl`, or rendered `~/Brewfile` for the default root | Formulae, casks, taps. VS Code entries are opt-in. Explicit formula detection should avoid treating dependencies as drift. Qualified formula/cask entries such as `owner/tap/name` surface their tap as implicit desired inventory so tap ownership is visible without creating drift. Homebrew default taps are not reported as extra unless explicitly desired. |
 | `mise` | macOS/Linux | `mise ls --current --json --cd <dir>` over the source root and project manifest dirs; TOML files for hygiene/fix evidence | Cross-platform runtimes and tools. Native mise config inheritance is authoritative for inventory; raw TOML is used only when file/line/version evidence is required. Prefer exact versions; `latest` is rejected except for the supported Node `lts` shortcut. |
 | language globals | macOS/Linux | future `~/.config/updev/manifests/*` | npm/pnpm/bun/uv/cargo/global tool snapshots. |
 | `manual` / `external` | macOS/Linux | scan state plus overrides | Manual apps and vendor/external installers; see [EXTERNAL-MANAGEMENT.md](EXTERNAL-MANAGEMENT.md). |

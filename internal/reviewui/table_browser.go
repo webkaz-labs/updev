@@ -10,9 +10,11 @@ import (
 )
 
 type BrowserActions struct {
-	Back string
-	Home string
-	Exit string
+	Back     string
+	Home     string
+	Exit     string
+	Next     string
+	Previous string
 }
 
 type TableBrowserLabels struct {
@@ -128,6 +130,16 @@ func (m TableBrowserModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "h":
 			m.State.Action = m.actions.Home
 			return m, tea.Quit
+		case "tab":
+			if m.actions.Next != "" {
+				m.State.Action = m.actions.Next
+				return m, tea.Quit
+			}
+		case "shift+tab", "backtab", "btab":
+			if m.actions.Previous != "" {
+				m.State.Action = m.actions.Previous
+				return m, tea.Quit
+			}
 		case "up", "k":
 			m.moveFocus(-1)
 		case "down", "j":
@@ -401,8 +413,10 @@ func (m TableBrowserModel) View() tea.View {
 	fmt.Fprintf(&out, "%s %s\n", textui.StyleDim(m.positionText(), m.Color), textui.StyleDim("mouse="+string(m.MouseMode), m.Color))
 	if hint := m.selectedActionHint(); hint != "" {
 		fmt.Fprintf(&out, "%s\n", textui.StyleDim(hint, m.Color))
-		line++
+	} else {
+		fmt.Fprintln(&out)
 	}
+	line++
 	fmt.Fprintln(&out)
 	if m.Help {
 		for _, line := range m.labels.HelpLines {
@@ -745,11 +759,8 @@ func (m TableBrowserModel) visibleBodyLines() int {
 }
 
 func (m TableBrowserModel) headerLineCount() int {
-	lines := 4
+	lines := 5
 	if m.Filtering {
-		lines++
-	}
-	if m.selectedActionHint() != "" {
 		lines++
 	}
 	return lines
