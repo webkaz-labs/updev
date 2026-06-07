@@ -726,7 +726,7 @@ func (m TableBrowserModel) visibleRowCapacity() int {
 	if m.Height <= 0 {
 		return 18
 	}
-	capacity := m.Height - 8
+	capacity := m.visibleBodyLines() - 4
 	if capacity < 4 {
 		return 4
 	}
@@ -737,9 +737,20 @@ func (m TableBrowserModel) visibleBodyLines() int {
 	if m.Height <= 0 {
 		return 22
 	}
-	lines := m.Height - 4
+	lines := m.Height - m.headerLineCount()
 	if lines < 6 {
 		return 6
+	}
+	return lines
+}
+
+func (m TableBrowserModel) headerLineCount() int {
+	lines := 4
+	if m.Filtering {
+		lines++
+	}
+	if m.selectedActionHint() != "" {
+		lines++
 	}
 	return lines
 }

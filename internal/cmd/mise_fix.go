@@ -16,7 +16,7 @@ import (
 	"github.com/webkaz-labs/updev/internal/textui"
 )
 
-const miseManifestFixReportSchemaVersion = 1
+const miseManifestFixReportSchemaVersion = 2
 
 type miseManifestFixOptions struct {
 	format string
