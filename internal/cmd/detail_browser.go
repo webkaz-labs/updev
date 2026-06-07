@@ -566,7 +566,7 @@ func (m *detailBrowserModel) ensureSelectedVisible() {
 	}
 	rows := m.filteredRows()
 	for attempts := 0; attempts <= len(rows); attempts++ {
-		if detailBrowserRowBlockVisible(rows, m.State.Offset, m.visibleBodyLines(5), m.State.Expanded, m.expandedDetailWidth(), m.State.Selected) {
+		if detailBrowserRowBlockVisible(rows, m.State.Offset, m.visibleBodyLines(m.headerLineCount()), m.State.Expanded, m.expandedDetailWidth(), m.State.Selected) {
 			return
 		}
 		if m.State.Selected < m.State.Offset {
@@ -583,6 +583,17 @@ func (m *detailBrowserModel) ensureSelectedVisible() {
 		}
 		return
 	}
+}
+
+func (m detailBrowserModel) headerLineCount() int {
+	lines := 4
+	if m.Filtering {
+		lines++
+	}
+	if m.selectedActionHint() != "" {
+		lines++
+	}
+	return lines
 }
 
 func detailBrowserRowBlockVisible(rows []detailBrowserRow, offset int, maxBodyLines int, expanded map[int]bool, width int, selected int) bool {

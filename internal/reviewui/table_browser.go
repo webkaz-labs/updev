@@ -401,6 +401,7 @@ func (m TableBrowserModel) View() tea.View {
 	fmt.Fprintf(&out, "%s %s\n", textui.StyleDim(m.positionText(), m.Color), textui.StyleDim("mouse="+string(m.MouseMode), m.Color))
 	if hint := m.selectedActionHint(); hint != "" {
 		fmt.Fprintf(&out, "%s\n", textui.StyleDim(hint, m.Color))
+		line++
 	}
 	fmt.Fprintln(&out)
 	if m.Help {

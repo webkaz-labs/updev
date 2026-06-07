@@ -13,10 +13,10 @@ import (
 
 type miseMinimumReleaseAgeEvidence struct {
 	Status                plan.Status `json:"status"`
-	Active                bool        `json:"active"`
+	Active                *bool       `json:"active,omitempty"`
 	Value                 string      `json:"value,omitempty"`
 	Source                string      `json:"source,omitempty"`
-	CommandShapeSupported bool        `json:"command_shape_supported"`
+	CommandShapeSupported *bool       `json:"command_shape_supported,omitempty"`
 	Reason                string      `json:"reason,omitempty"`
 	Remediation           string      `json:"remediation,omitempty"`
 }
@@ -44,8 +44,9 @@ func detectMiseMinimumReleaseAge(ctx context.Context, commandRunner commandRunne
 		evidence.Remediation = "upgrade mise or update updev if the command shape changed"
 		return evidence
 	}
-	evidence.CommandShapeSupported = strings.Contains(shapeResult.Stdout, "--minimum-release-age") || strings.Contains(shapeResult.Stderr, "--minimum-release-age")
-	if !evidence.CommandShapeSupported {
+	shapeSupported := strings.Contains(shapeResult.Stdout, "--minimum-release-age") || strings.Contains(shapeResult.Stderr, "--minimum-release-age")
+	evidence.CommandShapeSupported = boolPtr(shapeSupported)
+	if !shapeSupported {
 		evidence.Status = plan.StatusDrift
 		evidence.Reason = "mise latest help does not advertise --minimum-release-age"
 		evidence.Remediation = "upgrade mise or update updev if the command shape changed"
@@ -79,14 +80,23 @@ func detectMiseMinimumReleaseAge(ctx context.Context, commandRunner commandRunne
 	}
 	value, source, ok := miseMinimumReleaseAgeFromSettings(payload)
 	if !ok || value == "" {
+		evidence.Active = boolPtr(false)
 		return evidence
 	}
-	evidence.Active = true
+	evidence.Active = boolPtr(true)
 	evidence.Value = value
 	evidence.Source = source
 	evidence.Reason = "mise minimum_release_age is active"
 	evidence.Remediation = ""
 	return evidence
+}
+
+func boolPtr(value bool) *bool {
+	return &value
+}
+
+func boolValue(value *bool) bool {
+	return value != nil && *value
 }
 
 func miseMinimumReleaseAgeFromSettings(payload map[string]any) (string, string, bool) {
