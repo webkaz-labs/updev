@@ -162,7 +162,6 @@ func dependencyCodexTranslationCheck(commandRunner runner.Runner) dependencyCont
 		Required: false,
 		Command:  []string{"codex", "exec", "--skip-git-repo-check", "--output-last-message", "<tempfile>", "-"},
 		Status:   plan.StatusOK,
-		Value:    mode,
 		Active:   &active,
 	}
 	if mode == descriptionTranslationOff {
@@ -175,6 +174,7 @@ func dependencyCodexTranslationCheck(commandRunner runner.Runner) dependencyCont
 		check.Remediation = "install codex for description translation, use updev list --translate-now after installation, or set [ui].description_translation = \"off\""
 		return check
 	}
+	check.Value = mode
 	return check
 }
 
@@ -196,8 +196,8 @@ func dependencyMiseMinimumReleaseAgeCheck(ctx context.Context, commandRunner run
 	check.Status = evidence.Status
 	check.Value = evidence.Value
 	check.Source = evidence.Source
-	check.Active = &evidence.Active
-	check.CommandShapeSupported = &evidence.CommandShapeSupported
+	check.Active = evidence.Active
+	check.CommandShapeSupported = evidence.CommandShapeSupported
 	check.Reason = evidence.Reason
 	check.Remediation = evidence.Remediation
 	return check

@@ -625,7 +625,7 @@ func TestMiseManifestFixDryRunResolvesLatest(t *testing.T) {
 	if report.Status != plan.StatusDrift || !report.DryRun || len(report.Actions) != 1 {
 		t.Fatalf("expected dry-run drift action, got %#v", report)
 	}
-	if !report.MiseMinimumReleaseAge.Active || report.MiseMinimumReleaseAge.Value != "3d" {
+	if !boolValue(report.MiseMinimumReleaseAge.Active) || report.MiseMinimumReleaseAge.Value != "3d" {
 		t.Fatalf("expected active mise minimum_release_age evidence, got %#v", report.MiseMinimumReleaseAge)
 	}
 	if action := report.Actions[0]; action.Status != plan.StatusDrift || action.Resolved != "1.2.3" || action.Current != "latest" || !action.AgePolicyActive || action.AgePolicyValue != "3d" {
@@ -1204,6 +1204,9 @@ func TestDependencyContractReportChecksRequiredJSONContracts(t *testing.T) {
 			if check.Status != plan.StatusUnavailable || check.Required {
 				t.Fatalf("expected optional unavailable codex translation check, got %#v", check)
 			}
+			if check.Value != "" || !strings.Contains(check.Reason, "Codex CLI not found") {
+				t.Fatalf("expected unavailable codex detail to use reason rather than mode value, got %#v", check)
+			}
 		}
 	}
 	if !foundCodex {
@@ -1239,6 +1242,40 @@ func TestDependencyContractReportAllowsInactiveMiseMinimumReleaseAge(t *testing.
 		if check.Tool == "mise" && check.Feature == "minimum-release-age" {
 			if check.Active == nil || *check.Active || check.Value != "" || !strings.Contains(check.Reason, "not configured") {
 				t.Fatalf("expected inactive mise minimum_release_age evidence, got %#v", check)
+			}
+			return
+		}
+	}
+	t.Fatalf("expected mise minimum-release-age check, got %#v", report.Checks)
+}
+
+func TestDependencyContractReportLeavesMiseAgePolicyUnknownOnProbeDrift(t *testing.T) {
+	fake := &fakeCommandRunner{
+		paths: map[string]error{
+			"brew":        nil,
+			"mise":        nil,
+			"osv-scanner": fmt.Errorf("missing"),
+			"gitleaks":    fmt.Errorf("missing"),
+			"zizmor":      fmt.Errorf("missing"),
+			"trivy":       fmt.Errorf("missing"),
+			"grype":       fmt.Errorf("missing"),
+		},
+		results: map[string]runner.Result{
+			"brew\x00--version":                 {Stdout: "Homebrew 4.5.0"},
+			"brew\x00outdated\x00--json=v2":     {Stdout: `{"formulae":[],"casks":[]}`},
+			"mise\x00--version":                 {Stdout: "2026.5.18"},
+			"mise\x00ls\x00--current\x00--json": {Stdout: `{}`},
+			"mise\x00latest\x00--help":          {Code: 1, Err: fmt.Errorf("boom")},
+		},
+	}
+	report := buildDependencyContractReport(context.Background(), dependencyOptions{command: "dependencies", root: "/repo"}, fake)
+	if report.Status != plan.StatusDrift {
+		t.Fatalf("expected drift dependency contract report, got %#v", report)
+	}
+	for _, check := range report.Checks {
+		if check.Tool == "mise" && check.Feature == "minimum-release-age" {
+			if check.Active != nil || check.CommandShapeSupported != nil || !strings.Contains(check.Reason, "could not verify") {
+				t.Fatalf("expected unknown mise minimum_release_age evidence after probe drift, got %#v", check)
 			}
 			return
 		}
