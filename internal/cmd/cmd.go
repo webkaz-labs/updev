@@ -595,7 +595,7 @@ Commands:
   updev ck ...                  # alias for check
   updev security scan [--refresh] [--include-vscode] [--provider name|all] [--ecosystem name] [--scanner auto|none|all|name[,name]] [--policy file] [--format text|json]
   updev security review [--refresh] [--include-vscode] [--provider name|all] [--ecosystem name] [--scanner auto|none|all|name[,name]] [--decision allow|review|hold|block] [--kind name] [--name text] [--policy file] [--format text|json]
-  updev security gate [--provider brew|vscode|all] [--include-vscode] [--policy file] [--format text|json]
+  updev security gate [--provider brew|mise|vscode|all] [--include-vscode] [--policy file] [--format text|json]
   updev security policy [--path file] [--format text|json]
   updev security policy cleanup [--apply] [--path file] [--format text|json]
   updev status [--refresh] [--include-vscode] [--format text|json]

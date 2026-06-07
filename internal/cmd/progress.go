@@ -9,7 +9,7 @@ import (
 )
 
 const (
-	startupProgressDelay    = 300 * time.Millisecond
+	startupProgressDelay    = 150 * time.Millisecond
 	startupProgressInterval = 180 * time.Millisecond
 )
 

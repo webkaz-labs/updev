@@ -1082,6 +1082,52 @@ func backendFindingActionText(finding backendFinding) string {
 	}
 }
 
+func backendFindingEvidenceText(finding backendFinding) string {
+	if defaultLanguage() != "ja" {
+		return strings.TrimSpace(firstNonEmpty(finding.Reason, finding.Action, finding.Type))
+	}
+	if strings.TrimSpace(finding.Action) != "" {
+		return backendFindingActionText(finding)
+	}
+	if reason := localizedBackendReasonText(finding.Reason); reason != "" && reason != finding.Reason {
+		return reason
+	}
+	return localizedBackendReasonText(finding.Type)
+}
+
+func localizedBackendReasonText(value string) string {
+	value = strings.TrimSpace(value)
+	if defaultLanguage() != "ja" {
+		return value
+	}
+	switch value {
+	case "stable mise core tool is preferred for CLI developer tools":
+		return "CLI 開発ツールは安定した mise core tool を優先します"
+	case "fd has a registry-backed mise/aqua path":
+		return "fd は registry-backed の mise/aqua 経路があります"
+	case "ripgrep is already a stable mise-managed CLI":
+		return "ripgrep は既に安定した mise 管理 CLI として扱えます"
+	case "aqua prebuilt CLI is preferred over a cargo global build":
+		return "cargo global build より aqua の prebuilt CLI を優先します"
+	case "mise GitHub release backend is preferred over a cargo global build when no core or aqua backend is defined":
+		return "core/aqua backend が無い場合は cargo global build より mise GitHub release backend を優先します"
+	case "aqua prebuilt CLI avoids npm global package-manager coupling":
+		return "aqua の prebuilt CLI は npm global package-manager への結合を避けられます"
+	case "Homebrew formula upstream is a GitHub repository; verify release assets and ownership before moving the tool out of Homebrew":
+		return "Homebrew formula の upstream は GitHub repository です。Homebrew から移す前に release asset と ownership を確認してください"
+	case "homebrew-to-mise-candidate":
+		return "Homebrew から mise への移行候補"
+	case "homebrew-to-mise":
+		return "Homebrew から mise への移行確認"
+	case "mise-backend-candidate":
+		return "mise backend の移行候補"
+	case "mise-backend-rewrite":
+		return "mise backend の書き換え確認"
+	default:
+		return value
+	}
+}
+
 func printBackendPreferenceOrder(w io.Writer) {
 	parts := make([]string, 0, len(backendPreferenceTiers()))
 	for _, tier := range backendPreferenceTiers() {
@@ -1159,7 +1205,7 @@ func backendFindingDetailRow(finding backendFinding) detailBrowserRow {
 	return detailBrowserRow{
 		Title:    finding.Name + " -> " + finding.RecommendedName,
 		Status:   string(finding.Status),
-		Summary:  finding.Reason,
+		Summary:  localizedBackendReasonText(finding.Reason),
 		Detail:   backendFindingActionText(finding),
 		Metadata: metadata,
 		Actions:  backendDetailActions(finding),

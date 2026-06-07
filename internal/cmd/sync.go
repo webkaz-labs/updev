@@ -190,7 +190,10 @@ func syncItemIsManualCask(item plan.Item, manualIndex map[string]toolRow) bool {
 	if !strings.EqualFold(item.Provider, "brew") || !strings.EqualFold(item.Kind, "cask") {
 		return false
 	}
-	_, ok := manualAppMatch(manualIndex, item.Name)
+	row, ok := manualAppMatch(manualIndex, item.Name)
+	if ok && row.State == "brew" {
+		return false
+	}
 	return ok
 }
 

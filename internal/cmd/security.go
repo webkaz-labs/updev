@@ -400,7 +400,7 @@ func printSecurityUsage(w io.Writer) {
 	fmt.Fprintln(w, "usage: updev security <scan|review|gate|policy> ...")
 	fmt.Fprintln(w, "  updev security scan [--refresh] [--provider name|all] [--ecosystem name] [--scanner auto|none|all|name[,name]] [--policy file] [--format text|json]")
 	fmt.Fprintln(w, "  updev security review [--refresh] [--provider name|all] [--ecosystem name] [--scanner auto|none|all|name[,name]] [--decision allow|review|hold|block] [--kind name] [--name name] [--policy file] [--format text|json]")
-	fmt.Fprintln(w, "  updev security gate [--provider brew|vscode|all] [--policy file] [--format text|json]")
+	fmt.Fprintln(w, "  updev security gate [--provider brew|mise|vscode|all] [--policy file] [--format text|json]")
 	fmt.Fprintln(w, "  updev security policy [list] [--state active|expired|invalid|duplicate|shadowed|needs-cleanup] [--provider name] [--kind name] [--name name] [--decision allow|review|hold|block] [--path file] [--format text|json]")
 	fmt.Fprintln(w, "  updev security policy add --name name --decision allow|review|hold|block --reason text [--provider name] [--kind name] [--expires YYYY-MM-DD|--ttl-days N]")
 	fmt.Fprintln(w, "  updev security policy allow|review|hold|block --name name --reason text [--provider name] [--kind name] [--expires YYYY-MM-DD|--ttl-days N]")
@@ -493,7 +493,7 @@ func parseSecurityGateOptions(args []string) (securityGateOptions, error) {
 	if opts.format != "text" && opts.format != "json" {
 		return opts, fmt.Errorf("unsupported format: %s", opts.format)
 	}
-	if !strings.EqualFold(opts.provider, "brew") && !strings.EqualFold(opts.provider, "vscode") && !strings.EqualFold(opts.provider, "all") {
+	if !strings.EqualFold(opts.provider, "brew") && !strings.EqualFold(opts.provider, "mise") && !strings.EqualFold(opts.provider, "vscode") && !strings.EqualFold(opts.provider, "all") {
 		return opts, fmt.Errorf("unsupported security gate provider: %s", opts.provider)
 	}
 	opts.provider = strings.ToLower(opts.provider)
@@ -729,6 +729,8 @@ func buildSecurityGateReport(ctx context.Context, opts securityGateOptions, comm
 	switch opts.provider {
 	case "brew":
 		report.Gates = []safetyGate{collectBrewSafetyWithPolicy(ctx, commandRunner, opts.root, policyUse.Policy)}
+	case "mise":
+		report.Gates = []safetyGate{collectMiseUpdateSafetyWithPolicy(ctx, commandRunner, opts.root, policyUse.Policy)}
 	case "vscode":
 		report.Gates = []safetyGate{collectVSCodeSafetyWithPolicy(ctx, commandRunner, opts.root, policyUse.Policy)}
 	case "all":
@@ -744,18 +746,25 @@ func buildSecurityGateReport(ctx context.Context, opts securityGateOptions, comm
 
 func collectAllSafetyGatesWithPolicy(ctx context.Context, commandRunner commandRunner, root string, policy securityPolicy, includeVSCode bool) []safetyGate {
 	if !includeVSCode {
-		return []safetyGate{collectBrewSafetyWithPolicy(ctx, commandRunner, root, policy)}
+		return []safetyGate{
+			collectBrewSafetyWithPolicy(ctx, commandRunner, root, policy),
+			collectMiseUpdateSafetyWithPolicy(ctx, commandRunner, root, policy),
+		}
 	}
-	gates := make([]safetyGate, 2)
+	gates := make([]safetyGate, 3)
 	var wg sync.WaitGroup
-	wg.Add(2)
+	wg.Add(3)
 	go func() {
 		defer wg.Done()
 		gates[0] = collectBrewSafetyWithPolicy(ctx, commandRunner, root, policy)
 	}()
 	go func() {
 		defer wg.Done()
-		gates[1] = collectVSCodeSafetyWithPolicy(ctx, commandRunner, root, policy)
+		gates[1] = collectMiseUpdateSafetyWithPolicy(ctx, commandRunner, root, policy)
+	}()
+	go func() {
+		defer wg.Done()
+		gates[2] = collectVSCodeSafetyWithPolicy(ctx, commandRunner, root, policy)
 	}()
 	wg.Wait()
 	return gates

@@ -69,12 +69,14 @@ review queue, and JSON output for automation.
 
 - **Main update workflow**: `updev` and `updev --dry-run` summarize updates,
   drift, skipped work, warnings, holds, and next actions.
-- **Supply-chain safety gates**: hold package or extension updates that are too
-  new, policy-blocked, advisory-matched, or missing release-age/provenance
-  evidence. Strict mode can stop mutation until evidence is good enough.
+- **Supply-chain safety gates**: hold Homebrew, mise, or extension updates that
+  are too new, policy-blocked, advisory-matched, or missing release-age/
+  provenance evidence. Strict mode is the default and stops mutation until
+  evidence is good enough.
 - **Readable inventory**: `updev list` is a first-class review surface for
   desired/live package and runtime state. TTY runs open the grouped inventory
   list first, with drill-down tables grouped by provider, category, and status;
+  `Tab` switches to manual app inventory without leaving the browser, and
   `updev hub` opens the full view/filter selector when you want the menu first.
 - **Desired-state checks**: `updev check`, `updev sync`, and `updev status`
   find missing, extra, drifted, blocked, and unavailable entries.
@@ -151,10 +153,10 @@ authenticated where needed, and visible on `PATH`.
 |------|-------------|
 | macOS preview | Homebrew and mise installed locally. |
 | Homebrew provider | `brew` must support JSON output such as `brew outdated --json=v2`; package mutation still runs through Homebrew. |
-| mise provider | `mise` must support `mise ls --current --json --cd <dir>` for inventory and the GitHub backend for the managed install example. `updev` currently validates exact pins and rejects unsafe `latest` entries; it does not require, add, or enforce a mise-native age setting. |
+| mise provider | `mise` must support `mise ls --current --json --cd <dir>` for inventory, `mise outdated --json --cd <dir>` for update gating, and the GitHub backend for the managed install example. `updev` validates exact pins, rejects unsafe `latest` entries, and does not require, add, or enforce a mise-native age setting. |
 | Description translation | Optional. `codex` on `PATH` enables Japanese description-cache updates for `updev list`; without it, `updev` keeps running with English descriptions. |
 | Manual app inventory | macOS `.app` bundle metadata is read locally; Mac App Store evidence is used only when receipts or `mas` evidence are available. |
-| Security gates | Network evidence is best-effort and provider-scoped. Strict mode can hold Homebrew updates and opt-in VS Code extension updates when required evidence is missing. |
+| Security gates | Network evidence is best-effort and provider-scoped. Strict mode can hold Homebrew updates, mise updates, and opt-in VS Code extension updates when required evidence is missing. |
 
 Known-good validation as of 2026-06-04:
 
@@ -226,11 +228,11 @@ review for:
 - local policy rules such as temporary allow, hold, review, or block decisions.
 
 Use `warn` mode for visibility and `strict` mode when missing or risky evidence
-should hold the update. mise inventory and manifest hygiene are checked today.
-When mise `minimum_release_age` is configured, mise applies that policy while
-resolving versions. `updev doctor dependencies`, `updev check --dependencies`,
-and `updev fix mise` report the effective provider-native policy before updev
-adds its own mise update gate.
+should hold the update. `strict` is the default. mise inventory, manifest
+hygiene, and pending update candidates are checked today. Until backend-specific
+release-age evidence is available for every mise backend, mise update
+candidates default to review and strict mode holds `mise upgrade`; a temporary
+policy allow can unblock an accepted candidate.
 
 ## Common Commands
 

@@ -371,6 +371,7 @@ func buildListReport(result inventoryResult, opts listOptions) listReport {
 		root = result.Report.Root
 	}
 	enriched := enrichItems(result.Report.Items, legacy, manualAppIndex(root))
+	enriched = enrichHomebrewTapCaskItems(enriched, manualHomebrewTapIndex(root))
 	filtered := filterItems(enriched, opts)
 	sections := legacy.toolSections(opts)
 	manualInventoryItems := enriched
@@ -447,13 +448,14 @@ func printListText(w io.Writer, report listReport, title string, color bool) {
 		}
 	}
 	fmt.Fprintln(w)
-	displayItems := displayListItems(report.Items, report.Sections)
+	displayItems := listTextDisplayItems(report)
+	displaySections := listTextDisplaySections(report)
 	if len(displayItems) > 0 || len(report.Sections) == 0 {
 		printGroupedItems(w, displayItems, report.Limit, color)
 	}
-	if len(report.Sections) > 0 {
+	if len(displaySections) > 0 {
 		fmt.Fprintln(w)
-		printToolSections(w, report.Sections, report.Limit, color)
+		printToolSections(w, displaySections, report.Limit, color)
 	}
 	if report.Details && reportHasDetails(report) {
 		fmt.Fprintln(w)
@@ -598,6 +600,27 @@ func limitedToolRows(rows []toolRow, limit int) []toolRow {
 	return reviewui.LimitedRows(rows, limit)
 }
 
+func listTextDisplayItems(report listReport) []plan.Item {
+	return enrichListItemsWithEvidence(displayListItems(report.Items, report.Sections), report.Evidence)
+}
+
+func listTextDisplaySections(report listReport) []toolSection {
+	return enrichToolSectionsWithEvidence(report.Sections, report.Evidence)
+}
+
+func enrichListItemsWithEvidence(items []plan.Item, evidence listEvidenceIndex) []plan.Item {
+	out := make([]plan.Item, 0, len(items))
+	for _, item := range items {
+		enriched := item
+		itemEvidence := itemListEvidence(item, evidence)
+		if itemEvidence.Summary() != "" {
+			enriched.Detail = itemDetailWithEvidence(enriched.Detail, itemEvidence)
+		}
+		out = append(out, enriched)
+	}
+	return out
+}
+
 func printOmittedRows(w io.Writer, omitted int, color bool) {
 	reviewui.PrintOmittedRows(w, omitted, reviewLabels(), color)
 }
@@ -608,6 +631,7 @@ func reviewLabels() reviewui.Labels {
 		Version: "version",
 		Wanted:  "wanted",
 		State:   tr("state", "状態"),
+		Action:  tr("check", "確認"),
 		Detail:  tr("detail", "詳細"),
 		MoreRows: func(count int) string {
 			return fmt.Sprintf(tr("... %d more rows; rerun with --limit 0 or --details", "... あと %d 行。全件は --limit 0 または --details"), count)
@@ -617,12 +641,12 @@ func reviewLabels() reviewui.Labels {
 }
 
 func reportHasDetails(report listReport) bool {
-	for _, item := range report.Items {
+	for _, item := range listTextDisplayItems(report) {
 		if strings.TrimSpace(item.Detail) != "" {
 			return true
 		}
 	}
-	for _, section := range report.Sections {
+	for _, section := range listTextDisplaySections(report) {
 		for _, row := range section.Rows {
 			if strings.TrimSpace(row.Detail) != "" {
 				return true
@@ -635,15 +659,15 @@ func reportHasDetails(report listReport) bool {
 func printListDetails(w io.Writer, report listReport, color bool) {
 	fmt.Fprintln(w, textui.StyleHeading(tr("details", "詳細"), color))
 	wrote := false
-	for _, item := range displayListItems(report.Items, report.Sections) {
+	for _, item := range listTextDisplayItems(report) {
 		if strings.TrimSpace(item.Detail) == "" {
 			continue
 		}
 		wrote = true
 		fmt.Fprintf(w, "%s %s\n", textui.StyleName(item.Provider+"/"+item.Kind+" "+item.Name, color), textui.StyleStatus(inventoryItemStatusLabel(item), color))
-		printDetailLine(w, "detail", item.Detail, color)
+		printDetailLine(w, "detail", localizedBuiltInNoteText(item.Detail), color)
 	}
-	for _, section := range report.Sections {
+	for _, section := range listTextDisplaySections(report) {
 		for _, row := range section.Rows {
 			if strings.TrimSpace(row.Detail) == "" {
 				continue
@@ -699,8 +723,13 @@ func runListHub(report listReport, selectorHub bool) {
 	if selectorHub {
 		pendingAction = ""
 	}
-	backendPlan := buildBackendPlanForHub(report.Root)
-	report.Evidence = addBackendListEvidence(report.Evidence, backendPlan)
+	backendPlan := backendPlanReport{}
+	backendLoading := true
+	if selectorHub {
+		backendPlan = buildBackendPlanForHub(report.Root)
+		report.Evidence = addBackendListEvidence(report.Evidence, backendPlan)
+		backendLoading = false
+	}
 	lastUpdate, hasLastUpdate := loadLastUpdateReport()
 	detailStates := map[string]detailBrowserState{}
 	for {
@@ -724,6 +753,32 @@ func runListHub(report listReport, selectorHub bool) {
 			return
 		}
 		defaultAction = action
+		if shouldRunListHubRouterAction(action) {
+			result, updatedStates, err := runListHubRouter(report, backendPlan, backendLoading, lastUpdate.Report, hasLastUpdate, action, detailStates, textui.ColorEnabled())
+			if err == nil && result.Action != "" {
+				detailStates = updatedStates
+				if result.BackendReady {
+					backendPlan = result.BackendPlan
+					if backendLoading {
+						report.Evidence = addBackendListEvidence(report.Evidence, backendPlan)
+					}
+					backendLoading = false
+				}
+				nextAction, exit := handleListHubRouterResult(report.Root, result, &backendPlan, &lastUpdate.Report, &hasLastUpdate)
+				if exit {
+					return
+				}
+				if nextAction == "" || nextAction == updevActionBack {
+					selectorHub = true
+					defaultAction = listHubActionFull
+					pendingAction = ""
+					continue
+				}
+				defaultAction = nextAction
+				pendingAction = nextAction
+				continue
+			}
+		}
 		switch action {
 		case listHubActionAttention:
 			printListText(os.Stdout, derivedListReport(report, listOptions{status: "attention", limit: 20}), "updev inventory", textui.ColorEnabled())
@@ -800,7 +855,7 @@ func runListHub(report listReport, selectorHub bool) {
 		case listHubActionManual:
 			defaultAction = listHubActionManual
 			manualReport := derivedListReport(report, listOptions{provider: manualProviderName})
-			handled, exit := runListFilteredSelection("updev list manual", manualReport, detailStates, &defaultAction, &pendingAction, &backendPlan, lastUpdate.Report, hasLastUpdate)
+			handled, exit := runListFilteredSelectionWithViewActions("updev list manual", manualReport, detailStates, &defaultAction, &pendingAction, &backendPlan, lastUpdate.Report, hasLastUpdate, listHubActionFull, listHubActionFull)
 			if exit {
 				return
 			}
@@ -899,7 +954,7 @@ func runListHub(report listReport, selectorHub bool) {
 			}
 			continue
 		case listHubActionFull:
-			action, handled := runListFilteredBrowser("updev installed inventory", report, detailStates, textui.ColorEnabled())
+			action, handled := runListFilteredBrowserWithViewActions("updev installed inventory", report, detailStates, textui.ColorEnabled(), listHubActionManual, listHubActionManual)
 			if action == updevActionExit {
 				return
 			}
@@ -963,6 +1018,46 @@ func listHubActionExists(action string) bool {
 		return true
 	default:
 		return false
+	}
+}
+
+func shouldRunListHubRouterAction(action string) bool {
+	switch action {
+	case listHubActionAttention, listHubActionProvider, listHubActionKind, listHubActionCategory, listHubActionStatus, listHubActionQuery, listHubActionManual, listHubActionBackends, listHubActionUpdates, listHubActionSecurity, listHubActionLimited, listHubActionDetails, listHubActionFull:
+		return true
+	default:
+		return false
+	}
+}
+
+func handleListHubRouterResult(root string, result listHubRouterResult, backendPlan *backendPlanReport, lastUpdate *updateReport, hasLastUpdate *bool) (string, bool) {
+	action := result.Action
+	switch {
+	case action == updevActionBack || action == updevActionHome:
+		return updevActionBack, false
+	case action == updevActionExit:
+		return "", true
+	case handleManualPlanDetailAction(root, action):
+		if result.FromRoute && result.ReturnAction != "" {
+			return result.ReturnAction, false
+		}
+		return listHubActionManual, false
+	case handleBackendDetailAction(root, action):
+		*backendPlan = buildBackendPlanForHub(root)
+		if result.FromRoute && result.ReturnAction != "" {
+			return result.ReturnAction, false
+		}
+		return listHubActionBackends, false
+	case handleSecurityDetailAction(lastUpdate, action):
+		*hasLastUpdate = true
+		if result.FromRoute && result.ReturnAction != "" {
+			return result.ReturnAction, false
+		}
+		return listHubActionSecurity, false
+	case listHubActionExists(action):
+		return action, false
+	default:
+		return listHubActionFull, false
 	}
 }
 
@@ -1094,8 +1189,12 @@ func selectListQuery() (string, bool) {
 }
 
 func runListFilteredSelection(title string, report listReport, detailStates map[string]detailBrowserState, defaultAction *string, pendingAction *string, backendPlan *backendPlanReport, lastUpdate updateReport, hasLastUpdate bool) (bool, bool) {
+	return runListFilteredSelectionWithViewActions(title, report, detailStates, defaultAction, pendingAction, backendPlan, lastUpdate, hasLastUpdate, "", "")
+}
+
+func runListFilteredSelectionWithViewActions(title string, report listReport, detailStates map[string]detailBrowserState, defaultAction *string, pendingAction *string, backendPlan *backendPlanReport, lastUpdate updateReport, hasLastUpdate bool, nextAction string, previousAction string) (bool, bool) {
 	for {
-		action, handled := runListFilteredBrowser(title, report, detailStates, textui.ColorEnabled())
+		action, handled := runListFilteredBrowserWithViewActions(title, report, detailStates, textui.ColorEnabled(), nextAction, previousAction)
 		if route, ok := parseListRouteAction(action); ok {
 			outcome := runListRouteDetail(report.Root, route, *backendPlan, lastUpdate, hasLastUpdate, detailStates, textui.ColorEnabled())
 			if outcome == listRouteDetailExit {
@@ -1143,10 +1242,20 @@ func handleListFilteredAction(action string, handled bool, defaultAction *string
 }
 
 func runListFilteredBrowser(title string, report listReport, detailStates map[string]detailBrowserState, color bool) (string, bool) {
+	return runListFilteredBrowserWithViewActions(title, report, detailStates, color, "", "")
+}
+
+func runListFilteredBrowserWithViewActions(title string, report listReport, detailStates map[string]detailBrowserState, color bool, nextAction string, previousAction string) (string, bool) {
 	stateKey := listBrowserStateKey(report)
 	sections := listTableSections(report)
-	if toolTableRowCount(sections) > 0 {
-		state, err := runToolTableBrowserWithState(title, sections, detailStates[stateKey], color)
+	if toolTableRowCount(sections) > 0 || nextAction != "" || previousAction != "" {
+		actions := tableBrowserActions()
+		labels := tableBrowserLabels()
+		if nextAction != "" || previousAction != "" {
+			actions = tableBrowserActionsWithViewToggle(nextAction, previousAction)
+			labels = tableBrowserLabelsWithViewToggle()
+		}
+		state, err := runToolTableBrowserWithStateAndActions(title, sections, detailStates[stateKey], actions, labels, color)
 		if err != nil {
 			return "", false
 		}
@@ -1191,8 +1300,118 @@ func listBrowserStateKey(report listReport) string {
 
 func listTableSections(report listReport) []toolSection {
 	sections := itemToolSections(displayListItems(report.Items, report.Sections), report.Evidence)
-	sections = append(sections, report.Sections...)
+	sections = append(sections, enrichToolSectionsWithEvidence(report.Sections, report.Evidence)...)
 	return sections
+}
+
+func enrichToolSectionsWithEvidence(sections []toolSection, evidence listEvidenceIndex) []toolSection {
+	out := make([]toolSection, 0, len(sections))
+	for _, section := range sections {
+		section.Rows = append([]toolRow{}, section.Rows...)
+		for index, row := range section.Rows {
+			items := toolSectionRowEvidenceItems(section, row)
+			itemEvidence := listItemEvidence{}
+			actions := row.Actions
+			for _, item := range items {
+				itemEvidence = mergeListItemEvidence(itemEvidence, itemListEvidence(item, evidence))
+				actions = mergeReviewActions(actions, itemToolRowActions(item, evidence))
+			}
+			if itemEvidence.Summary() != "" {
+				row.Detail = itemDetailWithEvidence(row.Detail, itemEvidence)
+			}
+			row.Actions = actions
+			section.Rows[index] = row
+		}
+		out = append(out, section)
+	}
+	return out
+}
+
+func toolSectionRowEvidenceItems(section toolSection, row toolRow) []plan.Item {
+	items := []plan.Item{toolSectionRowEvidenceItem(section, row)}
+	if cask := manualDetailValue(row.Detail, "cask"); cask != "" {
+		items = append(items, plan.Item{
+			Provider: "brew",
+			Kind:     "cask",
+			Name:     cask,
+			Version:  row.Version,
+			Status:   plan.Status(row.State),
+		})
+	}
+	return items
+}
+
+func toolSectionRowEvidenceItem(section toolSection, row toolRow) plan.Item {
+	provider := section.Name
+	category := ""
+	if left, right, ok := strings.Cut(section.Name, "/"); ok {
+		provider = left
+		category = right
+	}
+	kind := provider
+	if provider == "mise" {
+		kind = "tool"
+	}
+	return plan.Item{
+		Provider: provider,
+		Kind:     kind,
+		Category: category,
+		Name:     row.Name,
+		Version:  row.Version,
+		Status:   plan.Status(row.State),
+	}
+}
+
+func mergeListItemEvidence(left listItemEvidence, right listItemEvidence) listItemEvidence {
+	return listItemEvidence{
+		Updates:  mergeStringsUnique(left.Updates, right.Updates),
+		Security: mergeStringsUnique(left.Security, right.Security),
+		Backends: mergeStringsUnique(left.Backends, right.Backends),
+	}
+}
+
+func mergeStringsUnique(left []string, right []string) []string {
+	if len(left) == 0 {
+		return right
+	}
+	if len(right) == 0 {
+		return left
+	}
+	out := append([]string{}, left...)
+	seen := map[string]bool{}
+	for _, value := range out {
+		seen[value] = true
+	}
+	for _, value := range right {
+		if strings.TrimSpace(value) == "" || seen[value] {
+			continue
+		}
+		seen[value] = true
+		out = append(out, value)
+	}
+	return out
+}
+
+func mergeReviewActions(left []reviewui.Action, right []reviewui.Action) []reviewui.Action {
+	if len(left) == 0 {
+		return right
+	}
+	if len(right) == 0 {
+		return left
+	}
+	out := append([]reviewui.Action{}, left...)
+	seen := map[string]bool{}
+	for _, action := range out {
+		seen[action.Value] = true
+	}
+	for _, action := range right {
+		if strings.TrimSpace(action.Value) == "" || seen[action.Value] {
+			continue
+		}
+		seen[action.Value] = true
+		out = append(out, action)
+	}
+	return out
 }
 
 func itemToolSections(items []plan.Item, evidence listEvidenceIndex) []toolSection {
@@ -1250,17 +1469,23 @@ func itemToolRowActions(item plan.Item, evidence listEvidenceIndex) []reviewui.A
 		})
 	}
 	if len(itemEvidence.Updates) > 0 {
+		badge, badgeStatus := updateEvidenceActionBadge(itemEvidence.Updates)
 		actions = append(actions, reviewui.Action{
 			Value:       listRouteActionValue(listHubActionUpdates, item),
 			Label:       tr("open update evidence", "update evidence を開く"),
 			Description: firstNonEmpty(itemEvidence.Updates...),
+			Badge:       badge,
+			BadgeStatus: badgeStatus,
 		})
 	}
 	if len(itemEvidence.Security) > 0 {
+		badge, badgeStatus := securityEvidenceActionBadge(itemEvidence.Security)
 		actions = append(actions, reviewui.Action{
 			Value:       listRouteActionValue(listHubActionSecurity, item),
 			Label:       tr("open security review", "security review を開く"),
 			Description: firstNonEmpty(itemEvidence.Security...),
+			Badge:       badge,
+			BadgeStatus: badgeStatus,
 		})
 	}
 	return actions
@@ -1321,7 +1546,7 @@ func runListRouteDetail(root string, route listRouteAction, backendPlan backendP
 	if len(rows) == 0 {
 		rows = []detailBrowserRow{emptyRouteDetailRow(route)}
 	}
-	state, err := runDetailBrowserWithState(title, rows, detailStates[stateKey], color)
+	state, err := runDetailBrowserWithState(title, rows, initialRouteDetailState(detailStates[stateKey]), color)
 	if err != nil {
 		return listRouteDetailBack
 	}
@@ -1346,6 +1571,16 @@ func runListRouteDetail(root string, route listRouteAction, backendPlan backendP
 		}
 	}
 	return listRouteDetailBack
+}
+
+func initialRouteDetailState(state detailBrowserState) detailBrowserState {
+	if state.Expanded == nil {
+		state.Expanded = map[int]bool{}
+	}
+	if len(state.Expanded) == 0 && state.Query == "" && state.Selected == 0 && state.Offset == 0 {
+		state.Expanded[0] = true
+	}
+	return state
 }
 
 func routeDetailTitle(route listRouteAction) string {
@@ -1440,9 +1675,9 @@ func buildListEvidenceIndex(root string) listEvidenceIndex {
 	}
 	for _, step := range entry.Report.Steps {
 		for _, item := range step.Updated {
-			listEvidenceAdd(index.Updates, listEvidenceProviderNameKey(step.Name, item), fmt.Sprintf("%s updated: %s", step.Name, strings.TrimSpace(item)))
-			if strings.TrimSpace(step.Name) == "" {
-				listEvidenceAdd(index.Updates, listEvidenceNameKey(item), fmt.Sprintf("updated: %s", strings.TrimSpace(item)))
+			detail := fmt.Sprintf("%s updated: %s", step.Name, strings.TrimSpace(item))
+			for _, key := range listEvidenceUpdateItemKeys(step.Name, item) {
+				listEvidenceAdd(index.Updates, key, detail)
 			}
 		}
 		for _, item := range step.SkippedItems {
@@ -1451,18 +1686,14 @@ func buildListEvidenceIndex(root string) listEvidenceIndex {
 				status = "held"
 			}
 			detail := firstNonEmpty(step.Reason, status)
-			listEvidenceAdd(index.Updates, listEvidenceProviderNameKey(step.Name, item), fmt.Sprintf("%s %s: %s", step.Name, status, detail))
-			if strings.TrimSpace(step.Name) == "" {
-				listEvidenceAdd(index.Updates, listEvidenceNameKey(item), fmt.Sprintf("%s: %s", status, strings.TrimSpace(item)))
+			for _, key := range listEvidenceUpdateItemKeys(step.Name, item) {
+				listEvidenceAdd(index.Updates, key, fmt.Sprintf("%s %s: %s", step.Name, status, detail))
 			}
 		}
 	}
 	for _, gate := range entry.Report.Safety {
 		for _, finding := range gate.Findings {
-			detail := strings.TrimSpace(firstNonEmpty(finding.Decision, string(gate.Status), finding.Reason))
-			if detail == "" {
-				detail = "security review"
-			}
+			detail := listSecurityEvidenceDetail(entry.Report, gate, finding)
 			for _, key := range listEvidenceFindingKeys(gate, finding) {
 				listEvidenceAdd(index.Security, key, fmt.Sprintf("%s/%s %s: %s", firstNonEmpty(finding.Provider, gate.Provider), finding.Kind, finding.Name, detail))
 			}
@@ -1471,14 +1702,112 @@ func buildListEvidenceIndex(root string) listEvidenceIndex {
 	return index
 }
 
+func listSecurityEvidenceDetail(report updateReport, gate safetyGate, finding safetyFinding) string {
+	decision := strings.TrimSpace(firstNonEmpty(finding.Decision, string(gate.Status), finding.Reason))
+	if decision == "" {
+		decision = "security review"
+	}
+	reason := strings.TrimSpace(localizedSafetyReason(finding.Reason))
+	if report.Security == "strict" && gate.Status == plan.StatusHeld && securityDecisionNeedsAttention(decision) {
+		if strings.EqualFold(decision, "hold") || strings.EqualFold(decision, "held") {
+			return listEvidenceDetailWithReason(decision, reason)
+		}
+		return listEvidenceDetailWithReason("held (decision: "+decision+")", reason)
+	}
+	return listEvidenceDetailWithReason(decision, reason)
+}
+
+func listEvidenceDetailWithReason(detail string, reason string) string {
+	detail = strings.TrimSpace(detail)
+	reason = strings.TrimSpace(reason)
+	if reason == "" || strings.EqualFold(reason, detail) {
+		return detail
+	}
+	return detail + ": " + oneLine(reason)
+}
+
+func listEvidenceUpdateItemKeys(provider string, item string) []string {
+	keys := []string{}
+	add := func(key string) {
+		if strings.TrimSpace(key) == "" {
+			return
+		}
+		for _, existing := range keys {
+			if existing == key {
+				return
+			}
+		}
+		keys = append(keys, key)
+	}
+	for _, name := range listEvidenceItemNameCandidates(item) {
+		add(listEvidenceProviderNameKey(provider, name))
+		if strings.TrimSpace(provider) == "" {
+			add(listEvidenceNameKey(name))
+		}
+		if strings.EqualFold(provider, "brew") {
+			add(listEvidenceExactKey(provider, "brew", name))
+			add(listEvidenceExactKey(provider, "cask", name))
+			add(listEvidenceExactKey(provider, "tap", name))
+		}
+	}
+	return keys
+}
+
+func listEvidenceItemNameCandidates(value string) []string {
+	value = strings.Trim(strings.TrimSpace(value), `"'`)
+	if value == "" {
+		return nil
+	}
+	candidates := []string{value}
+	fields := strings.Fields(value)
+	leadingTokenIsPrefix := false
+	if len(fields) >= 2 {
+		switch strings.ToLower(strings.Trim(fields[0], `:;,.`)) {
+		case "brew", "formula", "cask", "tap", "tool", "mise":
+			leadingTokenIsPrefix = true
+			candidates = append(candidates, fields[1])
+		}
+	}
+	if len(fields) > 0 && !leadingTokenIsPrefix && listEvidenceSafeLeadingToken(fields[0]) {
+		candidates = append(candidates, fields[0])
+	}
+	if strings.Contains(value, "/") {
+		candidates = append(candidates, filepath.Base(value))
+	}
+	out := []string{}
+	seen := map[string]bool{}
+	for _, candidate := range candidates {
+		candidate = strings.Trim(strings.TrimSpace(candidate), `"'():;,.`)
+		if candidate == "" || seen[candidate] {
+			continue
+		}
+		seen[candidate] = true
+		out = append(out, candidate)
+	}
+	return out
+}
+
+func listEvidenceSafeLeadingToken(value string) bool {
+	value = strings.ToLower(strings.Trim(strings.TrimSpace(value), `"'():;,.`))
+	if value == "" {
+		return false
+	}
+	switch value {
+	case "security", "held", "deferred", "skipped", "skip", "gate", "policy", "review", "blocked", "updated", "update":
+		return false
+	default:
+		return true
+	}
+}
+
 func addBackendListEvidence(index listEvidenceIndex, report backendPlanReport) listEvidenceIndex {
 	if index.Backends == nil {
 		index.Backends = map[string][]string{}
 	}
 	for _, finding := range report.Findings {
-		detail := strings.TrimSpace(firstNonEmpty(finding.Reason, finding.Action, finding.Type))
+		detail := strings.TrimSpace(backendFindingEvidenceText(finding))
 		if detail == "" {
-			detail = "backend convergence review"
+			detail = tr("backend convergence review", "backend 整理の確認")
 		}
 		for _, key := range listEvidenceBackendFindingKeys(finding) {
 			listEvidenceAdd(index.Backends, key, detail)
@@ -1489,11 +1818,31 @@ func addBackendListEvidence(index listEvidenceIndex, report backendPlanReport) l
 
 func listEvidenceBackendFindingKeys(finding backendFinding) []string {
 	keys := []string{}
-	if finding.Provider != "" || finding.Kind != "" || finding.Name != "" {
-		keys = append(keys, listEvidenceExactKey(finding.Provider, finding.Kind, finding.Name))
+	add := func(key string) {
+		if strings.TrimSpace(key) == "" {
+			return
+		}
+		for _, existing := range keys {
+			if existing == key {
+				return
+			}
+		}
+		keys = append(keys, key)
 	}
-	if finding.Provider != "" || finding.Name != "" {
-		keys = append(keys, listEvidenceProviderNameKey(finding.Provider, finding.Name))
+	addRef := func(provider string, kind string, name string) {
+		add(listEvidenceExactKey(provider, kind, name))
+		add(listEvidenceProviderNameKey(provider, name))
+		add(listEvidenceNameKey(name))
+	}
+	addRef(finding.Provider, finding.Kind, finding.Name)
+	addRef(finding.Provider, finding.Kind, finding.Current)
+	recommendedKind := finding.Kind
+	if finding.RecommendedProvider == "mise" {
+		recommendedKind = "tool"
+	}
+	addRef(finding.RecommendedProvider, recommendedKind, finding.RecommendedName)
+	for _, command := range finding.CommandNames {
+		add(listEvidenceNameKey(command))
 	}
 	return keys
 }
@@ -1509,12 +1858,36 @@ func listEvidenceMatchesRoot(root string, reportRoot string) bool {
 
 func listEvidenceFindingKeys(gate safetyGate, finding safetyFinding) []string {
 	provider := firstNonEmpty(finding.Provider, gate.Provider)
-	keys := []string{
-		listEvidenceExactKey(provider, finding.Kind, finding.Name),
-		listEvidenceProviderNameKey(provider, finding.Name),
+	keys := []string{}
+	add := func(key string) {
+		if strings.TrimSpace(key) == "" {
+			return
+		}
+		for _, existing := range keys {
+			if existing == key {
+				return
+			}
+		}
+		keys = append(keys, key)
 	}
-	if strings.TrimSpace(provider) == "" {
-		keys = append(keys, listEvidenceNameKey(finding.Name))
+	for _, name := range listEvidenceItemNameCandidates(finding.Name) {
+		add(listEvidenceExactKey(provider, finding.Kind, name))
+		add(listEvidenceProviderNameKey(provider, name))
+		if strings.TrimSpace(provider) == "" {
+			add(listEvidenceNameKey(name))
+		}
+		if strings.EqualFold(provider, "brew") {
+			add(listEvidenceExactKey(provider, "brew", name))
+			add(listEvidenceExactKey(provider, "cask", name))
+			add(listEvidenceExactKey(provider, "tap", name))
+		}
+	}
+	if finding.Tap != "" {
+		add(listEvidenceExactKey(provider, "tap", finding.Tap))
+		add(listEvidenceProviderNameKey(provider, finding.Tap))
+		if strings.TrimSpace(provider) == "" {
+			add(listEvidenceNameKey(finding.Tap))
+		}
 	}
 	return keys
 }
@@ -1591,13 +1964,13 @@ func listEvidenceToken(value string) string {
 func (e listItemEvidence) Metadata() []string {
 	metadata := []string{}
 	for _, value := range e.Updates {
-		metadata = append(metadata, "update evidence: "+value)
+		metadata = append(metadata, tr("update evidence: ", "update evidence: ")+localizedListEvidenceText(value))
 	}
 	for _, value := range e.Security {
-		metadata = append(metadata, "security evidence: "+value)
+		metadata = append(metadata, tr("security evidence: ", "security evidence: ")+localizedListEvidenceText(value))
 	}
 	for _, value := range e.Backends {
-		metadata = append(metadata, "backend evidence: "+value)
+		metadata = append(metadata, tr("backend evidence: ", "backend evidence: ")+localizedListEvidenceText(value))
 	}
 	return metadata
 }
@@ -1605,13 +1978,13 @@ func (e listItemEvidence) Metadata() []string {
 func (e listItemEvidence) Summary() string {
 	parts := []string{}
 	if len(e.Updates) > 0 {
-		parts = append(parts, fmt.Sprintf("%d update evidence", len(e.Updates)))
+		parts = append(parts, fmt.Sprintf(tr("%d update evidence", "%d 件の update evidence"), len(e.Updates)))
 	}
 	if len(e.Security) > 0 {
-		parts = append(parts, fmt.Sprintf("%d security evidence", len(e.Security)))
+		parts = append(parts, fmt.Sprintf(tr("%d security evidence", "%d 件の security evidence"), len(e.Security)))
 	}
 	if len(e.Backends) > 0 {
-		parts = append(parts, fmt.Sprintf("%d backend evidence", len(e.Backends)))
+		parts = append(parts, fmt.Sprintf(tr("%d backend evidence", "%d 件の backend evidence"), len(e.Backends)))
 	}
 	return strings.Join(parts, ", ")
 }
@@ -1628,23 +2001,49 @@ func itemDetailWithEvidence(detail string, evidence listItemEvidence) string {
 func inventoryItemDetail(item plan.Item, evidence listItemEvidence, actions []detailBrowserAction) string {
 	parts := []string{}
 	if strings.TrimSpace(item.Detail) != "" {
-		parts = append(parts, "description: "+strings.TrimSpace(item.Detail))
+		parts = append(parts, tr("description: ", "説明: ")+localizedBuiltInNoteText(item.Detail))
 	} else {
-		parts = append(parts, "summary: "+inventoryItemStatusSummary(item))
+		parts = append(parts, tr("summary: ", "概要: ")+inventoryItemStatusSummary(item))
 	}
-	parts = append(parts, "identity: "+inventoryItemIdentity(item))
-	parts = append(parts, "status: "+inventoryItemStatusSummary(item))
+	parts = append(parts, tr("identity: ", "識別子: ")+inventoryItemIdentity(item))
+	parts = append(parts, tr("status: ", "状態: ")+inventoryItemStatusSummary(item))
 	if strings.TrimSpace(item.Category) != "" {
-		parts = append(parts, "category: "+item.Category+" - "+categoryDescription(item.Category))
+		parts = append(parts, tr("category: ", "カテゴリ: ")+item.Category+" - "+categoryDescription(item.Category))
 	}
 	if summary := evidence.Summary(); summary != "" {
-		parts = append(parts, "linked evidence: "+summary)
+		parts = append(parts, tr("linked evidence: ", "関連 evidence: ")+summary)
 	}
 	parts = append(parts, evidence.Metadata()...)
 	for _, action := range actions {
-		parts = append(parts, "next action: "+detailActionSummary(action))
+		parts = append(parts, tr("next action: ", "次の操作: ")+detailActionSummary(action))
 	}
 	return strings.Join(parts, "\n")
+}
+
+func localizedBuiltInNoteText(value string) string {
+	value = strings.TrimSpace(value)
+	if defaultLanguage() != "ja" {
+		return value
+	}
+	switch value {
+	case "keep macOS/system git available":
+		return "macOS/system git を使える状態に保つ"
+	default:
+		return value
+	}
+}
+
+func localizedListEvidenceText(value string) string {
+	value = strings.TrimSpace(value)
+	if defaultLanguage() != "ja" {
+		return value
+	}
+	switch value {
+	case "backend convergence review":
+		return "backend 整理の確認"
+	default:
+		return localizedBackendReasonText(value)
+	}
 }
 
 func inventoryItemIdentity(item plan.Item) string {
@@ -1678,7 +2077,7 @@ func inventoryItemManagementSummary(item plan.Item) string {
 func detailActionSummary(action detailBrowserAction) string {
 	summary := strings.TrimSpace(action.Label)
 	if strings.TrimSpace(action.Description) != "" {
-		summary += " - " + strings.TrimSpace(action.Description)
+		summary += " - " + localizedListEvidenceText(action.Description)
 	}
 	return summary
 }
@@ -1721,7 +2120,7 @@ func listDetailRows(report listReport) []detailBrowserRow {
 	for _, item := range displayListItems(report.Items, report.Sections) {
 		rows = append(rows, itemDetailRow(item, report.Evidence))
 	}
-	for _, section := range report.Sections {
+	for _, section := range enrichToolSectionsWithEvidence(report.Sections, report.Evidence) {
 		for _, row := range limitedToolRows(section.Rows, report.Limit) {
 			rows = append(rows, toolDetailRow(section, row))
 		}
@@ -1794,6 +2193,86 @@ func detailActionsFromReviewActions(actions []reviewui.Action) []detailBrowserAc
 	return out
 }
 
+func updateEvidenceActionBadge(values []string) (string, string) {
+	for _, value := range values {
+		if badge, status, ok := updateEvidenceActionBadgeForValue(value); ok {
+			return badge, status
+		}
+	}
+	return "upd", ""
+}
+
+func updateEvidenceActionBadgeForValue(value string) (string, string, bool) {
+	value = strings.TrimSpace(value)
+	lower := strings.ToLower(value)
+	switch {
+	case strings.Contains(lower, " updated:"):
+		if delta := updateEvidenceVersionDelta(value); delta != "" {
+			return "up " + delta, "updated", true
+		}
+		return "up", "updated", true
+	case strings.Contains(lower, " held:"), strings.Contains(lower, " deferred:"), strings.Contains(lower, " skipped:"):
+		return "hold", "held", true
+	default:
+		return "", "", false
+	}
+}
+
+func securityEvidenceActionBadge(values []string) (string, string) {
+	for _, value := range values {
+		lower := strings.ToLower(strings.TrimSpace(value))
+		if strings.Contains(lower, ": hold") || strings.Contains(lower, ": held") || strings.Contains(lower, " decision: hold") || strings.Contains(lower, " decision: held") {
+			return "hold", "held"
+		}
+	}
+	return "sec", ""
+}
+
+func updateEvidenceVersionDelta(value string) string {
+	_, detail, ok := strings.Cut(value, ":")
+	if !ok {
+		return ""
+	}
+	left, right, ok := strings.Cut(detail, "->")
+	if !ok {
+		return ""
+	}
+	from := updateEvidenceLastField(left)
+	to := updateEvidenceFirstField(right)
+	if from == "" || to == "" {
+		return ""
+	}
+	if strings.EqualFold(from, to) || updateEvidenceVersionSymbolic(from) || updateEvidenceVersionSymbolic(to) {
+		return ""
+	}
+	return from + "→" + to
+}
+
+func updateEvidenceVersionSymbolic(value string) bool {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "latest", "nightly", "head", "main", "master", "trunk", "stable", "edge", "snapshot", "dev", "canary":
+		return true
+	default:
+		return false
+	}
+}
+
+func updateEvidenceFirstField(value string) string {
+	fields := strings.Fields(strings.TrimSpace(value))
+	if len(fields) == 0 {
+		return ""
+	}
+	return strings.Trim(fields[0], `"'(),;`)
+}
+
+func updateEvidenceLastField(value string) string {
+	fields := strings.Fields(strings.TrimSpace(value))
+	if len(fields) == 0 {
+		return ""
+	}
+	return strings.Trim(fields[len(fields)-1], `"'(),;`)
+}
+
 func actionRouteEvidence(actions []detailBrowserAction) []string {
 	if len(actions) == 0 {
 		return nil
@@ -1802,9 +2281,9 @@ func actionRouteEvidence(actions []detailBrowserAction) []string {
 	for _, action := range actions {
 		detail := strings.TrimSpace(action.Label)
 		if strings.TrimSpace(action.Description) != "" {
-			detail += " - " + strings.TrimSpace(action.Description)
+			detail += " - " + localizedListEvidenceText(action.Description)
 		}
-		lines = append(lines, "next action: "+detail)
+		lines = append(lines, tr("next action: ", "次の操作: ")+detail)
 	}
 	return lines
 }
@@ -1988,6 +2467,7 @@ func styleInventoryItemDetail(value string, status plan.Status, color bool) stri
 	if value == "" {
 		return value
 	}
+	value = localizedBuiltInNoteText(value)
 	switch status {
 	case plan.StatusOK:
 		return textui.StyleLabel(value, color)
@@ -2025,6 +2505,23 @@ func enrichItems(items []plan.Item, cache legacyCache, manualIndex map[string]to
 			if reason := syncReasonForItemWithManual(enriched, related, manualIndex); reason != "" {
 				guidance := syncGuidanceForItem(reason, enriched, related)
 				enriched.Detail = listDriftGuidanceDetail(guidance)
+			}
+		}
+		out = append(out, enriched)
+	}
+	return out
+}
+
+func enrichHomebrewTapCaskItems(items []plan.Item, tapIndex map[string]toolRow) []plan.Item {
+	if len(tapIndex) == 0 {
+		return items
+	}
+	out := make([]plan.Item, 0, len(items))
+	for _, item := range items {
+		enriched := item
+		if strings.EqualFold(item.Provider, "brew") && strings.EqualFold(item.Kind, "cask") {
+			if row, ok := manualAppMatch(tapIndex, item.Name); ok {
+				enriched.Detail = joinManualDetails(enriched.Detail, row.Detail)
 			}
 		}
 		out = append(out, enriched)
