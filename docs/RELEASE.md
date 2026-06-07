@@ -22,10 +22,11 @@ includes the `v0.5.6` Japanese description-translation UX: Japanese TTY `updev`
 CLI, `[ui].description_translation` can choose `auto`, `manual`, or `off`, and
 dependency diagnostics report the optional Codex backend.
 
-The `v0.5.x` UX/action gate is still tracked in [UX.md](UX.md). Do not treat it
-as fully closed until the action-review checklist there is green in real TTY
-dogfood. Keep regression commands in local test plans, not as a permanent
-release log here.
+The `v0.5.7` UX/action gate is tracked in [UX.md](UX.md) and has passed the
+real-terminal acceptance pass. The `v0.5.8` performance checklist is the next
+polish track, not a blocker for judging whether the routed-action baseline
+itself is implemented. Keep regression commands in local test plans, not as a
+permanent release log here.
 
 ### v0.5.x Scope
 
@@ -76,6 +77,11 @@ release log here.
     the optional Codex CLI, `[ui].description_translation` can switch between
     `auto`, `manual`, and `off`, missing Codex remains non-fatal, and
     `updev doctor dependencies` reports the optional backend.
+15. **Default strict update gate**: `updev` runs with strict security by
+    default. Homebrew and mise update candidates pass through the updev-owned
+    gate vocabulary; current mise candidates default to review and strict mode
+    holds `mise upgrade` until an explicit temporary policy allow is written.
+
 ### v0.5.x Non-Goals
 
 - automatic installation of paid, privileged, vendor-account, or
@@ -102,7 +108,18 @@ release log here.
 ## Current Patch: v0.5.7 Dogfood Polish
 
 `updev v0.5.7` is the active dogfood polish line. The detailed UX contract and
-remaining tracking checklist live in [UX.md](UX.md).
+tracking checklist live in [UX.md](UX.md). The routed TUI baseline is accepted
+for the common human paths: dashboard, installed inventory, manual review,
+backend convergence, cached update/security detail, filters, query input, and
+safe write confirmations stay inside the same TTY review flow. Manual
+review/backend review preparation is rendered as loading rows and refreshed
+asynchronously when the evidence is ready.
+
+The current baseline is not a fully streaming update runner. Provider updates,
+security scanning, post-update inventory, and description translation still
+produce the report before the dashboard is opened; they show startup/progress
+feedback and provider log streaming where available, but they are not yet
+block-by-block dashboard updates.
 
 ### v0.5.7 Target Checklist
 
@@ -157,19 +174,19 @@ remaining tracking checklist live in [UX.md](UX.md).
   TTY copy must label these rows as candidates. `cargo:` rows with missing or
   non-matching release assets must explain that the local cargo build should be
   kept until compatible binary release evidence exists.
-- [ ] **Hands-on TTY acceptance pass**: run the actual `updev` and `updev list`
+- [x] **Hands-on TTY acceptance pass**: run the actual `updev` and `updev list`
   interactive flows in a real terminal, not only renderer tests or non-TTY
   output, and verify the three dogfood UX promises end to end: focused-row action
   hints are visible before expansion, manual app rows can execute their safe
   actions from details, and backend/security detail actions can be selected,
   confirmed, and either applied or clearly rejected as review-only. When the
   live report has no actionable security finding, use a fixture-backed cached
-  report via `updev last --section security` for the security
-  action confirmation smoke.
+  report via `updev last --section security` for the security action
+  confirmation smoke.
 
-The only remaining `v0.5.7` release gate is the real-terminal hands-on pass.
-Automated renderer tests and PTY smoke are useful regression checks, but they do
-not close this gate by themselves.
+The `v0.5.7` routed-action release gate is closed. Automated renderer tests and
+PTY smoke remain useful regression checks, but real-terminal acceptance is the
+source of truth for the final UX read.
 
 ### v0.5.7 Non-Goals
 
@@ -177,21 +194,62 @@ not close this gate by themselves.
 - automatic vendor installer execution;
 - silent Brewfile removal after backend migration;
 - changing JSON reports to execute actions implicitly;
-- replacing the `v0.6.0` mise update gate scope.
+- full release-age and advisory evidence for every mise backend source.
+
+## Next Patch: v0.5.8 TUI Performance/Streaming Polish
+
+`updev v0.5.8` should finish the performance work that is intentionally outside
+the `v0.5.7` routed-navigation baseline. It is the bridge between the current
+human UX and the `v0.6.0` provider-gate work.
+
+### v0.5.8 Target Scope
+
+1. **Streaming dashboard shell**: open the TTY dashboard shell before every
+   provider block is complete, then fill update, security, inventory,
+   translation, manual review, and backend convergence blocks as they finish.
+2. **Domain-scoped progress blocks**: show one stable progress/loading row per
+   domain with status, elapsed time, and last useful provider message; avoid
+   body layout jumps while the block changes state.
+3. **Provider result messages**: convert provider update, safety, inventory,
+   translation, manual plan, and backend plan work into router messages so the
+   TUI can refresh incrementally instead of restarting a subprogram.
+4. **Streaming logs without noisy outcomes**: keep provider stdout/stderr
+   available in expanded detail rows while continuing to suppress generic
+   provider progress lines from updated/deferred outcome summaries.
+5. **Cancellation and exit semantics**: define what `q`, Back, and Ctrl+C do
+   while background provider work is still running, including report cache
+   behavior for partial results.
+6. **Performance budget**: keep the local `test-e2e-fast` path as the default
+   TTY regression loop and add timing assertions or reported timings only where
+   they are stable across machines.
+7. **Fallback compatibility**: keep non-TTY, `--plain`, and JSON output
+   deterministic; streaming is a TTY behavior and must not change JSON schema
+   semantics.
+
+### v0.5.8 Non-Goals
+
+- changing provider policy decisions or gate vocabulary;
+- adding new Linux/Windows providers;
+- changing the `v0.6.0` mise gate contract;
+- making partial reports look equivalent to completed reports in JSON output.
 
 ## Next Minor: v0.6.0
 
-`updev v0.6.0` should add the first updev-owned mise update gate and establish
-the provider-wide gate model. Homebrew already has an updev-owned release-age
-gate; v0.6.0 should bring mise into the same decision vocabulary, then make that
-model the direction for VS Code and future providers. Linux scanner groundwork
-can proceed after this safety model is explicit.
+`updev v0.6.0` should start after the `v0.5.7` routed UX baseline is accepted
+and the `v0.5.8` performance/streaming bridge is either complete or explicitly
+deferred. It should finish the provider-wide gate model that `v0.5.7` started:
+Homebrew already has release-age evidence, and mise now has an updev-owned
+strict hold path for review candidates. v0.6.0 should add backend-specific
+release-age/advisory evidence for mise, then make that model the direction for
+VS Code and future providers. Linux scanner groundwork can proceed after this
+safety model is explicit.
 
 ### v0.6.0 Target Scope
 
-1. **updev-owned mise release-age gate**: evaluate GitHub and registry-backed
-   mise candidates with updev config/env thresholds, cache keys, text/JSON
-   evidence, and `allow|hold|review|block` decisions aligned with Homebrew.
+1. **Complete mise release-age gate**: evaluate GitHub and registry-backed mise
+   candidates with updev config/env thresholds, cache keys, text/JSON evidence,
+   and `allow|hold|review|block` decisions aligned with Homebrew. Keep opaque
+   or unsupported candidates review-held instead of guessing release age.
 2. **Provider-native policy evidence**: report mise `minimum_release_age` as
    evidence, but keep updev-owned gate decisions independent and explainable.
 3. **Provider-wide gate contract**: document the common fields every provider
@@ -230,17 +288,19 @@ can proceed after this safety model is explicit.
 
 Longer-term priorities live in [ROADMAP.md](ROADMAP.md). The short version:
 
-1. Continue provider-general inventory after `v0.6.0` with deeper
+1. Finish or explicitly defer the `v0.5.8` TTY performance/streaming bridge
+   before starting provider-gate work that depends on the same review surface.
+2. Continue provider-general inventory after `v0.6.0` with deeper
    Linux/Windows scanners.
-2. Broaden Homebrew and mise release-age/advisory confidence beyond GitHub and
+3. Broaden Homebrew and mise release-age/advisory confidence beyond GitHub and
    first registry paths.
-3. Apply the common updev-owned gate model to VS Code and future providers.
-4. Broaden Homebrew release-age and advisory confidence beyond GitHub
+4. Apply the common updev-owned gate model to VS Code and future providers.
+5. Broaden Homebrew release-age and advisory confidence beyond GitHub
    release/tag/ref URL paths.
-5. Add provider-native audit paths where package identity is reliable.
-6. Continue scanner hardening after OSV-Scanner, gitleaks, zizmor, Trivy, and
+6. Add provider-native audit paths where package identity is reliable.
+7. Continue scanner hardening after OSV-Scanner, gitleaks, zizmor, Trivy, and
    Grype.
-7. Prepare for public `updev v1.0.0` only after the stable macOS/Homebrew/mise
+8. Prepare for public `updev v1.0.0` only after the stable macOS/Homebrew/mise
    scope is deliberately narrowed and documented.
 
 ## Public Preview Maintenance

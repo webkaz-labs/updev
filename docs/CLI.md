@@ -196,18 +196,23 @@ logs belong in JSON/report logs and `updev last --section logs`. Homebrew
 auto-update progress is treated as provider log noise; actual Homebrew updates,
 such as updated taps, are still listed as update outcomes.
 
-`warn` mode may proceed while showing safety gaps. `strict` mode holds mutation
-when required evidence is missing, stale, low-confidence, or policy-blocked.
-`off` skips mutation gates and must be visible in the report.
+`strict` is the default mode and holds mutation when required evidence is
+missing, stale, low-confidence, or policy-blocked. `warn` mode may proceed
+while showing safety gaps. `off` skips mutation gates and must be visible in the
+report. The default update gate covers Homebrew candidates and mise candidates
+from `mise outdated --json --cd <root>`; Brewfile-managed VS Code extension
+updates remain opt-in.
 
 ## List And Inventory Flow
 
 `updev list` is read-only. The TTY default opens the full grouped installed
 inventory browser first because listing inventory is the command's primary job.
-From that browser, Back/Home returns to the full selector menu, where manual
-apps, backend convergence, cached update/security evidence, compact output, and
-filter views are one selection away. `updev hub` opens that full selector menu
-directly for users who prefer the old all-menu list of views and filters.
+From that browser, `Tab` / `Shift+Tab` switches directly between installed
+inventory and manual apps while preserving each view's cursor, filter, and
+expanded rows. Back/Home returns to the full selector menu, where backend
+convergence, cached update/security evidence, compact output, and filter views
+are one selection away. `updev hub` opens that full selector menu directly for
+users who prefer the old all-menu list of views and filters.
 
 Focused flags keep the non-TTY and agent contract deterministic:
 
@@ -235,7 +240,9 @@ entry; otherwise the default-root manual view may use a short Homebrew cask
 ownership probe (`brew list --cask -1`). Homebrew cask-owned rows are hidden
 from the default manual view to keep review focused on unmanaged apps; use
 `--status brew` or `--query <text>` to inspect that cask ownership evidence
-explicitly.
+explicitly. Apps documented as Homebrew Tap auto-distributed casks, such as
+Intel Mac compatibility builds, are treated as Homebrew evidence and normal
+`brew/cask` inventory rows, not as manual desired state.
 Manual live-only app rows also emit JSON `review_candidates` with stable
 `reason_code`, `remediation_code`, `confidence`, evidence, params, and
 suggested override fields.
@@ -368,3 +375,22 @@ loading, and mutation validation. `[ui].progress = false`,
 `UPDEV_PROGRESS=0`, non-TTY output, and JSON output disable progress UI.
 Update safety probes use bounded provider calls; Homebrew outdated evidence is
 short-TTL cached so repeated reviews do not look frozen when Homebrew is slow.
+
+List table review badges use compact labels such as `▶up 1.7→1.8.1`,
+`▶hold`, `▶bak`, `▶sec`, `▶man`, and `▶flt`. Updated rows show the compact
+version delta when last-update evidence includes a real version change; symbolic
+versions such as `latest`, `nightly`, or `HEAD` collapse to `▶up`.
+Held/deferred update evidence and security findings that actually stop a
+strict-mode provider update use `hold` instead of the generic update/security
+badge. The detail keeps the original decision, for example
+`held (decision: review)`, when a review/unknown finding is what stopped the
+provider update. These badges come from the latest saved update report, not
+from older safety-cache entries; rerun `updev --dry-run --security strict` to
+refresh the current hold view.
+Multiple row actions
+are shown together in priority order, for example `▶sec ▶hold ▶bak`, so
+update/security evidence is not hidden behind backend review hints. When common
+terminal config files mention a Nerd Font, updev replaces the `▶` marker with
+larger per-action emoji markers, such as `✅up 1.7→1.8.1`, `⏸hold`, `🔒sec`,
+`📦bak`, `📝man`, and `🔎flt`. Set `UPDEV_NERD_FONT=1` or `NERD_FONT=1` to force
+those markers, or `UPDEV_NERD_FONT=0` to force the plain `▶` marker.

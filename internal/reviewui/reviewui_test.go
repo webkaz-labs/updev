@@ -2,6 +2,8 @@ package reviewui
 
 import (
 	"bytes"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -74,6 +76,16 @@ func TestExpandedLinesUseLabelsAndFallback(t *testing.T) {
 	}
 }
 
+func TestExpandedLinesDoNotSplitURLsAsKeyValue(t *testing.T) {
+	lines := strings.Join(ExpandedLines(Row{Detail: "go言語（組み込みプラグイン）。https://mise.jdx.dev/lang/go.html"}, Labels{Detail: "詳細"}), "\n")
+	if strings.Contains(lines, "https: //") {
+		t.Fatalf("did not expect URL scheme to be split as key-value:\n%s", lines)
+	}
+	if !strings.Contains(lines, "詳細: go言語（組み込みプラグイン）。https://mise.jdx.dev/lang/go.html") {
+		t.Fatalf("expected URL to stay in the detail text:\n%s", lines)
+	}
+}
+
 func TestExpandedLinesExposeRowActions(t *testing.T) {
 	lines := ExpandedLines(Row{
 		Name:   "jq",
@@ -131,6 +143,145 @@ func TestTableBrowserActionKeysReturnFocusedRowAction(t *testing.T) {
 	}
 }
 
+func TestTableBrowserViewToggleKeysReturnBrowserActions(t *testing.T) {
+	model := NewTableBrowserModel("inventory", []Section{{
+		Name:  "brew/brew",
+		Title: "brew / brew",
+		Rows:  []Row{{Name: "ripgrep", State: "ok"}},
+	}}, State{}, TableBrowserLabels{}, BrowserActions{Next: "manual", Previous: "installed"}, false)
+	updated, _ := model.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyTab}))
+	model = updated.(TableBrowserModel)
+	if model.State.Action != "manual" {
+		t.Fatalf("expected Tab to select next browser action, got %#v", model.State)
+	}
+
+	model = NewTableBrowserModel("inventory", []Section{{
+		Name:  "manual/cask",
+		Title: "manual / cask",
+		Rows:  []Row{{Name: "Demo", State: "needs-review"}},
+	}}, State{}, TableBrowserLabels{}, BrowserActions{Next: "manual", Previous: "installed"}, false)
+	updated, _ = model.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyTab, Mod: tea.ModShift}))
+	model = updated.(TableBrowserModel)
+	if model.State.Action != "installed" {
+		t.Fatalf("expected Shift+Tab to select previous browser action, got %#v", model.State)
+	}
+}
+
+func TestStyledRowShowsCompactActionBadge(t *testing.T) {
+	t.Setenv("UPDEV_NERD_FONT", "0")
+	row := StyledRow(Row{
+		Name:   "git",
+		State:  "ok",
+		Detail: "macOS/system git",
+		Actions: []Action{{
+			Value: "backend",
+			Label: "backend 整理を開く",
+		}, {
+			Value: "updates",
+			Label: "update evidence を開く",
+		}},
+	}, false, false)
+	if len(row) != 5 {
+		t.Fatalf("expected five table columns, got %#v", row)
+	}
+	if row[3] != "▶upd ▶bak" {
+		t.Fatalf("expected compact action badge in action column, got %#v", row)
+	}
+	if strings.Contains(row[4], "▶upd ▶bak") {
+		t.Fatalf("did not expect action badge to be mixed into detail column, got %#v", row)
+	}
+}
+
+func TestStyledRowShowsIconActionBadgeWhenNerdFontEnabled(t *testing.T) {
+	t.Setenv("UPDEV_NERD_FONT", "1")
+	row := StyledRow(Row{
+		Name:  "git",
+		State: "ok",
+		Actions: []Action{{
+			Value: "backend",
+			Label: "backend 整理を開く",
+		}, {
+			Value: "security",
+			Label: "security review を開く",
+		}},
+	}, false, false)
+	if len(row) != 5 {
+		t.Fatalf("expected five table columns, got %#v", row)
+	}
+	if row[3] != "🔒sec 📦bak" {
+		t.Fatalf("expected icon action badge in action column, got %#v", row)
+	}
+}
+
+func TestStyledRowPrioritizesSecurityAndUpdateBadges(t *testing.T) {
+	t.Setenv("UPDEV_NERD_FONT", "0")
+	row := StyledRow(Row{
+		Name:  "ripgrep",
+		State: "held",
+		Actions: []Action{{
+			Value: "backend",
+			Label: "backend 整理を開く",
+		}, {
+			Value: "updates",
+			Label: "update evidence を開く",
+		}, {
+			Value: "security",
+			Label: "security review を開く",
+		}},
+	}, false, false)
+	if len(row) != 5 {
+		t.Fatalf("expected five table columns, got %#v", row)
+	}
+	if row[3] != "▶sec ▶upd ▶bak" {
+		t.Fatalf("expected security and update badges to stay visible, got %#v", row)
+	}
+}
+
+func TestStyledRowAutoDetectsNerdFontFromTerminalConfig(t *testing.T) {
+	t.Setenv("UPDEV_NERD_FONT", "auto")
+	t.Setenv("TERM", "xterm-ghostty")
+	configHome := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", configHome)
+	ghosttyDir := filepath.Join(configHome, "ghostty")
+	if err := os.MkdirAll(ghosttyDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(ghosttyDir, "config"), []byte("font-family = HackGen Console NF\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	row := StyledRow(Row{
+		Name:  "git",
+		State: "ok",
+		Actions: []Action{{
+			Value: "backend",
+			Label: "backend 整理を開く",
+		}},
+	}, false, false)
+	if len(row) != 5 {
+		t.Fatalf("expected five table columns, got %#v", row)
+	}
+	if row[3] != "📦bak" {
+		t.Fatalf("expected auto-detected icon action badge, got %#v", row)
+	}
+}
+
+func TestStyledRowOmitsLocalizedDescriptionPrefixFromTableDetail(t *testing.T) {
+	row := StyledRow(Row{
+		Name:   "btop",
+		State:  "ok",
+		Detail: "説明: リソースモニター。C++版で、bashtopとbpytopの後継です",
+	}, false, false)
+	if len(row) != 5 {
+		t.Fatalf("expected five table columns, got %#v", row)
+	}
+	if strings.Contains(row[4], "説明:") {
+		t.Fatalf("did not expect localized description prefix in detail column, got %#v", row)
+	}
+	if !strings.Contains(row[4], "リソースモニター") {
+		t.Fatalf("expected detail text to remain, got %#v", row)
+	}
+}
+
 func TestTableBrowserShowsFocusedActionHint(t *testing.T) {
 	model := NewTableBrowserModel("inventory", []Section{{
 		Name:  "brew/brew",
@@ -150,6 +301,39 @@ func TestTableBrowserShowsFocusedActionHint(t *testing.T) {
 	}
 }
 
+func TestTableBrowserReservesFocusedActionHintLine(t *testing.T) {
+	model := NewTableBrowserModel("inventory", []Section{{
+		Name:  "brew/brew",
+		Title: "brew / brew",
+		Rows: []Row{{
+			Name:  "ripgrep",
+			State: "ok",
+			Actions: []Action{{
+				Value: "backend",
+				Label: "open backend review",
+			}},
+		}, {
+			Name:  "jq",
+			State: "ok",
+		}},
+	}}, State{}, TableBrowserLabels{}, BrowserActions{}, false)
+	firstView := model.View().Content
+	model.Move(1)
+	secondView := model.View().Content
+	if !strings.Contains(firstView, "focused actions: a/1=open backend review") {
+		t.Fatalf("expected first focused row to show action hint:\n%s", firstView)
+	}
+	if strings.Contains(secondView, "focused actions:") {
+		t.Fatalf("expected second focused row to have no action hint:\n%s", secondView)
+	}
+	if firstIndex, secondIndex := lineIndex(firstView, "brew / brew"), lineIndex(secondView, "brew / brew"); firstIndex != secondIndex {
+		t.Fatalf("expected section header line to stay stable, got first=%d second=%d\nfirst:\n%s\nsecond:\n%s", firstIndex, secondIndex, firstView, secondView)
+	}
+	if firstLines, secondLines := strings.Count(firstView, "\n"), strings.Count(secondView, "\n"); firstLines != secondLines {
+		t.Fatalf("expected view line count to stay stable, got first=%d second=%d\nfirst:\n%s\nsecond:\n%s", firstLines, secondLines, firstView, secondView)
+	}
+}
+
 func TestStyledRowOmitsURLFromTableDetail(t *testing.T) {
 	row := Row{
 		Name:    "bat",
@@ -158,15 +342,24 @@ func TestStyledRowOmitsURLFromTableDetail(t *testing.T) {
 		Detail:  "A cat clone. https://github.com/sharkdp/bat",
 	}
 	styled := StyledRow(row, false, false)
-	if len(styled) != 4 {
-		t.Fatalf("expected four table columns, got %#v", styled)
+	if len(styled) != 5 {
+		t.Fatalf("expected five table columns, got %#v", styled)
 	}
-	if strings.Contains(styled[3], "https://") {
+	if strings.Contains(styled[4], "https://") {
 		t.Fatalf("expected table detail to omit URL, got %#v", styled)
 	}
-	if !strings.Contains(styled[3], "A cat clone.") {
+	if !strings.Contains(styled[4], "A cat clone.") {
 		t.Fatalf("expected table detail to keep description, got %#v", styled)
 	}
+}
+
+func lineIndex(text string, needle string) int {
+	for index, line := range strings.Split(text, "\n") {
+		if strings.Contains(line, needle) {
+			return index
+		}
+	}
+	return -1
 }
 
 func TestExpandedLinesPreserveAndWrapURL(t *testing.T) {

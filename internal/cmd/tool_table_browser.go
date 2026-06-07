@@ -15,8 +15,16 @@ func runToolTableBrowserWithState(title string, sections []toolSection, state de
 	return reviewui.RunTableBrowserWithState(title, sections, state, tableBrowserLabels(), tableBrowserActions(), color)
 }
 
+func runToolTableBrowserWithStateAndActions(title string, sections []toolSection, state detailBrowserState, actions reviewui.BrowserActions, labels reviewui.TableBrowserLabels, color bool) (detailBrowserState, error) {
+	return reviewui.RunTableBrowserWithState(title, sections, state, labels, actions, color)
+}
+
 func newToolTableBrowserModel(title string, sections []toolSection, state detailBrowserState, color bool) toolTableBrowserModel {
 	return reviewui.NewTableBrowserModel(title, sections, state, tableBrowserLabels(), tableBrowserActions(), color)
+}
+
+func newToolTableBrowserModelWithActions(title string, sections []toolSection, state detailBrowserState, actions reviewui.BrowserActions, labels reviewui.TableBrowserLabels, color bool) toolTableBrowserModel {
+	return reviewui.NewTableBrowserModel(title, sections, state, labels, actions, color)
 }
 
 func filteredToolSections(sections []toolSection, rawQuery string) []toolSection {
@@ -63,6 +71,13 @@ func tableBrowserActions() reviewui.BrowserActions {
 	return reviewui.BrowserActions{Back: updevActionBack, Home: updevActionHome, Exit: updevActionExit}
 }
 
+func tableBrowserActionsWithViewToggle(next string, previous string) reviewui.BrowserActions {
+	actions := tableBrowserActions()
+	actions.Next = next
+	actions.Previous = previous
+	return actions
+}
+
 func tableBrowserLabels() reviewui.TableBrowserLabels {
 	return reviewui.TableBrowserLabels{
 		Labels: reviewLabels(),
@@ -84,4 +99,17 @@ func tableBrowserLabels() reviewui.TableBrowserLabels {
 			return fmt.Sprintf(tr("row %d/%d, offset %d", "%d/%d 行、offset %d"), selected, count, offset)
 		},
 	}
+}
+
+func tableBrowserLabelsWithViewToggle() reviewui.TableBrowserLabels {
+	labels := tableBrowserLabels()
+	labels.ControlsHelp = tr(
+		"Up/Down/j/k move, PgUp/PgDn scroll, Enter/Space expand, a/1-9 action, / filter, Tab switch view, m mouse, x clear, ? help, b/Backspace Back, q Exit",
+		"↑↓/j/k 移動、PgUp/PgDn スクロール、Enter/Space 展開、a/1-9 action、/ filter、Tab 表示切替、m mouse、x 解除、? help、b/Backspace 戻る、q 終了",
+	)
+	labels.HelpLines = append(labels.HelpLines, tr(
+		"Tab / Shift+Tab: switch between installed inventory and manual apps.",
+		"Tab / Shift+Tab: インストール済み一覧と手動管理アプリを切り替えます。",
+	))
+	return labels
 }

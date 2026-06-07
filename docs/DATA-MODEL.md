@@ -151,6 +151,11 @@ repeated `updev --dry-run` / `updev update` review paths responsive, while
 unavailable evidence is cached separately with an error status and shown as
 stale/unavailable evidence instead of silently freezing. Security metadata and
 scanner/API failures use longer TTLs only when the candidate set is unchanged.
+Homebrew safety probes avoid mutating tap state: if `homebrew/core` is already
+tapped, the probe can use `HOMEBREW_NO_INSTALL_FROM_API=1`; otherwise it leaves
+Homebrew's API path enabled. Cached provider-log failures such as auto-update or
+tap-clone output are discarded instead of being reused as stable unavailable
+evidence.
 
 ## Reports
 
