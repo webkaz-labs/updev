@@ -10,23 +10,23 @@ stays an integer schema contract. `v0.x` releases are public preview releases;
 
 ## Current Release
 
-The current implemented release is `updev v0.5.7`. `updev version`,
+The current implemented release is `updev v0.5.8`. `updev version`,
 `updev --version`, and `updev -v` report this command contract.
 
-`updev v0.5.7` is the current dogfood UX/action polish patch on the `v0.5.x`
-CLI scope. It keeps the macOS/Homebrew/mise update workflow stable while
-improving the interactive dashboard, installed inventory, manual review plan,
-backend convergence, security review, and cached-report re-entry. It also
-includes the `v0.5.6` Japanese description-translation UX: Japanese TTY `updev`
-/ `updev list` can refresh cached list descriptions through the optional Codex
-CLI, `[ui].description_translation` can choose `auto`, `manual`, or `off`, and
-dependency diagnostics report the optional Codex backend.
+`updev v0.5.8` is the current dogfood performance, portability, and cached-report
+polish patch on the `v0.5.x` CLI scope. It keeps the accepted `v0.5.7`
+dashboard/list/detail action model while reducing perceived TTY latency,
+preserving provider log visibility, keeping `last`/`list` cache paths
+deterministic, and making manual inventory defaults portable outside this
+dotfiles repository. It also includes the `v0.5.6` Japanese
+description-translation UX and the `v0.5.7` routed action baseline.
 
-The `v0.5.7` UX/action gate is tracked in [UX.md](UX.md) and has passed the
-real-terminal acceptance pass. The `v0.5.8` performance checklist is the next
-polish track, not a blocker for judging whether the routed-action baseline
-itself is implemented. Keep regression commands in local test plans, not as a
-permanent release log here.
+The `v0.5.8` performance and portability gate is tracked in [UX.md](UX.md).
+Provider command execution remains outside the alternate-screen TUI so brew/mise
+logs are visible. Post-provider review domains may refresh inside the dashboard
+only when canceled or partial results cannot be mistaken for completed cached
+reports. Keep regression commands in local test plans, not as a permanent
+release log here.
 
 ### v0.5.x Scope
 
@@ -105,23 +105,23 @@ permanent release log here.
   `git diff --check` pass. Repository-local integration smoke checks may add
   extra gates before mirroring a release.
 
-## Current Patch: v0.5.7 Dogfood Polish
+## Current Patch: v0.5.8 TUI Performance/Streaming Polish
 
-`updev v0.5.7` is the active dogfood polish line. The detailed UX contract and
-tracking checklist live in [UX.md](UX.md). The routed TUI baseline is accepted
-for the common human paths: dashboard, installed inventory, manual review,
-backend convergence, cached update/security detail, filters, query input, and
-safe write confirmations stay inside the same TTY review flow. Manual
-review/backend review preparation is rendered as loading rows and refreshed
-asynchronously when the evidence is ready.
+`updev v0.5.8` is the active dogfood polish line. The detailed UX contract and
+tracking checklist live in [UX.md](UX.md). The `v0.5.7` routed TUI baseline is
+accepted for the common human paths: dashboard, installed inventory, manual
+review, backend convergence, cached update/security detail, filters, query
+input, and safe write confirmations stay inside the same TTY review flow.
 
-The current baseline is not a fully streaming update runner. Provider updates,
-security scanning, post-update inventory, and description translation still
-produce the report before the dashboard is opened; they show startup/progress
-feedback and provider log streaming where available, but they are not yet
-block-by-block dashboard updates.
+The current patch is not a fully streaming update runner. Provider updates run
+before the dashboard opens so Homebrew/mise stdout and stderr remain visible in
+normal terminal output. After provider logs finish, the dashboard may refresh
+post-provider review domains such as manual inventory and backend convergence
+without restarting the selector. Scriptable output contracts stay deterministic:
+`--plain`, JSON, non-TTY fallback, and cached `last` output do not open the TUI
+or rewrite the wrong cached report.
 
-### v0.5.7 Target Checklist
+### v0.5.7 Routed UX Baseline
 
 - [x] **Action-rich detailed list**: detailed `updev list` / update views make
   updated, deferred, held, skipped, errored, and review-needed rows visually
@@ -188,56 +188,47 @@ The `v0.5.7` routed-action release gate is closed. Automated renderer tests and
 PTY smoke remain useful regression checks, but real-terminal acceptance is the
 source of truth for the final UX read.
 
-### v0.5.7 Non-Goals
+### v0.5.8 Target Checklist
+
+- [x] **Fast local TTY regression loop**: keep `mise run test-e2e-fast` as the
+  short route smoke and the full PTY route suite as the release gate.
+- [x] **Provider log visibility**: non-dry-run update output streams brew/mise
+  logs before the post-update dashboard opens; real provider logs are not hidden
+  behind an alternate-screen TUI.
+- [x] **Shared dashboard context**: post-update manual/backend review loading
+  uses dashboard messages so completed results refresh in place and TUI exit
+  cancels context-aware loaders.
+- [x] **Deterministic cached reports**: real updates keep `last-update.json`,
+  dry-runs keep `last-dry-run.json`, and `updev last --plain` / JSON read the
+  intended cache without recomputing or normalizing the wrong report.
+- [x] **Readable update evidence**: duplicate Homebrew progress/outcome rows are
+  suppressed, skipped trusted-tap warnings are itemized, and list badges reuse
+  cached update/security/backend evidence without blocking initial inventory
+  rendering.
+- [x] **Portable manual defaults**: repository-local `docs/apps.md` is no longer
+  an implicit public desired-state source. Structured manual sources and draft
+  agent enrichment keep generated metadata reviewable before it becomes desired
+  state.
+- [x] **Future streaming boundary**: security, inventory, and translation
+  domains can reuse post-provider dashboard refresh only after canceled partial
+  reports are visibly distinct from completed cached reports.
+
+### v0.5.8 Non-Goals
 
 - broad Linux/Windows provider implementation;
 - automatic vendor installer execution;
 - silent Brewfile removal after backend migration;
 - changing JSON reports to execute actions implicitly;
-- full release-age and advisory evidence for every mise backend source.
-
-## Next Patch: v0.5.8 TUI Performance/Streaming Polish
-
-`updev v0.5.8` should finish the performance work that is intentionally outside
-the `v0.5.7` routed-navigation baseline. It is the bridge between the current
-human UX and the `v0.6.0` provider-gate work.
-
-### v0.5.8 Target Scope
-
-1. **Streaming dashboard shell**: open the TTY dashboard shell before every
-   provider block is complete, then fill update, security, inventory,
-   translation, manual review, and backend convergence blocks as they finish.
-2. **Domain-scoped progress blocks**: show one stable progress/loading row per
-   domain with status, elapsed time, and last useful provider message; avoid
-   body layout jumps while the block changes state.
-3. **Provider result messages**: convert provider update, safety, inventory,
-   translation, manual plan, and backend plan work into router messages so the
-   TUI can refresh incrementally instead of restarting a subprogram.
-4. **Streaming logs without noisy outcomes**: keep provider stdout/stderr
-   available in expanded detail rows while continuing to suppress generic
-   provider progress lines from updated/deferred outcome summaries.
-5. **Cancellation and exit semantics**: define what `q`, Back, and Ctrl+C do
-   while background provider work is still running, including report cache
-   behavior for partial results.
-6. **Performance budget**: keep the local `test-e2e-fast` path as the default
-   TTY regression loop and add timing assertions or reported timings only where
-   they are stable across machines.
-7. **Fallback compatibility**: keep non-TTY, `--plain`, and JSON output
-   deterministic; streaming is a TTY behavior and must not change JSON schema
-   semantics.
-
-### v0.5.8 Non-Goals
-
 - changing provider policy decisions or gate vocabulary;
-- adding new Linux/Windows providers;
 - changing the `v0.6.0` mise gate contract;
+- owning provider command execution inside the alternate-screen TUI;
 - making partial reports look equivalent to completed reports in JSON output.
 
 ## Next Minor: v0.6.0
 
-`updev v0.6.0` should start after the `v0.5.7` routed UX baseline is accepted
-and the `v0.5.8` performance/streaming bridge is either complete or explicitly
-deferred. It should finish the provider-wide gate model that `v0.5.7` started:
+`updev v0.6.0` starts after the accepted `v0.5.7` routed UX baseline and the
+completed `v0.5.8` performance/portability bridge. It should finish the
+provider-wide gate model that `v0.5.7` started:
 Homebrew already has release-age evidence, and mise now has an updev-owned
 strict hold path for review candidates. v0.6.0 should add backend-specific
 release-age/advisory evidence for mise, then make that model the direction for
@@ -275,6 +266,12 @@ safety model is explicit.
    stable promise.
 10. **Evidence quality**: improve source URLs, ownership confidence, and
    provider-native metadata for manual/vendor decisions.
+11. **Provider-general structured inventory sources**: extend the TOML manual
+   source pattern to Linux/Windows app evidence and future JSON import/export
+   only after the macOS manual source flow has stabilized.
+12. **Provider-native enrichment sources**: add optional provider-native
+   metadata for manual/vendor decisions without changing the draft safety
+   boundary introduced in v0.5.8.
 
 ### v0.6.0 Non-Goals
 
@@ -288,19 +285,17 @@ safety model is explicit.
 
 Longer-term priorities live in [ROADMAP.md](ROADMAP.md). The short version:
 
-1. Finish or explicitly defer the `v0.5.8` TTY performance/streaming bridge
-   before starting provider-gate work that depends on the same review surface.
-2. Continue provider-general inventory after `v0.6.0` with deeper
+1. Continue provider-general inventory after `v0.6.0` with deeper
    Linux/Windows scanners.
-3. Broaden Homebrew and mise release-age/advisory confidence beyond GitHub and
+2. Broaden Homebrew and mise release-age/advisory confidence beyond GitHub and
    first registry paths.
-4. Apply the common updev-owned gate model to VS Code and future providers.
-5. Broaden Homebrew release-age and advisory confidence beyond GitHub
+3. Apply the common updev-owned gate model to VS Code and future providers.
+4. Broaden Homebrew release-age and advisory confidence beyond GitHub
    release/tag/ref URL paths.
-6. Add provider-native audit paths where package identity is reliable.
-7. Continue scanner hardening after OSV-Scanner, gitleaks, zizmor, Trivy, and
+5. Add provider-native audit paths where package identity is reliable.
+6. Continue scanner hardening after OSV-Scanner, gitleaks, zizmor, Trivy, and
    Grype.
-8. Prepare for public `updev v1.0.0` only after the stable macOS/Homebrew/mise
+7. Prepare for public `updev v1.0.0` only after the stable macOS/Homebrew/mise
    scope is deliberately narrowed and documented.
 
 ## Public Preview Maintenance

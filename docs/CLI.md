@@ -125,11 +125,26 @@ Global flags:
   and `--format json`; add global verbosity only when a concrete cross-command
   diagnostic need appears.
 - `updev version`, `updev --version`, and `updev -v` report the current
-  implemented release contract, currently `updev v0.5.7`. JSON output from
+  implemented release contract, currently `updev v0.5.8`. JSON output from
   `updev version --format json` includes SemVer parts and the stable/pre-stable
   contract label.
 - Read-only aliases are supported for common commands: `ls` for `list`,
   `st` for `status`, and `ck` for `check`.
+
+Portable defaults:
+
+- With no config, `updev` should use the current working directory as the source
+  root and inspect provider-native live/config evidence without assuming
+  `<dotfiles-checkout>`.
+- `UPDEV_ROOT`, `[sources].root`, or `CHEZMOI_SOURCE_DIR` can select a different
+  source root. `CHEZMOI_SOURCE_DIR` is kept as compatibility for dotfiles-hosted
+  workflows.
+- `[brewfile].desired` controls whether Homebrew desired state comes from
+  `auto`, `home`, `root`, `template`, or is `disabled`. Write behavior is
+  separate and remains controlled by `[brewfile].write_mode`.
+- Repository-local manual Markdown such as `docs/apps.md` is ignored unless
+  `[inventory.manual].markdown_compat = true` or an explicit Markdown source is
+  configured.
 
 Exit codes:
 
@@ -253,7 +268,12 @@ hub from the cached report, which is useful when reviewing security/manual/
 backend details again without running provider updates. Deterministic
 non-interactive sections are available with `updev last --plain --section
 summary|updates|security|inventory|logs|full`, `--no-interactive`, or
-`--format json`.
+`--format json`. Plain/no-interactive and JSON modes are cache-only: they do
+not run backend convergence, manual review, security, translation, or provider
+scans to add detail rows. Extra review evidence is loaded asynchronously only
+inside the TTY hub after the cached report is already visible. Dry-run update
+reports are cached separately as `last-dry-run.json`, so TUI dogfood does not
+erase the last real update evidence used by `updev last` and `updev list`.
 
 `updev inventory scan --provider manual` returns the normalized manual/vendor
 app evidence used by the manual inventory view without writing desired state.
@@ -292,6 +312,17 @@ configured override file, defaulting to
 `~/.config/updev/inventory-overrides.toml`; JSON output returns
 `schema_version`, `status`, `provider`, `overrides_path`, `candidates`, and
 `override_preview`.
+
+`updev inventory review --provider manual --action enrich --query <text>` runs
+the configured `[inventory.agent].command` for exactly one matching candidate.
+The command receives minimal candidate JSON on stdin and must return TOML
+`[[manual.apps]]` entries on stdout. updev parses the output, forces
+`review_status = "draft"`, records `source = "agent"`, checks that each draft
+matches the selected candidate, then appends it to the first configured TOML
+source in `[inventory.manual].sources`. `--action enrich-batch --query <filter>`
+uses the same contract for multiple filtered candidates only when
+`[inventory.agent].batch = true`; `--limit` caps the batch and updev also keeps
+a built-in maximum.
 
 `updev inventory review --provider manual --action accept --query <text>`
 appends the selected suggested override to the configured inventory overrides

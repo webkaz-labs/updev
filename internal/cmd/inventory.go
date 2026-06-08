@@ -56,7 +56,18 @@ func collectInventoryWithOptions(ctx context.Context, root string, local runner.
 }
 
 func shouldUseHomeBrewfile(root string) bool {
-	return filepath.Clean(root) == filepath.Clean(defaultRoot())
+	mode := "auto"
+	if configured := loadUpdevConfig().Brewfile.Desired; configured != nil {
+		mode = strings.ToLower(strings.TrimSpace(*configured))
+	}
+	switch mode {
+	case "home":
+		return true
+	case "root", "template", "disabled":
+		return false
+	default:
+		return filepath.Clean(root) == filepath.Clean(defaultRoot())
+	}
 }
 
 func shouldUseNativeMiseDesired(root string) bool {

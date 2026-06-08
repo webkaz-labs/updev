@@ -83,8 +83,8 @@ evidence inspection.
 
 ## Current Performance Model
 
-The current `v0.5.7` baseline optimizes post-report review, not the entire
-provider execution pipeline.
+The current `v0.5.8` baseline optimizes post-report review and post-provider
+review loading, not the entire provider execution pipeline.
 
 - `updev`, `updev last`, and `updev list` keep common review navigation inside
   one routed TUI once the first screen is open.
@@ -93,8 +93,9 @@ provider execution pipeline.
   those rows when evidence is ready.
 - Query input, value filters, item-scoped detail routing, and safe write
   confirmations are in-router views.
-- Real provider updates stream logs while the provider command runs, and those
-  logs remain available in expanded detail rows.
+- Real provider updates run outside the alternate-screen TUI and stream logs
+  while the provider command runs. Those logs remain available in expanded
+  detail rows.
 - Non-TTY, `--plain`, and JSON modes stay deterministic and do not use TTY
   streaming behavior.
 
@@ -103,15 +104,18 @@ security, inventory, or translation work is still running. Those blocks still
 produce the structured report first, with startup/progress feedback where
 available.
 
-## Next Performance Track
+## Future Performance Track
 
-The next performance target is `v0.5.8` and should be implemented before, or
-explicitly deferred before, starting `v0.6.0` provider-gate work.
+Future streaming work can build on the `v0.5.8` post-provider dashboard model
+only where partial/canceled reports cannot be confused with completed cached
+reports.
 
-- Open a stable TTY dashboard shell as soon as there is enough context to show
-  root/config/security mode and planned provider blocks.
-- Convert update, security, inventory, translation, manual review, and backend
-  convergence work into domain result messages that can refresh the same router.
+- Consider a stable TTY dashboard shell as soon as there is enough context to
+  show root/config/security mode and planned provider blocks, but do not hide
+  real provider stdout/stderr behind the TUI.
+- Convert security, inventory, translation, and other post-provider domains
+  into result messages that can refresh the same router only after their
+  cancellation and cache semantics are explicit.
 - Keep one stable progress row per domain with elapsed time, current state, and
   last useful provider message.
 - Preserve provider stdout/stderr for expanded evidence while keeping generic
@@ -147,6 +151,21 @@ Manual app review actions:
 - `review cask`
 - `review App Store`
 - `open vendor`
+- `generate draft metadata`
+- `accept/edit/ignore draft metadata`
+
+Manual app review should support a complete TTY path when structured inventory
+enrichment exists: open manual apps, choose an ambiguous row, generate or refresh
+draft metadata with the configured agent, inspect the proposed TOML fields,
+then accept, edit, or ignore the draft without losing the list context. Agent
+generation is a review action, not an automatic side effect of opening the
+manual list. Missing agent tooling must degrade to read-only evidence and a
+clear next command.
+
+The same flow should support bounded batch enrichment from the manual review
+queue. The TUI may send multiple selected or filtered rows to the agent in one
+run, then return a draft review list where accept/edit/ignore is still visible
+per row and Back returns to the originating manual app context.
 
 Backend convergence actions:
 
@@ -286,9 +305,24 @@ the real TTY, not only in renderer tests:
 - [x] `updev list` opens the installed inventory immediately and refreshes
   backend convergence evidence/actions asynchronously when that background
   block becomes ready.
+- [x] `updev list` surfaces review-evidence counts in text output and TUI list
+  titles (`upd`, `sec`, `bak`) so empty confirmation columns can be
+  distinguished from missing evidence wiring.
+- [x] `updev hub` does not precompute backend convergence counts before showing
+  the selector. It exposes a loading backend choice and lets the routed view
+  refresh asynchronously.
 - [x] Bare `updev` and `updev last --interactive` open the update dashboard
   before manual review and backend convergence plans finish, then refresh those
   review-action blocks asynchronously.
+- [x] `updev last --plain`, `--no-interactive`, and JSON cached-report sections
+  remain cache-only. They must not run manual review, backend convergence,
+  security, translation, or provider scans to enrich plain details; derived
+  evidence belongs in cached reports or in TTY async refresh after the first
+  screen is visible.
+- [x] Dry-run update reports do not replace the last real update report. This
+  preserves cached update/security evidence for `updev list` confirmation
+  badges while still keeping the dry-run report inspectable from its own cache
+  file.
 
 ## Release Boundary
 
@@ -300,13 +334,49 @@ same action-review model instead of creating a separate flow.
 
 ## v0.5.8 Performance Checklist
 
-- [ ] Continue reducing PTY route-suite runtime; fast PTY smoke is the default
+- [x] Continue reducing PTY route-suite runtime; fast PTY smoke is the default
   local TTY check, while the full route suite remains for release gates or
-  explicit dogfood.
-- [ ] Add the streaming dashboard shell so provider update, security,
-  inventory, and translation domains can refresh the already-open TUI instead
-  of waiting for a completed report.
-- [ ] Define and test cancellation/partial-result behavior for background TTY
-  domains.
-- [ ] Keep non-TTY, `--plain`, and JSON output deterministic while adding TTY
-  streaming behavior.
+  explicit dogfood. Local Go tasks set a tmp-based `GOCACHE` by default so
+  sandboxed runs do not fall back to a blocked user cache.
+- [x] Preserve provider command log visibility: non-dry-run text updates keep
+  brew/mise stdout and stderr streaming before the post-update dashboard opens.
+  TTY streaming work must not move real provider logs behind an invisible
+  alternate-screen view.
+- [x] Route post-update manual review and backend convergence loading through a
+  shared dashboard context. Exiting the TUI cancels outstanding background plan
+  work where the underlying provider supports context cancellation, and
+  canceled plan messages become held partial reports instead of completed data.
+- [x] Keep provider command execution outside the alternate-screen TUI. The
+  dashboard opens after brew/mise logs finish; post-provider review domains can
+  refresh there, but provider stdout/stderr is never hidden behind the TUI.
+- [x] Define the cancellation/partial-result boundary for future
+  post-provider security, inventory, and translation background TTY domains:
+  those domains may reuse the dashboard refresh model only after they can
+  distinguish canceled partial reports from completed cached reports. Until
+  then, provider execution remains outside the alternate-screen TUI and cached
+  reports stay deterministic for `last`, `--plain`, and JSON output.
+- [x] Keep non-TTY, `--plain`, and JSON output mode contracts deterministic
+  while adding post-update TTY streaming behavior. JSON output and `--plain`
+  never open the update hub, while non-dry-run text still streams provider logs.
+
+## Manual Inventory Portability Track
+
+- [x] Stop treating repository-local `docs/apps.md` as an implicit public
+  desired-state source. Keep Markdown input only behind explicit configuration
+  or repository-local compatibility.
+- [x] Add structured manual inventory sources such as
+  `[inventory.manual].sources = ["~/.config/updev/manual-apps.toml"]`.
+- [x] Add a draft status model so agent-generated app metadata can be displayed
+  and reviewed without becoming desired state.
+- [x] Add CLI agent enrichment actions that can generate single-row or bounded
+  batch draft TOML from filtered manual review candidates.
+- [x] Add TUI actions from the manual app list/detail flow for generating,
+  viewing, accepting, editing, and ignoring draft metadata.
+- [x] Add bounded batch enrichment from filtered manual review rows while
+  keeping accept/edit/ignore decisions per generated draft.
+- [x] Preserve item-scoped routing and Back behavior when manual enrichment
+  opens agent draft review, structured source editing, or generated report
+  preview screens.
+- [x] Keep `updev inventory render --report manual-apps` as the Markdown output
+  path so README-style reports can be regenerated from structured sources and
+  live evidence.

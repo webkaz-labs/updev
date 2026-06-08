@@ -200,11 +200,12 @@ func runUpdate(opts updateOptions, commandRunner commandRunner) int {
 	safetyProgress.Start()
 	report.Safety = collectUpdateSafetyWithPolicy(ctx, commandRunner, opts, policyUse.Policy)
 	safetyProgress.Done()
+	streamProviderLogs := shouldStreamUpdateProviderLogs(opts)
 	for _, step := range updateSteps() {
-		if opts.format == "text" && !opts.dryRun {
+		if streamProviderLogs {
 			fmt.Printf(tr("running %s update...\n", "%s update を実行中...\n"), step.Name)
 		}
-		result := runUpdateStepWithOutput(ctx, commandRunner, step, opts.dryRun, providerHeldBySafety(step.Name, opts, report.Safety), opts.format == "text" && !opts.dryRun)
+		result := runUpdateStepWithOutput(ctx, commandRunner, step, opts.dryRun, providerHeldBySafety(step.Name, opts, report.Safety), streamProviderLogs)
 		if result.Status == plan.StatusError {
 			report.Status = plan.StatusError
 		} else if result.Status == plan.StatusHeld && report.Status != plan.StatusError {
@@ -315,6 +316,10 @@ func runUpdateStepWithOutput(ctx context.Context, commandRunner commandRunner, s
 	return runUpdateStepWithWriters(ctx, commandRunner, step, dryRun, holdReason, nil, nil)
 }
 
+func shouldStreamUpdateProviderLogs(opts updateOptions) bool {
+	return opts.format == "text" && !opts.dryRun
+}
+
 func runUpdateStepWithWriters(ctx context.Context, commandRunner commandRunner, step updateStep, dryRun bool, holdReason string, stdout io.Writer, stderr io.Writer) updateStep {
 	if holdReason != "" {
 		step.Status = plan.StatusHeld
@@ -363,11 +368,11 @@ func summarizeUpdateStepLog(step updateStep) ([]string, []string) {
 			if updateLogLineIsGenericSkipped(line) {
 				continue
 			}
-			skipped = appendCappedUniqueSummary(skipped, line)
+			skipped = appendCappedUniqueSummary(skipped, normalizeSkippedSummaryItem(line))
 			continue
 		}
 		if updateLogLineIsUpdated(line) {
-			updated = appendCappedUniqueSummary(updated, line)
+			updated = appendCappedUniqueUpdateSummary(updated, line)
 		}
 	}
 	return updated, skipped
@@ -444,6 +449,9 @@ func updateLogLineIsProgress(line string) bool {
 	if strings.HasPrefix(lower, "upgrading ") {
 		return true
 	}
+	if strings.HasPrefix(lower, "upgraded ") && strings.Contains(lower, " outdated package") {
+		return true
+	}
 	return false
 }
 
@@ -491,6 +499,77 @@ func appendCappedUniqueSummary(values []string, value string) []string {
 		}
 	}
 	return append(values, value)
+}
+
+func appendCappedUniqueUpdateSummary(values []string, value string) []string {
+	value = normalizeUpdateSummaryItem(value)
+	if value == "" || len(values) >= 12 {
+		return values
+	}
+	key := updateSummaryItemKey(value)
+	for index, existing := range values {
+		if existing == value || (key != "" && updateSummaryItemKey(existing) == key) {
+			if len(value) < len(existing) {
+				values[index] = value
+			}
+			return values
+		}
+	}
+	return append(values, value)
+}
+
+func normalizeUpdateSummaryItem(value string) string {
+	value = truncate(oneLine(value), 160)
+	if before, after, ok := strings.Cut(value, " -> "); ok {
+		after = strings.TrimSpace(after)
+		if left, _, ok := strings.Cut(after, " ("); ok {
+			after = strings.TrimSpace(left)
+		}
+		return strings.TrimSpace(before) + " -> " + after
+	}
+	return value
+}
+
+func normalizeSkippedSummaryItem(value string) string {
+	value = truncate(oneLine(value), 220)
+	if name, detail, ok := parseHomebrewSkippingWarning(value); ok {
+		return name + " skipped: " + detail
+	}
+	return value
+}
+
+func parseHomebrewSkippingWarning(value string) (string, string, bool) {
+	trimmed := strings.TrimSpace(value)
+	lower := strings.ToLower(trimmed)
+	for _, prefix := range []string{"warning: skipping ", "skipping "} {
+		if !strings.HasPrefix(lower, prefix) {
+			continue
+		}
+		rest := strings.TrimSpace(trimmed[len(prefix):])
+		if rest == "" {
+			return "", "", false
+		}
+		name := rest
+		detail := trimmed
+		if before, after, ok := strings.Cut(rest, " because "); ok {
+			name = strings.TrimSpace(before)
+			detail = "because " + strings.TrimSpace(after)
+		}
+		name = strings.Trim(name, "`\"'")
+		if name == "" {
+			return "", "", false
+		}
+		return name, detail, true
+	}
+	return "", "", false
+}
+
+func updateSummaryItemKey(value string) string {
+	name, detail := updateOutcomeUpdatedItemParts(value)
+	if name == "" || detail == "" {
+		return ""
+	}
+	return strings.ToLower(strings.TrimSpace(name))
 }
 
 func printUpdateText(report updateReport) {
@@ -630,7 +709,11 @@ func saveLastUpdateReport(report updateReport) string {
 	if err != nil {
 		return ""
 	}
-	lastPath := filepath.Join(dir, "last-update.json")
+	lastName := "last-update.json"
+	if report.DryRun {
+		lastName = "last-dry-run.json"
+	}
+	lastPath := filepath.Join(dir, lastName)
 	if err := os.WriteFile(lastPath, data, 0o600); err != nil {
 		return ""
 	}
@@ -656,6 +739,7 @@ func loadLastUpdateReport() (updateReportCacheEntry, bool) {
 	if entry.Version != 1 || entry.Type != "update" {
 		return updateReportCacheEntry{}, false
 	}
+	entry.Report = normalizeCachedUpdateReport(entry.Report)
 	entry.Report.Report = path
 	return entry, true
 }
@@ -939,9 +1023,41 @@ func lastReportFilterMap(opts lastReportOptions) map[string]string {
 }
 
 func filterUpdateReport(report updateReport, opts lastReportOptions) updateReport {
+	report.Steps = normalizeUpdateStepOutcomes(report.Steps)
 	report.Steps = filterUpdateSteps(report.Steps, opts)
 	report.Safety = filterSafetyGates(report.Safety, opts)
 	report.Inventory = filterPlanReport(report.Inventory, opts)
+	return report
+}
+
+func normalizeUpdateStepOutcomes(steps []updateStep) []updateStep {
+	out := make([]updateStep, 0, len(steps))
+	for _, step := range steps {
+		normalizedUpdated := []string{}
+		for _, item := range step.Updated {
+			item = normalizeUpdateSummaryItem(item)
+			if item == "" || updateLogLineIsProgress(item) {
+				continue
+			}
+			normalizedUpdated = appendCappedUniqueUpdateSummary(normalizedUpdated, item)
+		}
+		normalizedSkipped := []string{}
+		for _, item := range step.SkippedItems {
+			item = normalizeSkippedSummaryItem(item)
+			if item == "" || updateLogLineIsGenericSkipped(item) {
+				continue
+			}
+			normalizedSkipped = appendCappedUniqueSummary(normalizedSkipped, item)
+		}
+		step.Updated = normalizedUpdated
+		step.SkippedItems = normalizedSkipped
+		out = append(out, step)
+	}
+	return out
+}
+
+func normalizeCachedUpdateReport(report updateReport) updateReport {
+	report.Steps = normalizeUpdateStepOutcomes(report.Steps)
 	return report
 }
 
@@ -1080,7 +1196,7 @@ func filterPlanReport(report plan.Report, opts lastReportOptions) plan.Report {
 }
 
 func filterPlanProviders(providers []plan.ProviderSummary, opts lastReportOptions) []plan.ProviderSummary {
-	if opts.provider == "" && opts.status == "" && opts.query == "" {
+	if opts.provider == "" && opts.status == "" {
 		return providers
 	}
 	out := make([]plan.ProviderSummary, 0, len(providers))
@@ -1089,9 +1205,6 @@ func filterPlanProviders(providers []plan.ProviderSummary, opts lastReportOption
 			continue
 		}
 		if opts.status != "" && !statusMatches(plan.Status(providerStatus(provider)), opts.status) {
-			continue
-		}
-		if opts.query != "" && !strings.Contains(strings.ToLower(provider.Name+" "+provider.Error), strings.ToLower(opts.query)) {
 			continue
 		}
 		out = append(out, provider)
@@ -1192,11 +1305,12 @@ func updateOutcomeRows(report updateReport, limit int, color bool) [][]string {
 			}
 		}
 		for _, item := range step.SkippedItems {
+			name, detail := updateOutcomeSkippedItemParts(step, item)
 			rows = append(rows, []string{
 				textui.StyleStatus("skipped", color),
 				textui.StyleName(step.Name, color),
-				truncate(firstNonEmpty(step.Name, "step"), 38),
-				truncate(oneLine(item), 72),
+				truncate(name, 38),
+				truncate(oneLine(detail), 72),
 			})
 			if len(rows) >= limit {
 				return rows
@@ -1244,6 +1358,17 @@ func updateOutcomeRows(report updateReport, limit int, color bool) [][]string {
 		}
 	}
 	return rows
+}
+
+func updateOutcomeSkippedItemParts(step updateStep, item string) (string, string) {
+	item = oneLine(strings.TrimSpace(item))
+	if item == "" {
+		return firstNonEmpty(step.Name, "step"), ""
+	}
+	if name, detail, ok := strings.Cut(item, " skipped: "); ok && strings.TrimSpace(name) != "" {
+		return strings.TrimSpace(name), strings.TrimSpace(detail)
+	}
+	return firstNonEmpty(step.Name, "step"), item
 }
 
 func updateOutcomeUpdatedItemParts(item string) (string, string) {
@@ -1777,6 +1902,18 @@ func handleManualPlanDetailAction(root string, value string) bool {
 			return true
 		}
 		_ = applyConfirmedManualPlanDetailAction(root, action, target)
+	case "enrich", "enrich-batch":
+		if !confirmManualPlanWriteAction(action, target) {
+			return true
+		}
+		_ = applyConfirmedManualPlanDetailAction(root, action, target)
+	case "accept-draft", "edit-draft", "ignore-draft":
+		if !confirmManualPlanWriteAction(action, target) {
+			return true
+		}
+		if err := applyManualStructuredDraftAction(root, action, target); err != nil {
+			fmt.Fprintf(os.Stderr, "manual draft action failed: %v\n", err)
+		}
 	case "review-cask":
 		runManualPlanProviderReview("brew", "info", "--cask", target)
 	case "review-mas":
@@ -1791,7 +1928,7 @@ func handleManualPlanDetailAction(root string, value string) bool {
 
 func manualPlanDetailActionRequiresConfirmation(action string) bool {
 	switch action {
-	case "accept", "edit", "ignore":
+	case "accept", "edit", "ignore", "enrich", "enrich-batch", "accept-draft", "edit-draft", "ignore-draft":
 		return true
 	default:
 		return false
@@ -1809,8 +1946,11 @@ func applyConfirmedManualPlanDetailAction(root string, action string, target str
 		query:    target,
 		root:     root,
 	}
+	if action == "enrich-batch" && target == "*" {
+		opts.query = ""
+	}
 	report := buildInventoryReviewReport(opts)
-	if _, _, err := applyInventoryReviewAction(opts, report); err != nil {
+	if _, _, _, err := applyInventoryReviewAction(opts, report); err != nil {
 		fmt.Fprintf(os.Stderr, "manual review action failed: %v\n", err)
 	}
 	return true
@@ -3076,6 +3216,9 @@ func versionText(finding safetyFinding) string {
 
 func printLastInventorySection(w io.Writer, report updateReport, opts lastReportOptions, color bool) {
 	if opts.details {
+		// Plain/cached last-report output must stay a deterministic cache read.
+		// Do not run manual/backend/security scans here; TTY hubs refresh those
+		// domains asynchronously after the first screen is visible.
 		inventory := buildListReport(inventoryResult{Report: report.Inventory}, listOptionsFromLastReport(opts))
 		printListText(w, inventory, "inventory details", color)
 		return

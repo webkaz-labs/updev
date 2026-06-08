@@ -178,6 +178,13 @@ func buildMutationReport(ctx context.Context, opts mutationOptions) mutationRepo
 	}
 	report.Provider = target.Provider
 	report.Kind = target.Kind
+	if target.Provider == "brew" {
+		if err := ensureBrewfileWriteAllowed(opts.root); err != nil {
+			report.Status = plan.StatusHeld
+			report.Reason = err.Error()
+			return report
+		}
+	}
 	before := readManifestContents(manifestPaths(opts.root))
 	snap, err := snapshot.Create(opts.root, manifestPaths(opts.root))
 	if err != nil {
@@ -202,6 +209,21 @@ func buildMutationReport(ctx context.Context, opts mutationOptions) mutationRepo
 		report.Reason = "no manifest change was needed"
 	}
 	return report
+}
+
+func ensureBrewfileWriteAllowed(root string) error {
+	mode := brewfileWriteMode(root)
+	if mode == "disabled" {
+		return fmt.Errorf("Brewfile writes are disabled; set [brewfile].write_mode to direct, template, or chezmoi-template before mutating Homebrew desired state")
+	}
+	return nil
+}
+
+func brewfileWriteMode(root string) string {
+	if configured := loadUpdevConfig().Brewfile.WriteMode; configured != nil {
+		return strings.ToLower(strings.TrimSpace(*configured))
+	}
+	return "disabled"
 }
 
 func resolveMutationTarget(opts mutationOptions) (mutationTarget, []mutationTarget, error) {

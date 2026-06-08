@@ -3,23 +3,23 @@ go = "1.25.8"
 
 [tasks.test]
 description = "Run updev Go tests with cache and wall time"
-run = "/usr/bin/time -p go test ./..."
+run = "GOCACHE=${GOCACHE:-${TMPDIR:-/tmp}/updev-gocache} /usr/bin/time -p go test ./..."
 
 [tasks.test-fresh]
 description = "Run updev Go tests without cache and show wall time"
-run = "/usr/bin/time -p go test -count=1 ./..."
+run = "GOCACHE=${GOCACHE:-${TMPDIR:-/tmp}/updev-gocache} /usr/bin/time -p go test -count=1 ./..."
 
 [tasks.test-verbose]
 description = "Run updev Go tests verbosely without cache"
-run = "/usr/bin/time -p go test -count=1 -v ./..."
+run = "GOCACHE=${GOCACHE:-${TMPDIR:-/tmp}/updev-gocache} /usr/bin/time -p go test -count=1 -v ./..."
 
 [tasks.test-e2e]
 description = "Run the full updev built-binary PTY route suite for release/TTY UX gates"
-run = "GOCACHE=${GOCACHE:-/private/tmp/updev-gocache} /usr/bin/time -p go test -tags=e2e -count=1 ./test/e2e"
+run = "GOCACHE=${GOCACHE:-${TMPDIR:-/tmp}/updev-gocache} /usr/bin/time -p go test -tags=e2e -count=1 ./test/e2e"
 
 [tasks.test-e2e-fast]
 description = "Run the fast dashboard-only PTY smoke for local TTY UX checks"
-run = "GOCACHE=${GOCACHE:-/private/tmp/updev-gocache} /usr/bin/time -p go test -tags=e2e -count=1 ./test/e2e -run 'TestInteractivePTYSmoke/dashboard optimized routes'"
+run = "GOCACHE=${GOCACHE:-${TMPDIR:-/tmp}/updev-gocache} /usr/bin/time -p go test -tags=e2e -count=1 ./test/e2e -run 'TestInteractivePTYSmoke/dashboard optimized routes'"
 
 [tasks.test-e2e-smoke]
 description = "Alias for test-e2e-fast"
@@ -27,7 +27,7 @@ depends = ["test-e2e-fast"]
 
 [tasks.vet]
 description = "Run updev Go vet"
-run = "go vet ./..."
+run = "GOCACHE=${GOCACHE:-${TMPDIR:-/tmp}/updev-gocache} go vet ./..."
 
 [tasks.mod-verify]
 description = "Verify updev Go modules"
@@ -35,7 +35,7 @@ run = "go mod verify"
 
 [tasks.build]
 description = "Build updev packages"
-run = "go build ./..."
+run = "GOCACHE=${GOCACHE:-${TMPDIR:-/tmp}/updev-gocache} go build ./..."
 
 [tasks.docs-check]
 description = "Check high-value documentation source-of-truth mirrors"

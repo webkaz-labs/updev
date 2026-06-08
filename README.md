@@ -291,6 +291,22 @@ security = "strict"
 language = "ja"
 description_translation = "manual" # auto | manual | off
 
+[sources]
+root = "auto"
+
+[brewfile]
+desired = "auto"      # auto | home | root | template | disabled
+write_mode = "disabled" # disabled | direct | template | chezmoi-template
+
+[inventory.manual]
+sources = ["~/.config/updev/manual-apps.toml"]
+markdown_compat = false
+
+[inventory.agent]
+enabled = false
+command = ["codex", "exec"]
+batch = true
+
 [backends]
 preference_order = [
   "mise/core",
@@ -309,6 +325,18 @@ preference_order = [
   "vendor/manual",
 ]
 ```
+
+Public defaults are conservative: `updev` can inspect live evidence and detected
+provider manifests without assuming a dotfiles layout or writing desired state.
+Use config when a stronger workflow is intentional, such as a specific source
+root, Homebrew desired source, manual app inventory source, Markdown
+compatibility bridge, or optional agent enrichment. Agent enrichment is
+disabled by default; when enabled, generated manual app metadata remains draft
+review data until accepted or edited. Structured manual app rows are treated as
+desired state only when `review_status = "accepted"`.
+Manual review can call a configured agent with `inventory review --action
+enrich` or `enrich-batch`; updev validates the returned TOML and writes only
+draft entries.
 
 `description_translation` controls only `updev list` description-cache updates.
 `auto` is the built-in default for Japanese TTY output, `manual` runs

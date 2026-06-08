@@ -3,7 +3,6 @@
 package e2e
 
 import (
-	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -33,11 +32,12 @@ func TestInteractivePTYSmoke(t *testing.T) {
 		pty.waitScreen(t, regexp.MustCompile(`root: .*updev-e2e-root`))
 		pty.waitScreen(t, regexp.MustCompile(`security: off`))
 		pty.waitScreen(t, regexp.MustCompile(`update summary:`))
-		pty.waitScreen(t, regexp.MustCompile(`report: .*last-u`))
+		pty.waitScreen(t, regexp.MustCompile(`report: .*last-`))
 		pty.waitScreen(t, regexp.MustCompile(`focused actions:`))
-		pty.waitScreen(t, regexp.MustCompile(`a/1=open update details|a/1=更新詳細を開く`))
+		pty.sendKey(t, "Home")
+		pty.waitScreen(t, regexp.MustCompile(`a/1=open full report|a/1=full report を開く`))
 		pty.sendKey(t, "Enter")
-		pty.waitScreen(t, regexp.MustCompile(`updev update logs`))
+		pty.waitScreen(t, regexp.MustCompile(`updev full report`))
 		pty.sendKey(t, "Left")
 		pty.waitScreen(t, regexp.MustCompile(`review actions|確認アクション`))
 		pty.waitScreen(t, regexp.MustCompile(`backend convergence|backend 整理`))
@@ -70,7 +70,7 @@ func TestInteractivePTYSmoke(t *testing.T) {
 
 	t.Run("last security opens cached interactive detail", func(t *testing.T) {
 		env := newPTYEnv(t)
-		env.runNonTTY(t, exe, "--dry-run", "--security", "off")
+		env.seedLastUpdateReport(t)
 
 		pty := env.start(t, exe, "last", "--interactive", "--section", "security")
 		pty.waitScreen(t, regexp.MustCompile(`updev security details|updev update (ok|held|drift|error)|updev last`))
@@ -201,21 +201,34 @@ func (e *ptyEnv) start(t *testing.T, exe string, args ...string) *ptySession {
 	return pty
 }
 
-func (e *ptyEnv) runNonTTY(t *testing.T, exe string, args ...string) {
+func (e *ptyEnv) seedLastUpdateReport(t *testing.T) {
 	t.Helper()
-	root := sourceRoot(t)
-	cmd := exec.Command(exe, commandArgsWithRoot(root, args)...)
-	cmd.Dir = toolRoot(t)
-	cmd.Env = append(os.Environ(), e.processEnv()...)
-	out, err := cmd.CombinedOutput()
-	if err == nil {
-		return
+	reportPath := filepath.Join(e.home, ".cache", "updev", "reports", "last-update.json")
+	if err := os.MkdirAll(filepath.Dir(reportPath), 0o755); err != nil {
+		t.Fatal(err)
 	}
-	var exitErr *exec.ExitError
-	if errors.As(err, &exitErr) && exitErr.ExitCode() == 2 {
-		return
+	content := `{
+  "version": 1,
+  "type": "update",
+  "created_at": "2026-01-01T00:00:00Z",
+  "report": {
+    "status": "ok",
+    "root": "/repo",
+    "security": "off",
+    "steps": [
+      {"name": "brew", "status": "ok"},
+      {"name": "mise", "status": "ok"}
+    ],
+    "safety": [
+      {"provider": "brew", "status": "ok"}
+    ],
+    "inventory": {"status": "ok"}
+  }
+}
+`
+	if err := os.WriteFile(reportPath, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
 	}
-	t.Fatalf("seed command failed: %v\n%s", err, out)
 }
 
 func (e *ptyEnv) shellEnv() string {
