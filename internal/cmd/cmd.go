@@ -31,7 +31,7 @@ type options struct {
 const (
 	usageExitCode = 64
 	toolName      = "updev"
-	toolVersion   = "v0.5.7"
+	toolVersion   = "v0.5.8"
 )
 
 type versionReport struct {
@@ -587,7 +587,7 @@ Commands:
   updev inventory scan [--provider manual] [--format text|json]
   updev inventory plan [--provider manual] [--action action] [--query text] [--limit n] [--format text|json]
   updev inventory check [--provider manual] [--action action] [--query text] [--limit n] [--format text|json]
-  updev inventory review [--provider manual] [--action action] [--query text] [--format text|json]
+  updev inventory review [--provider manual] [--action action] [--query text] [--limit n] [--format text|json]
   updev inventory render [--report manual-apps] [--format text|json]
   updev list --fast ...         # accepted alias for inventory-style options
   updev ls ...                  # alias for list
@@ -641,12 +641,45 @@ func runLegacy(args []string) int {
 }
 
 func defaultRoot() string {
-	if root := os.Getenv("CHEZMOI_SOURCE_DIR"); root != "" {
+	if root := strings.TrimSpace(os.Getenv("UPDEV_ROOT")); root != "" {
 		return root
 	}
-	home, err := os.UserHomeDir()
+	if root := configuredRoot(loadUpdevConfig()); root != "" {
+		return root
+	}
+	// Compatibility escape hatch for the original dotfiles-hosted workflow.
+	if root := strings.TrimSpace(os.Getenv("CHEZMOI_SOURCE_DIR")); root != "" {
+		return root
+	}
+	cwd, err := os.Getwd()
 	if err != nil {
 		return "."
 	}
-	return filepath.Join(home, ".local", "share", "chezmoi")
+	return cwd
+}
+
+func configuredRoot(config updevConfig) string {
+	if config.Sources.Root == nil {
+		return ""
+	}
+	root := strings.TrimSpace(*config.Sources.Root)
+	if root == "" || strings.EqualFold(root, "auto") {
+		return ""
+	}
+	return resolveSourceRootConfigPath(root)
+}
+
+func resolveSourceRootConfigPath(path string) string {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return ""
+	}
+	if strings.HasPrefix(filepath.Clean(path), "~/") || filepath.IsAbs(path) {
+		return resolveUpdevConfigPath(".", path)
+	}
+	configPath := updevConfigPath()
+	if configPath == "" {
+		return filepath.Clean(path)
+	}
+	return filepath.Join(filepath.Dir(configPath), path)
 }

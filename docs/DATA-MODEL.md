@@ -26,14 +26,38 @@ dimensions:
 | `${XDG_CONFIG_HOME:-~/.config}/mise/config.toml` | Global runtime/tool definitions, interpreted through `mise` for inventory desired state. |
 | `mise.toml`, `.mise.toml` | Project-local runtime/tool definitions. Inventory uses `mise ls --current --json --cd <dir>` for the source root and manifest directories so parent-directory config inheritance matches mise behavior. |
 | `/Applications`, `~/Applications` | macOS-only opt-in manual/vendor live app evidence for `updev list --provider manual`. App bundle paths are read-only evidence and do not become desired state by themselves. |
+| configured manual inventory sources such as `~/.config/updev/manual-apps.toml` | User-reviewed manual/vendor app desired metadata. These sources are opt-in and portable; public defaults must not assume a repository-local `docs/apps.md`. |
 | future `~/.config/updev/manifests/*` | Language/global package snapshots. |
 | future config such as `~/.config/updev/inventory.toml` | Enabled scan sources, override paths, generated report destinations, provider render settings. |
 | `${XDG_STATE_HOME:-~/.local/state}/updev/` | Local-only trial inventory, snapshots, cached reports, security decisions, raw evidence caches. |
-| generated app reports | Optional manual/non-provider app report bridge. Long term these should be generated from scan output plus structured overrides. |
+| generated app reports | Optional manual/non-provider app report bridge. Markdown reports are generated views, not the canonical input for public defaults. |
 
 For temporary or alternate roots, providers read source files under that root
 instead of the user's live rendered files. This keeps smoke tests and agent
 workflows isolated from the real machine.
+
+The public command default should discover or configure a portable source root;
+it should not require `~/.local/share/chezmoi`. Dotfiles-specific root fallback
+and `Brewfile.tmpl` mutation remain compatibility behavior until the public
+source model supports explicit desired-source paths.
+
+Public defaults and advanced integrations have different responsibilities:
+
+- Defaults must be safe, read-mostly, and broadly portable. A fresh install can
+  inspect live evidence and provider manifests, but it must not assume a
+  personal dotfiles layout, create config just to store defaults, or mutate a
+  desired-state file that was not explicitly selected.
+- Auto-detection may identify useful candidates such as `~/Brewfile`,
+  `Brewfile`, mise config, Homebrew, Mac App Store receipts, and future Linux or
+  Windows provider metadata. Detection is evidence until a write target is
+  configured or confirmed.
+- Advanced workflows opt in through config. Chezmoi source roots,
+  `Brewfile.tmpl` writes, repository-local Markdown reports, manual inventory
+  structured sources, and agent enrichment are integration features, not public
+  defaults.
+- Compatibility modes can preserve this dotfiles workflow, but they should be
+  named and visible in diagnostics so public users can tell which assumptions
+  are active.
 
 Mise inventory desired/live state follows mise's native config resolution.
 Manifest hygiene still reads the TOML files directly because it needs file,
@@ -80,6 +104,21 @@ description_translation = "manual"
 
 [inventory]
 overrides = "~/.config/updev/manual-overrides.local.toml"
+
+[sources]
+root = "auto"
+
+[brewfile]
+desired = "auto"
+write_mode = "disabled"
+
+[inventory.manual]
+sources = ["~/.config/updev/manual-apps.toml"]
+
+[inventory.agent]
+enabled = false
+command = ["codex", "exec"]
+batch = true
 
 [backends]
 preference_order = [
@@ -136,10 +175,10 @@ with OS-setting or project-bootstrap state later.
 
 ## Inventory And Cache
 
-`updev list` and related commands should default to cached inventory when fresh
-enough, because provider discovery can be slow. Text output should show cache
-age when relevant; `--refresh` forces a live read and mutation-oriented commands
-should collect fresh inventory after mutation.
+`updev list` should prefer the last inventory cache, even when stale, because
+provider discovery can be slow and the human TTY must open quickly. Text output
+should show cache age when relevant; `--refresh` forces a live read.
+Mutation-oriented commands should collect fresh inventory after mutation.
 
 Machine cache files should be compact JSON unless intended for direct human
 editing. Migration-only cache readers must stay clearly labeled and should not
@@ -217,6 +256,49 @@ inventory scan/cache state, and `overrides` points to a structured TOML file for
 non-obvious manual/vendor app identity and alias metadata. Manual/vendor app
 scans use the same model for read-only evidence, identity reconciliation, review
 candidates, and generated report previews.
+
+Public defaults must not read a repository-specific `docs/apps.md` as desired
+state. Manual inventory should work from live evidence alone unless the user
+configures a structured manual source. Repository-local Markdown can remain a
+compatibility bridge for this dotfiles workflow only when explicitly configured;
+long-term, Markdown is an output generated by `updev inventory render`, not the
+portable source of truth.
+
+Structured manual inventory sources use TOML so humans, CLIs, and agents can
+edit the same contract without parsing prose:
+
+```toml
+[[manual.apps]]
+name = "Motion"
+aliases = ["Motion.app", "com.apple.motionapp"]
+managed_by = "mas"
+category = "creative"
+description = "Apple motion graphics app for Final Cut workflows."
+confidence = "high"
+review_status = "accepted"
+
+[manual.apps.identifiers]
+bundle_id = "com.apple.motionapp"
+
+[manual.apps.provenance]
+source = "human"
+evidence = ["mac_app_store_receipt", "app_bundle"]
+reviewed_at = "2026-06-08"
+```
+
+Agent-assisted enrichment may generate the same shape, but generated entries
+start as `review_status = "draft"` and must be displayed as draft evidence until
+the user accepts or edits them. Missing or unknown `review_status` values are
+treated as draft, not accepted. Draft entries can improve row descriptions and
+review suggestions, but they must not silently become desired state, suppress
+live-only findings, or authorize provider ownership changes. An entry becomes
+normal manual inventory only after it has `review_status = "accepted"`.
+
+Agent enrichment may operate on one row or a bounded batch of ambiguous rows.
+Batch mode is allowed so a user can enrich a whole manual review queue in one
+agent run, but the safety boundary stays per draft: every generated entry is
+schema-validated, remains `draft`, preserves row-level provenance, and needs an
+explicit accept/edit/ignore decision before it changes desired state.
 
 Manual inventory JSON can include `review_candidates[]` for live-only or
 ambiguous app rows. Candidates carry `provider`, `kind`, `name`, stable

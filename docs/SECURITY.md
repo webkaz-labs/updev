@@ -104,6 +104,38 @@ Default update does not run project-native audits, OSV-Scanner, gitleaks, zizmor
 Trivy, Grype, SBOM generation, cloud/SaaS posture checks, or agent-assisted web
 research. Those belong to explicit scan/review commands.
 
+## Agent-Assisted Review Boundary
+
+Agent-assisted inventory enrichment is optional review tooling. It must not be
+part of the default update gate, default scan, or non-TTY JSON output unless the
+user explicitly invokes an agent command or enables a non-default agent setting.
+
+Security rules for calling an agent:
+
+- pass only the minimal structured evidence needed for the row under review,
+  such as app name, bundle id, version, path basename, provider evidence, and
+  source URLs where already present;
+- do not send secrets, license data, shell history, browser data, private
+  documents, raw plist contents beyond selected public identifiers, or broad
+  filesystem listings;
+- run the configured command directly from the configured argv list, without a
+  shell, with a bounded timeout and no implicit mutation rights;
+- treat agent output as untrusted draft data that must be parsed, schema
+  validated, and shown for human review before it affects desired state;
+- allow bounded batch enrichment only when each row keeps separate evidence,
+  provenance, and draft review state;
+- require an explicit TUI or CLI action before writing draft TOML, and another
+  explicit accept/edit/ignore decision before writing accepted TOML;
+- keep missing Codex or other agent commands non-fatal, with a clear fallback to
+  live evidence and manual review;
+- record provenance (`source = "agent"`, command identity when safe, reviewed
+  time, and evidence kinds) without storing prompts that may contain private
+  local context.
+
+The safe default is local-only review. If a configured agent performs network
+research, the command description and confirmation copy must make that boundary
+visible before execution.
+
 ## Network And Privacy Boundaries
 
 `updev` security commands collect package metadata and local manifest evidence.

@@ -123,7 +123,11 @@ func runList(opts listOptions) int {
 		result = inventoryResult{Report: plan.Report{Status: plan.StatusOK, Root: opts.root}}
 	} else {
 		progress.Start()
-		result = collectInventoryCachedWithOptions(context.Background(), opts.root, opts.refresh, inventoryCacheMaxAge, inventoryOptions{IncludeVSCode: listIncludesVSCode(opts)})
+		maxAge := inventoryCacheMaxAge
+		if !opts.refresh {
+			maxAge = 0
+		}
+		result = collectInventoryCachedWithOptions(context.Background(), opts.root, opts.refresh, maxAge, inventoryOptions{IncludeVSCode: listIncludesVSCode(opts)})
 		progress.Done()
 	}
 	report := buildListReport(result, opts)
@@ -438,6 +442,7 @@ func printListText(w io.Writer, report listReport, title string, color bool) {
 		fmt.Fprintf(w, "%s %s\n", textui.StyleLabel(tr("filters:", "フィルター:"), color), textui.StyleRequested(filterSummary(report.Filters), color))
 	}
 	printListAttentionSummary(w, report, color)
+	printListEvidenceSummary(w, report, color)
 	fmt.Fprintln(w)
 	printProviderSummary(w, report.Providers, color)
 	if summary := listCategorySummary(report, color); summary != "" {
@@ -500,6 +505,14 @@ func printListAttentionSummary(w io.Writer, report listReport, color bool) {
 		parts = append(parts, textui.StyleDim(tr("no attention items", "注意項目なし"), color))
 	}
 	fmt.Fprintf(w, "%s %s\n", textui.StyleLabel(tr("summary:", "サマリー:"), color), strings.Join(parts, ", "))
+}
+
+func printListEvidenceSummary(w io.Writer, report listReport, color bool) {
+	summary := listEvidenceSummary(report.Evidence, color)
+	if summary == "" {
+		return
+	}
+	fmt.Fprintf(w, "%s %s\n", textui.StyleLabel(tr("review:", "確認:"), color), summary)
 }
 
 func listVisibleRowCount(report listReport) int {
@@ -605,7 +618,7 @@ func listTextDisplayItems(report listReport) []plan.Item {
 }
 
 func listTextDisplaySections(report listReport) []toolSection {
-	return enrichToolSectionsWithEvidence(report.Sections, report.Evidence)
+	return enrichToolSectionsWithEvidence(listDisplaySections(report), report.Evidence)
 }
 
 func enrichListItemsWithEvidence(items []plan.Item, evidence listEvidenceIndex) []plan.Item {
@@ -725,11 +738,6 @@ func runListHub(report listReport, selectorHub bool) {
 	}
 	backendPlan := backendPlanReport{}
 	backendLoading := true
-	if selectorHub {
-		backendPlan = buildBackendPlanForHub(report.Root)
-		report.Evidence = addBackendListEvidence(report.Evidence, backendPlan)
-		backendLoading = false
-	}
 	lastUpdate, hasLastUpdate := loadLastUpdateReport()
 	detailStates := map[string]detailBrowserState{}
 	for {
@@ -738,7 +746,7 @@ func runListHub(report listReport, selectorHub bool) {
 		if action == "" {
 			var err error
 			color := textui.ColorEnabled()
-			choices := listHubChoices(report, backendPlan, lastUpdate.Report, hasLastUpdate)
+			choices := listHubChoices(report, backendPlan, backendLoading, lastUpdate.Report, hasLastUpdate)
 			if selectorHub {
 				printListHubDashboard(os.Stdout, report, color)
 				action, err = runUpdevSelect("updev hub", tr("Choose a view or filter. Back/Home/Exit are available after each view.", "表示または filter を選択します。各 view から Back/Home/Exit できます。"), choices, defaultAction)
@@ -1072,7 +1080,7 @@ func printListHubDashboard(w io.Writer, report listReport, color bool) {
 	printProviderSummary(w, report.Providers, color)
 }
 
-func listHubChoices(report listReport, backendPlan backendPlanReport, lastUpdate updateReport, hasLastUpdate bool) []updevChoice {
+func listHubChoices(report listReport, backendPlan backendPlanReport, backendLoading bool, lastUpdate updateReport, hasLastUpdate bool) []updevChoice {
 	choices := []updevChoice{
 		{Value: listHubActionFull, Label: tr("Installed inventory", "インストール済み一覧"), Description: fmt.Sprintf(tr("Review all %d installed and desired inventory rows with grouping, filters, and expansion.", "全 %d 件の installed / desired inventory 行を grouping / filter / 展開付きで確認します。"), listInventoryReviewCount(report)), Selected: true},
 		{Value: listHubActionAttention, Label: tr("Attention items", "注意項目"), Description: tr("Show only rows needing attention.", "対応が必要な行だけを表示します。")},
@@ -1083,7 +1091,9 @@ func listHubChoices(report listReport, backendPlan backendPlanReport, lastUpdate
 		{Value: listHubActionQuery, Label: tr("Query filter", "query filter"), Description: tr("Search row names, versions, and descriptions.", "name / version / description を検索します。")},
 		{Value: listHubActionManual, Label: tr("Manual apps", "手動管理アプリ"), Description: tr("Review read-only manual, vendor, App Store, and non-provider app rows.", "manual / vendor / App Store / provider 外アプリを read-only で確認します。")},
 	}
-	if findings := len(backendPlan.Findings); findings > 0 {
+	if backendLoading {
+		choices = append(choices, updevChoice{Value: listHubActionBackends, Label: tr("Backend convergence", "backend 整理"), Description: tr("Prepare provider/backend recommendations asynchronously after the view opens.", "view を開いてから provider/backend 推奨を非同期で準備します。")})
+	} else if findings := len(backendPlan.Findings); findings > 0 {
 		actions := backendPlanActionableCount(backendPlan)
 		choices = append(choices, updevChoice{Value: listHubActionBackends, Label: tr("Backend convergence", "backend 整理"), Description: fmt.Sprintf(tr("Review %d provider/backend recommendations; %d can be applied from details.", "%d 件の provider/backend 推奨を確認します。%d 件は詳細から適用できます。"), findings, actions)})
 	}
@@ -1300,8 +1310,21 @@ func listBrowserStateKey(report listReport) string {
 
 func listTableSections(report listReport) []toolSection {
 	sections := itemToolSections(displayListItems(report.Items, report.Sections), report.Evidence)
-	sections = append(sections, enrichToolSectionsWithEvidence(report.Sections, report.Evidence)...)
+	sections = append(sections, enrichToolSectionsWithEvidence(listDisplaySections(report), report.Evidence)...)
 	return sections
+}
+
+func listDisplaySections(report listReport) []toolSection {
+	if !listReportIsManualOnly(report) {
+		return report.Sections
+	}
+	return groupManualInstalledAppSections(report.Sections)
+}
+
+func listReportIsManualOnly(report listReport) bool {
+	return strings.EqualFold(report.Filters["provider"], manualProviderName) ||
+		strings.EqualFold(report.Filters["kind"], manualProviderName) ||
+		strings.EqualFold(report.Filters["category"], manualProviderName)
 }
 
 func enrichToolSectionsWithEvidence(sections []toolSection, evidence listEvidenceIndex) []toolSection {
@@ -1661,6 +1684,44 @@ type listItemEvidence struct {
 	Updates  []string
 	Security []string
 	Backends []string
+}
+
+func listTitleWithEvidenceSummary(title string, evidence listEvidenceIndex) string {
+	summary := listEvidenceSummary(evidence, false)
+	if summary == "" {
+		return title
+	}
+	return title + " [" + summary + "]"
+}
+
+func listEvidenceSummary(evidence listEvidenceIndex, color bool) string {
+	updates, security, backends := listEvidenceCounts(evidence)
+	return fmt.Sprintf("%s=%s %s=%s %s=%s",
+		textui.StyleRequested("upd", color),
+		textui.StyleCount(fmt.Sprint(updates), color),
+		textui.StyleRequested("sec", color),
+		textui.StyleCount(fmt.Sprint(security), color),
+		textui.StyleRequested("bak", color),
+		textui.StyleCount(fmt.Sprint(backends), color),
+	)
+}
+
+func listEvidenceCounts(evidence listEvidenceIndex) (int, int, int) {
+	return listEvidenceValueCount(evidence.Updates), listEvidenceValueCount(evidence.Security), listEvidenceValueCount(evidence.Backends)
+}
+
+func listEvidenceValueCount(values map[string][]string) int {
+	seen := map[string]bool{}
+	for _, entries := range values {
+		for _, entry := range entries {
+			entry = strings.TrimSpace(entry)
+			if entry == "" {
+				continue
+			}
+			seen[entry] = true
+		}
+	}
+	return len(seen)
 }
 
 func buildListEvidenceIndex(root string) listEvidenceIndex {
@@ -2120,7 +2181,7 @@ func listDetailRows(report listReport) []detailBrowserRow {
 	for _, item := range displayListItems(report.Items, report.Sections) {
 		rows = append(rows, itemDetailRow(item, report.Evidence))
 	}
-	for _, section := range enrichToolSectionsWithEvidence(report.Sections, report.Evidence) {
+	for _, section := range enrichToolSectionsWithEvidence(listDisplaySections(report), report.Evidence) {
 		for _, row := range limitedToolRows(section.Rows, report.Limit) {
 			rows = append(rows, toolDetailRow(section, row))
 		}
