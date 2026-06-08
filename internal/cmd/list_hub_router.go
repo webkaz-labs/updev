@@ -172,6 +172,10 @@ func (m *listHubRouterModel) refreshCurrentScreen() {
 	if strings.HasPrefix(m.stateKey, "route:") {
 		return
 	}
+	if filter, ok := parseListHubFilterStateKey(m.stateKey); ok {
+		m.showFilterResult(filter)
+		return
+	}
 	switch m.stateKey {
 	case listHubActionFull, listHubActionManual, listHubActionBackends, listHubActionUpdates, listHubActionSecurity, listHubActionDetails:
 		m.showAction(m.stateKey, m.returnAction)
@@ -529,6 +533,19 @@ func parseListHubFilterAction(value string) (listHubFilterAction, bool) {
 	return listHubFilterAction{Kind: parts[1], Value: parts[2]}, true
 }
 
+func parseListHubFilterStateKey(stateKey string) (listHubFilterAction, bool) {
+	const prefix = "filter-result:"
+	rest, ok := strings.CutPrefix(stateKey, prefix)
+	if !ok {
+		return listHubFilterAction{}, false
+	}
+	kind, value, ok := strings.Cut(rest, ":")
+	if !ok || strings.TrimSpace(kind) == "" || strings.TrimSpace(value) == "" {
+		return listHubFilterAction{}, false
+	}
+	return listHubFilterAction{Kind: kind, Value: value}, true
+}
+
 func listProviderFilterRows(report listReport) []detailBrowserRow {
 	rows := make([]detailBrowserRow, 0, len(report.Providers))
 	for _, provider := range report.Providers {
@@ -603,6 +620,7 @@ func listStatusFilterRows() []detailBrowserRow {
 }
 
 func (m *listHubRouterModel) showListFiltered(title string, report listReport, stateKey string, returnAction string, nextAction string, previousAction string) {
+	title = listTitleWithEvidenceSummary(title, report.Evidence)
 	sections := listTableSections(report)
 	if toolTableRowCount(sections) > 0 || nextAction != "" || previousAction != "" {
 		actions := tableBrowserActions()
@@ -665,6 +683,9 @@ func (m listHubRouterModel) loadingTitle(title string, stateKey string) string {
 	case listHubActionFull, listHubActionManual, listHubActionBackends, listHubActionDetails:
 		return title + " " + tr("(backend evidence loading)", "(backend evidence 準備中)")
 	default:
+		if _, ok := parseListHubFilterStateKey(stateKey); ok {
+			return title + " " + tr("(backend evidence loading)", "(backend evidence 準備中)")
+		}
 		return title
 	}
 }

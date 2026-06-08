@@ -88,17 +88,15 @@ updev list --status attention --no-color
 
 ## Developing updev
 
-When working on this repository:
+When working on the updev source tree, run these from the updev module root
+(`tools/updev` in the preview dotfiles source tree, or the public repository
+root after export):
 
 ```bash
 mise install
-mise -C tools/updev run check
-mise -C tools/updev run docs-check
-chezmoi apply --dry-run
+mise run check
+mise run docs-check
 ```
-
-The dotfiles `tools/updev/` tree is canonical during preview. The public
-repository is exported from that tree; do not make public-only source edits.
 
 Keep docs source-of-truth rules in `docs/DESIGN.md` in mind. If behavior,
 JSON shape, exit codes, security decisions, release notes, or command help

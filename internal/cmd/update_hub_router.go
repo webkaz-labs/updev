@@ -22,6 +22,11 @@ type updateHubRouterResult struct {
 	BackendReady bool
 }
 
+type updateHubPlanBuilders struct {
+	Manual  func(context.Context, string) inventoryPlanReport
+	Backend func(context.Context, string) backendPlanReport
+}
+
 type updateHubManualPlanMsg struct {
 	Report inventoryPlanReport
 }
@@ -51,6 +56,8 @@ const (
 )
 
 type updateHubRouterModel struct {
+	ctx            context.Context
+	planBuilders   updateHubPlanBuilders
 	report         updateReport
 	manualPlan     inventoryPlanReport
 	manualLoading  bool
@@ -79,8 +86,10 @@ type updateHubRouterModel struct {
 }
 
 func runUpdateHubRouter(report updateReport, manualPlan inventoryPlanReport, manualLoading bool, backendPlan backendPlanReport, backendLoading bool, preferredAction string, defaultAction string, color bool) (updateHubRouterResult, error) {
-	model := newUpdateHubRouterModel(report, manualPlan, manualLoading, backendPlan, backendLoading, preferredAction, defaultAction, color)
-	final, err := tea.NewProgram(model).Run()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	model := newUpdateHubRouterModelWithContext(ctx, defaultUpdateHubPlanBuilders(), report, manualPlan, manualLoading, backendPlan, backendLoading, preferredAction, defaultAction, color)
+	final, err := tea.NewProgram(model, tea.WithContext(ctx)).Run()
 	if err != nil {
 		return updateHubRouterResult{}, err
 	}
@@ -97,7 +106,23 @@ func runUpdateHubRouter(report updateReport, manualPlan inventoryPlanReport, man
 }
 
 func newUpdateHubRouterModel(report updateReport, manualPlan inventoryPlanReport, manualLoading bool, backendPlan backendPlanReport, backendLoading bool, preferredAction string, defaultAction string, color bool) updateHubRouterModel {
+	return newUpdateHubRouterModelWithContext(context.Background(), defaultUpdateHubPlanBuilders(), report, manualPlan, manualLoading, backendPlan, backendLoading, preferredAction, defaultAction, color)
+}
+
+func newUpdateHubRouterModelWithContext(ctx context.Context, builders updateHubPlanBuilders, report updateReport, manualPlan inventoryPlanReport, manualLoading bool, backendPlan backendPlanReport, backendLoading bool, preferredAction string, defaultAction string, color bool) updateHubRouterModel {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	defaultBuilders := defaultUpdateHubPlanBuilders()
+	if builders.Manual == nil {
+		builders.Manual = defaultBuilders.Manual
+	}
+	if builders.Backend == nil {
+		builders.Backend = defaultBuilders.Backend
+	}
 	model := updateHubRouterModel{
+		ctx:            ctx,
+		planBuilders:   builders,
 		report:         report,
 		manualPlan:     manualPlan,
 		manualLoading:  manualLoading,
@@ -115,18 +140,73 @@ func newUpdateHubRouterModel(report updateReport, manualPlan inventoryPlanReport
 	return model
 }
 
+func defaultUpdateHubPlanBuilders() updateHubPlanBuilders {
+	return updateHubPlanBuilders{
+		Manual:  buildUpdateHubManualPlanWithContext,
+		Backend: buildUpdateHubBackendPlanWithContext,
+	}
+}
+
+func buildUpdateHubManualPlanWithContext(ctx context.Context, root string) inventoryPlanReport {
+	select {
+	case <-ctx.Done():
+		return canceledUpdateHubManualPlan(root)
+	default:
+	}
+	return buildInventoryPlanReport(inventoryPlanOptions{root: root, provider: manualProviderName})
+}
+
+func buildUpdateHubBackendPlanWithContext(ctx context.Context, root string) backendPlanReport {
+	select {
+	case <-ctx.Done():
+		return canceledUpdateHubBackendPlan(root)
+	default:
+	}
+	return buildBackendPlanReport(ctx, backendOptions{command: "plan", root: root})
+}
+
+func canceledUpdateHubManualPlan(root string) inventoryPlanReport {
+	return inventoryPlanReport{
+		SchemaVersion:  1,
+		Status:         plan.StatusHeld,
+		Root:           root,
+		Provider:       manualProviderName,
+		ActionCounts:   map[string]int{},
+		AttentionCount: 0,
+		NextSteps: []string{
+			tr("manual review loading was canceled before completion", "手動アプリ確認の準備は完了前にキャンセルされました"),
+		},
+	}
+}
+
+func canceledUpdateHubBackendPlan(root string) backendPlanReport {
+	return backendPlanReport{
+		SchemaVersion: backendPlanReportSchemaVersion,
+		Status:        plan.StatusHeld,
+		Command:       "plan",
+		Root:          root,
+		Warnings: []string{
+			tr("backend evidence loading was canceled before completion", "backend evidence の準備は完了前にキャンセルされました"),
+		},
+	}
+}
+
 func (m updateHubRouterModel) Init() tea.Cmd {
 	cmds := []tea.Cmd{}
 	if m.manualLoading {
 		root := m.report.Root
+		ctx := m.ctx
+		buildManual := m.planBuilders.Manual
 		cmds = append(cmds, func() tea.Msg {
-			return updateHubManualPlanMsg{Report: buildInventoryPlanReport(inventoryPlanOptions{root: root, provider: manualProviderName})}
+			return updateHubManualPlanMsg{Report: buildManual(ctx, root)}
 		})
 	}
 	if m.backendLoading {
 		root := m.report.Root
+		ctx := m.ctx
+		buildBackend := m.planBuilders.Backend
 		cmds = append(cmds, func() tea.Msg {
-			return updateHubBackendPlanMsg{Report: buildBackendPlanReport(context.Background(), backendOptions{command: "plan", root: root})}
+			return updateHubBackendPlanMsg{Report: buildBackend(ctx, root)}
 		})
 	}
 	return tea.Batch(cmds...)
@@ -204,7 +284,11 @@ func (m updateHubRouterModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m *updateHubRouterModel) refreshCurrentScreen() {
-	if strings.HasPrefix(m.stateKey, "route:") || strings.HasPrefix(m.stateKey, "summary:") {
+	if strings.HasPrefix(m.stateKey, "route:") {
+		return
+	}
+	if route, ok := parseUpdateSummaryRouteStateKey(m.stateKey); ok {
+		m.showUpdateSummaryRoute(route)
 		return
 	}
 	switch m.stateKey {
@@ -253,10 +337,10 @@ func (m updateHubRouterModel) handleAction(action string) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 		}
 		if strings.HasPrefix(m.stateKey, "filter-result:") && m.returnAction != "" {
-			m.showAction(m.returnAction, updateHubActionDashboard)
+			m.showReturnAction(m.returnAction)
 			return m, nil
 		}
-		m.showAction(m.returnAction, updateHubActionDashboard)
+		m.showReturnAction(m.returnAction)
 		return m, nil
 	case action == updevActionHome:
 		m.showDashboard(updateHubActionDashboard)
@@ -497,16 +581,16 @@ func (m updateHubRouterModel) handleInputAction(input textInputBrowserModel) (te
 		return m, tea.Quit
 	case updevActionBack:
 		if strings.HasPrefix(m.stateKey, "write-") {
-			m.showAction(m.pendingReturnAction, updateHubActionDashboard)
+			m.showReturnAction(m.pendingReturnAction)
 			return m, nil
 		}
-		m.showAction(m.returnAction, updateHubActionDashboard)
+		m.showReturnAction(m.returnAction)
 		return m, nil
 	case "submit":
 		if strings.HasPrefix(m.stateKey, "write-reason:") {
 			m.pendingReason = strings.TrimSpace(input.Value)
 			if m.pendingReason == "" {
-				m.showAction(m.pendingReturnAction, updateHubActionDashboard)
+				m.showReturnAction(m.pendingReturnAction)
 				return m, nil
 			}
 			m.showWriteExpiryInput()
@@ -515,7 +599,7 @@ func (m updateHubRouterModel) handleInputAction(input textInputBrowserModel) (te
 		if strings.HasPrefix(m.stateKey, "write-expiry:") {
 			expires, err := validateSecurityPolicyAllowExpiry(input.Value, time.Now())
 			if err != nil {
-				m.showAction(m.pendingReturnAction, updateHubActionDashboard)
+				m.showReturnAction(m.pendingReturnAction)
 				return m, nil
 			}
 			m.pendingExpires = expires
@@ -525,7 +609,7 @@ func (m updateHubRouterModel) handleInputAction(input textInputBrowserModel) (te
 		section := strings.TrimPrefix(m.stateKey, "query-input:")
 		query := strings.TrimSpace(input.Value)
 		if query == "" {
-			m.showAction(m.returnAction, updateHubActionDashboard)
+			m.showReturnAction(m.returnAction)
 			return m, nil
 		}
 		m.showUpdateFilterResult(updateHubFilterAction{Section: section, Facet: updateFilterActionQuery, Value: query})
@@ -590,7 +674,7 @@ func (m *updateHubRouterModel) showWriteExpiryInput() {
 func (m *updateHubRouterModel) showWriteConfirm() {
 	spec, ok := routedDetailWriteActionSpec(m.pendingAction)
 	if !ok {
-		m.showAction(m.pendingReturnAction, updateHubActionDashboard)
+		m.showReturnAction(m.pendingReturnAction)
 		return
 	}
 	if m.pendingExpires != "" {
@@ -611,12 +695,12 @@ func (m updateHubRouterModel) handleConfirmAction(confirm confirmBrowserModel) (
 		m.finalAction = updevActionExit
 		return m, tea.Quit
 	case updevActionBack:
-		m.showAction(m.pendingReturnAction, updateHubActionDashboard)
+		m.showReturnAction(m.pendingReturnAction)
 		return m, nil
 	case "apply":
 		_ = applyRoutedDetailWriteAction(m.report.Root, &m.report, m.pendingAction, m.pendingReason, m.pendingExpires)
 		m.refreshPlansAfterWriteAction()
-		m.showAction(m.pendingReturnAction, updateHubActionDashboard)
+		m.showReturnAction(m.pendingReturnAction)
 		return m, nil
 	default:
 		return m, nil
@@ -641,7 +725,7 @@ func (m *updateHubRouterModel) showDashboard(focusAction string) {
 	stateKey := "dashboard"
 	_, hasState := m.detailStates[stateKey]
 	if !hasState && (focusAction == "" || focusAction == updateHubActionDashboard) {
-		focusAction = updateHubActionLogs
+		focusAction = m.initialDashboardFocusAction()
 	} else if hasState && focusAction == updateHubActionDashboard {
 		focusAction = ""
 	}
@@ -653,11 +737,21 @@ func (m *updateHubRouterModel) showDashboard(focusAction string) {
 	m.dashboard = model
 }
 
+func (m updateHubRouterModel) initialDashboardFocusAction() string {
+	if m.manualLoading {
+		return updateHubActionManualPlan
+	}
+	if m.backendLoading {
+		return updateHubActionBackends
+	}
+	return updateHubActionLogs
+}
+
 func (m *updateHubRouterModel) showUpdateSummaryRoute(route updateSummaryRoute) {
 	opts := lastReportOptions{provider: route.Provider, query: route.Query}
 	filtered := filterUpdateReport(m.report, opts)
 	suffix := updateSummaryRouteTitleSuffix(route)
-	stateKey := "summary:" + route.Base + ":" + filterSummary(lastReportFilterMap(opts))
+	stateKey := updateSummaryRouteStateKey(route)
 	switch route.Base {
 	case updateHubActionLogs:
 		m.showDetail("updev update logs"+suffix, updateLogDetailRows(filtered), stateKey, updateHubActionDashboard)
@@ -672,6 +766,26 @@ func (m *updateHubRouterModel) showUpdateSummaryRoute(route updateSummaryRoute) 
 	default:
 		m.showDashboard(route.Base)
 	}
+}
+
+func (m *updateHubRouterModel) showReturnAction(action string) {
+	if route, ok := parseUpdateSummaryRouteStateKey(action); ok {
+		m.showUpdateSummaryRoute(route)
+		return
+	}
+	m.showAction(action, updateHubActionDashboard)
+}
+
+func updateSummaryRouteStateKey(route updateSummaryRoute) string {
+	return "summary:" + route.Encode()
+}
+
+func parseUpdateSummaryRouteStateKey(stateKey string) (updateSummaryRoute, bool) {
+	encoded, ok := strings.CutPrefix(stateKey, "summary:")
+	if !ok {
+		return updateSummaryRoute{}, false
+	}
+	return parseUpdateSummaryRoute(encoded)
 }
 
 func (m *updateHubRouterModel) showListRouteDetail(route listRouteAction) {
@@ -704,6 +818,7 @@ func (m updateHubRouterModel) listRouteRows(route listRouteAction) []detailBrows
 }
 
 func (m *updateHubRouterModel) showListFiltered(title string, report listReport, stateKey string, returnAction string, nextAction string, previousAction string) {
+	title = listTitleWithEvidenceSummary(title, report.Evidence)
 	sections := listTableSections(report)
 	if toolTableRowCount(sections) > 0 || nextAction != "" || previousAction != "" {
 		actions := tableBrowserActions()
@@ -759,11 +874,17 @@ func (m updateHubRouterModel) loadingTitle(title string, stateKey string) string
 	case (stateKey == "inventory-all" || stateKey == "inventory-details") && m.backendLoading:
 		return title + " " + tr("(backend evidence loading)", "(backend evidence 準備中)")
 	default:
+		if route, ok := parseUpdateSummaryRouteStateKey(stateKey); ok && m.backendLoading && (route.Base == updateHubActionInventoryAll || route.Base == updateHubActionInventoryDetails) {
+			return title + " " + tr("(backend evidence loading)", "(backend evidence 準備中)")
+		}
 		return title
 	}
 }
 
 func (m updateHubRouterModel) currentAction() string {
+	if _, ok := parseUpdateSummaryRouteStateKey(m.stateKey); ok {
+		return m.stateKey
+	}
 	switch m.stateKey {
 	case "inventory-all":
 		return updateHubActionInventoryAll

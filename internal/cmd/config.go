@@ -13,6 +13,8 @@ type updevConfig struct {
 	Providers updevProvidersConfig
 	Update    updevUpdateConfig
 	UI        updevUIConfig
+	Sources   updevSourcesConfig
+	Brewfile  updevBrewfileConfig
 	Inventory updevInventoryConfig
 	Backends  updevBackendsConfig
 }
@@ -49,10 +51,32 @@ type updevUIConfig struct {
 	DescriptionTranslation *string
 }
 
+type updevSourcesConfig struct {
+	Root *string
+}
+
+type updevBrewfileConfig struct {
+	Desired   *string
+	WriteMode *string
+}
+
 type updevInventoryConfig struct {
 	StateDir  *string
 	Overrides *string
+	Manual    updevInventoryManualConfig
+	Agent     updevInventoryAgentConfig
 	Reports   []updevInventoryReportConfig
+}
+
+type updevInventoryManualConfig struct {
+	Sources        []string
+	MarkdownCompat *bool
+}
+
+type updevInventoryAgentConfig struct {
+	Enabled *bool
+	Command []string
+	Batch   *bool
 }
 
 type updevInventoryReportConfig struct {
@@ -168,12 +192,45 @@ func parseUpdevConfigTOML(data string) updevConfig {
 					config.UI.DescriptionTranslation = &normalized
 				}
 			}
+		case "sources":
+			if key == "root" {
+				config.Sources.Root = parseNonEmptyStringPtr(stringValue)
+			}
+		case "brewfile":
+			switch key {
+			case "desired":
+				if validBrewfileDesiredMode(stringValue) {
+					normalized := strings.ToLower(stringValue)
+					config.Brewfile.Desired = &normalized
+				}
+			case "write_mode":
+				if validBrewfileWriteMode(stringValue) {
+					normalized := strings.ToLower(stringValue)
+					config.Brewfile.WriteMode = &normalized
+				}
+			}
 		case "inventory":
 			switch key {
 			case "state_dir":
 				config.Inventory.StateDir = parseNonEmptyStringPtr(stringValue)
 			case "overrides":
 				config.Inventory.Overrides = parseNonEmptyStringPtr(stringValue)
+			}
+		case "inventory.manual":
+			switch key {
+			case "sources":
+				config.Inventory.Manual.Sources = parseStringArray(value)
+			case "markdown_compat":
+				config.Inventory.Manual.MarkdownCompat = parseBoolPtr(stringValue)
+			}
+		case "inventory.agent":
+			switch key {
+			case "enabled":
+				config.Inventory.Agent.Enabled = parseBoolPtr(stringValue)
+			case "command":
+				config.Inventory.Agent.Command = parseStringArray(value)
+			case "batch":
+				config.Inventory.Agent.Batch = parseBoolPtr(stringValue)
 			}
 		case "backends":
 			switch key {
@@ -198,6 +255,24 @@ func parseUpdevConfigTOML(data string) updevConfig {
 		}
 	}
 	return config
+}
+
+func validBrewfileDesiredMode(value string) bool {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "auto", "home", "root", "template", "disabled":
+		return true
+	default:
+		return false
+	}
+}
+
+func validBrewfileWriteMode(value string) bool {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "disabled", "direct", "template", "chezmoi-template":
+		return true
+	default:
+		return false
+	}
 }
 
 func collapseTOMLMultilineArrays(data string) string {

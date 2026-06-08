@@ -42,14 +42,10 @@ canonical detailed guide is `docs/agent/USAGE.md`.
 
 ## Developing updev
 
-For repository work:
+For source work, run these from the updev module root:
 
 ```bash
 mise install
-mise -C tools/updev run check
-mise -C tools/updev run docs-check
-chezmoi apply --dry-run
+mise run check
+mise run docs-check
 ```
-
-During preview, `tools/updev/` in the dotfiles repository is canonical. Public
-repo changes are exported from that tree.

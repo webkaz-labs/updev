@@ -586,10 +586,38 @@ func manualPlanItemsWithTextDetails(items []manualPlanItem) []manualPlanItem {
 
 func manualPlanDetailRows(report inventoryPlanReport) []detailBrowserRow {
 	rows := make([]detailBrowserRow, 0, len(report.Items))
+	if manualPlanCanBatchEnrich(report) {
+		rows = append(rows, detailBrowserRow{
+			Title:   tr("batch draft enrichment", "batch draft 生成"),
+			Status:  "draft",
+			Summary: tr("generate draft metadata for the current manual review queue", "現在の manual review queue から draft metadata を生成します"),
+			Detail:  tr("Runs the configured manual inventory agent for up to the built-in batch limit. Every generated entry stays draft until accepted or edited.", "設定済み manual inventory agent を built-in batch limit まで実行します。生成された entry は accepted/edit されるまで draft のままです。"),
+			Metadata: []string{
+				fmt.Sprintf("candidates: %d", len(report.ReviewCandidates)),
+				"action: enrich-batch",
+			},
+			Actions: []detailBrowserAction{{
+				Value:       manualPlanDetailActionValue("enrich-batch", "*"),
+				Label:       tr("generate batch drafts", "batch draft を生成"),
+				Description: tr("run configured agent for a bounded batch of manual review candidates", "manual review candidates の bounded batch に設定済み agent を実行します"),
+			}},
+		})
+	}
 	for _, item := range report.Items {
-		rows = append(rows, manualPlanDetailRow(item))
+		rows = append(rows, manualPlanDetailRow(item, report.Root))
 	}
 	return rows
+}
+
+func manualPlanCanBatchEnrich(report inventoryPlanReport) bool {
+	if len(report.ReviewCandidates) == 0 {
+		return false
+	}
+	config := loadUpdevConfig()
+	return config.Inventory.Agent.Enabled != nil && *config.Inventory.Agent.Enabled &&
+		config.Inventory.Agent.Batch != nil && *config.Inventory.Agent.Batch &&
+		len(config.Inventory.Agent.Command) > 0 &&
+		manualAgentDraftSourcePath(report.Root) != ""
 }
 
 func manualPlanToolSections(report inventoryPlanReport) []toolSection {
@@ -599,7 +627,7 @@ func manualPlanToolSections(report inventoryPlanReport) []toolSection {
 	})
 }
 
-func manualPlanDetailRow(item manualPlanItem) detailBrowserRow {
+func manualPlanDetailRow(item manualPlanItem, root string) detailBrowserRow {
 	metadata := []string{
 		"provider: " + item.Provider,
 		"suggested_provider: " + firstNonEmpty(item.SuggestedProvider, "-"),
@@ -631,7 +659,7 @@ func manualPlanDetailRow(item manualPlanItem) detailBrowserRow {
 		Summary:  manualPlanDisplayNextStep(item),
 		Detail:   item.Detail,
 		Metadata: metadata,
-		Actions:  manualPlanDetailActions(item),
+		Actions:  manualPlanDetailActions(item, root),
 	}
 }
 
@@ -658,7 +686,7 @@ func manualPlanEvidenceDetail(evidence manualReviewEvidence) string {
 	return strings.Join(parts, " ")
 }
 
-func manualPlanDetailActions(item manualPlanItem) []detailBrowserAction {
+func manualPlanDetailActions(item manualPlanItem, root string) []detailBrowserAction {
 	actions := []detailBrowserAction{}
 	if item.State == "installed" && manualPlanActionNeedsReview(item.Action) {
 		actions = append(actions,
@@ -666,6 +694,9 @@ func manualPlanDetailActions(item manualPlanItem) []detailBrowserAction {
 			detailBrowserAction{Value: manualPlanDetailActionValue("ignore", item.Name), Label: tr("ignore local app", "local app として無視"), Description: tr("append a local-only ignore override", "local-only の ignore override を追記します")},
 			detailBrowserAction{Value: manualPlanDetailActionValue("edit", item.Name), Label: tr("edit override", "override を編集"), Description: tr("open the suggested override before writing", "書き込む前に提案 override を editor で開きます")},
 		)
+		if manualAgentEnrichmentAvailable(root) {
+			actions = append(actions, detailBrowserAction{Value: manualPlanDetailActionValue("enrich", item.Name), Label: tr("generate draft", "draft を生成"), Description: tr("run the configured agent and append draft manual metadata", "設定済み agent を実行して draft manual metadata を追記します")})
+		}
 	}
 	if item.Action == "adopt-brew" {
 		if cask := manualDetailValue(item.Detail, "cask"); cask != "" {
