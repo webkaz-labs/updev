@@ -152,18 +152,18 @@ authenticated where needed, and visible on `PATH`.
 | Area | Requirement |
 |------|-------------|
 | macOS preview | Homebrew and mise installed locally. |
-| Homebrew provider | `brew` must support JSON output such as `brew outdated --json=v2`; package mutation still runs through Homebrew. |
-| mise provider | `mise` must support `mise ls --current --json --cd <dir>` for inventory, `mise outdated --json --cd <dir>` for update gating, and the GitHub backend for the managed install example. `updev` validates exact pins, rejects unsafe `latest` entries, and does not require, add, or enforce a mise-native age setting. |
+| Homebrew provider | `brew` must support JSON output such as `brew outdated --json=v2` and, on Homebrew 6, `brew trust --json=v1`; package mutation still runs through Homebrew. updev uses local tap metadata for safety discovery and reports non-official tap trust gaps without auto-trusting them. |
+| mise provider | `mise` must support `mise ls --current --json --cd <dir>`, `mise outdated --json --cd <dir>`, and scoped `mise upgrade --minimum-release-age <duration> <tool...>`. `updev` validates exact pins, rejects unsafe `latest` entries, and enforces its own age gate without requiring a global mise-native age setting. |
 | Description translation | Optional. `codex` on `PATH` enables Japanese description-cache updates for `updev list`; without it, `updev` keeps running with English descriptions. |
 | Manual app inventory | macOS `.app` bundle metadata is read locally; Mac App Store evidence is used only when receipts or `mas` evidence are available. |
-| Security gates | Network evidence is best-effort and provider-scoped. Strict mode can hold Homebrew updates, mise updates, and opt-in VS Code extension updates when required evidence is missing. |
+| Security gates | Network evidence is best-effort and provider-scoped. Strict mode can hold Homebrew updates, mise updates, and opt-in VS Code extension updates when required evidence is missing. Homebrew 6 tap trust is treated as a human security decision. |
 
 Known-good validation as of 2026-06-04:
 
 | Tool | Verified version/path |
 |------|-----------------------|
 | macOS | primary supported preview platform. |
-| Homebrew | `5.1.14-199-g863696a` locally; CI uses mocked provider output. |
+| Homebrew | `6.0.0-2-g1cd9e81` locally; CI uses mocked provider output. |
 | mise | `2026.5.18` locally; GitHub backend install smoke is covered separately. |
 | Go | module and repository mise config pin `go 1.25.8`. |
 | GitHub Actions | CI and release workflows use GitHub-maintained Node 24 action majors. |
@@ -221,18 +221,21 @@ review for:
 
 - Homebrew releases and VS Code extension updates whose release age is below
   the configured minimum-age threshold;
+- mise `github:`, `npm:`, `cargo:`, and `pipx:` pending updates whose
+  release/publish/upload age is below the configured minimum-age threshold;
 - Homebrew casks, URL casks, and non-official taps that need provenance review;
 - advisory matches from OSV or GitHub Advisory evidence where package identity
   is reliable;
+- unsupported or opaque mise backends that do not expose enough release-age
+  evidence for updev to allow automatically;
 - VS Code extension updates when marketplace age/posture checks are enabled;
 - local policy rules such as temporary allow, hold, review, or block decisions.
 
 Use `warn` mode for visibility and `strict` mode when missing or risky evidence
 should hold the update. `strict` is the default. mise inventory, manifest
-hygiene, and pending update candidates are checked today. Until backend-specific
-release-age evidence is available for every mise backend, mise update
-candidates default to review and strict mode holds `mise upgrade`; a temporary
-policy allow can unblock an accepted candidate.
+hygiene, native `minimum_release_age` diagnostics, and pending update
+candidates are checked today. A temporary policy allow can unblock an accepted
+candidate when strict mode is intentionally holding it.
 
 ## Common Commands
 
@@ -287,6 +290,12 @@ include_vscode = true
 [update]
 security = "strict"
 
+[update.mise_bump]
+mode = "manual" # off | manual | safe | auto
+
+[security.mise]
+min_release_age_days = 3
+
 [ui]
 language = "ja"
 description_translation = "manual" # auto | manual | off
@@ -337,6 +346,13 @@ desired state only when `review_status = "accepted"`.
 Manual review can call a configured agent with `inventory review --action
 enrich` or `enrich-batch`; updev validates the returned TOML and writes only
 draft entries.
+
+`mise_bump.mode` controls fixed-version mise updates. `manual` shows safe
+item-level bump actions, `safe` adds a confirmed safe-batch action, and `auto`
+runs only safe bump candidates during the normal update workflow. Held,
+review-needed, unsupported, opaque, and too-new candidates stay visible for
+review instead of being bumped automatically. Use `UPDEV_MISE_BUMP_MODE` for a
+one-off override without writing a config file.
 
 `description_translation` controls only `updev list` description-cache updates.
 `auto` is the built-in default for Japanese TTY output, `manual` runs

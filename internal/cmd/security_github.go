@@ -738,7 +738,7 @@ func githubAPIURL() string {
 }
 
 func githubToken() string {
-	for _, name := range []string{"UPDEV_GITHUB_TOKEN", "GITHUB_TOKEN", "GH_TOKEN"} {
+	for _, name := range []string{"UPDEV_GITHUB_TOKEN", "GITHUB_API_TOKEN", "GITHUB_TOKEN", "GH_TOKEN"} {
 		if value := strings.TrimSpace(os.Getenv(name)); value != "" {
 			return value
 		}

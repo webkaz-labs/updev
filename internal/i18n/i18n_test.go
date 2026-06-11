@@ -21,6 +21,10 @@ func TestLocalizedSecurityReason(t *testing.T) {
 	if got != "候補リリースが新しすぎます: 経過 0日、最小 3日" {
 		t.Fatalf("unexpected localized release-age reason: %q", got)
 	}
+	got = LocalizedSecurityReason(LangJapanese, "mise candidate release is too new: age 1 days, minimum 3 days")
+	if got != "mise 候補リリースが新しすぎます: 経過 1日、最小 3日" {
+		t.Fatalf("unexpected localized mise release-age reason: %q", got)
+	}
 	got = LocalizedSecurityReason(LangJapanese, "repository is archived")
 	if got != "repository が archived です" {
 		t.Fatalf("unexpected localized posture reason: %q", got)

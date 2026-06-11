@@ -335,6 +335,8 @@ func applyManualAgentEnrichmentAction(opts inventoryReviewOptions, candidates []
 			"Keep review_status = \"draft\" for every entry.",
 			"Use [manual.apps.identifiers] for bundle_id, mas_id, cask, or path when known.",
 			"Use [manual.apps.provenance] source = \"agent\" and evidence = [...].",
+			"Add source_url or review_url when a vendor or provider page is known.",
+			"Add owner, update_owner, and provider_metadata when ownership evidence is known.",
 		},
 	}
 	payload, err := json.MarshalIndent(request, "", "  ")
@@ -446,6 +448,18 @@ func validateManualAgentDrafts(content string, candidates []manualReviewCandidat
 		for _, evidence := range match.Evidence {
 			if evidence.Scanner != "" && !stringListContains(draft.Evidence, evidence.Scanner) {
 				draft.Evidence = append(draft.Evidence, evidence.Scanner)
+			}
+			if draft.Provenance["source_url"] == "" {
+				draft.Provenance["source_url"] = firstNonEmpty(evidence.SourceURL, evidence.ReviewURL)
+			}
+			if draft.Provenance["owner"] == "" {
+				draft.Provenance["owner"] = evidence.Owner
+			}
+			if draft.Provenance["update_owner"] == "" {
+				draft.Provenance["update_owner"] = evidence.UpdateOwner
+			}
+			if draft.Provenance["provider_metadata"] == "" {
+				draft.Provenance["provider_metadata"] = evidence.ProviderMetadata
 			}
 		}
 		key := normalizedManualAppKey(draft.Name)
@@ -584,6 +598,14 @@ func renderManualStructuredAppBlock(app manualStructuredApp) string {
 			builder.WriteString("command = ")
 			builder.WriteString(tomlString(command))
 			builder.WriteString("\n")
+		}
+		for _, key := range manualStructuredProvenanceDetailKeys() {
+			if value := app.Provenance[key]; value != "" {
+				builder.WriteString(key)
+				builder.WriteString(" = ")
+				builder.WriteString(tomlString(value))
+				builder.WriteString("\n")
+			}
 		}
 		if reviewedAt := app.Provenance["reviewed_at"]; reviewedAt != "" {
 			builder.WriteString("reviewed_at = ")
@@ -942,7 +964,21 @@ func manualReviewCandidateMatches(candidate manualReviewCandidate, query string)
 	}
 	parts = append(parts, candidate.SuggestedOverride.Aliases...)
 	for _, evidence := range candidate.Evidence {
-		parts = append(parts, evidence.Scanner, evidence.Source, evidence.Path, evidence.MASID, evidence.BundleID, evidence.Version)
+		parts = append(parts,
+			evidence.Scanner,
+			evidence.Source,
+			evidence.Path,
+			evidence.ReviewURL,
+			evidence.SourceURL,
+			evidence.Owner,
+			evidence.ManagedBy,
+			evidence.UpdateOwner,
+			evidence.OwnershipConfidence,
+			evidence.ProviderMetadata,
+			evidence.MASID,
+			evidence.BundleID,
+			evidence.Version,
+		)
 	}
 	return strings.Contains(strings.ToLower(strings.Join(parts, " ")), query)
 }
@@ -1097,6 +1133,34 @@ func renderManualOverrideBlock(candidate manualReviewCandidate, override manualR
 		if evidence.Path != "" {
 			builder.WriteString(" path=")
 			builder.WriteString(tomlString(evidence.Path))
+		}
+		if evidence.ReviewURL != "" {
+			builder.WriteString(" review_url=")
+			builder.WriteString(tomlString(evidence.ReviewURL))
+		}
+		if evidence.SourceURL != "" {
+			builder.WriteString(" source_url=")
+			builder.WriteString(tomlString(evidence.SourceURL))
+		}
+		if evidence.Owner != "" {
+			builder.WriteString(" owner=")
+			builder.WriteString(tomlString(evidence.Owner))
+		}
+		if evidence.ManagedBy != "" {
+			builder.WriteString(" managed_by=")
+			builder.WriteString(tomlString(evidence.ManagedBy))
+		}
+		if evidence.UpdateOwner != "" {
+			builder.WriteString(" update_owner=")
+			builder.WriteString(tomlString(evidence.UpdateOwner))
+		}
+		if evidence.OwnershipConfidence != "" {
+			builder.WriteString(" ownership_confidence=")
+			builder.WriteString(tomlString(evidence.OwnershipConfidence))
+		}
+		if evidence.ProviderMetadata != "" {
+			builder.WriteString(" provider_metadata=")
+			builder.WriteString(tomlString(evidence.ProviderMetadata))
 		}
 		if evidence.BundleID != "" {
 			builder.WriteString(" bundle_id=")

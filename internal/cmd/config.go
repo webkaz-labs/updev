@@ -21,12 +21,18 @@ type updevConfig struct {
 
 type updevSecurityConfig struct {
 	Homebrew updevHomebrewSecurityConfig
+	Mise     updevMiseSecurityConfig
 	VSCode   updevVSCodeSecurityConfig
 }
 
 type updevHomebrewSecurityConfig struct {
+	MinReleaseAgeDays      *int
+	MinTapAgeDays          *int
+	OutdatedTimeoutSeconds *int
+}
+
+type updevMiseSecurityConfig struct {
 	MinReleaseAgeDays *int
-	MinTapAgeDays     *int
 }
 
 type updevVSCodeSecurityConfig struct {
@@ -42,6 +48,11 @@ type updevProvidersConfig struct {
 
 type updevUpdateConfig struct {
 	Security *string
+	MiseBump updevMiseBumpUpdateConfig
+}
+
+type updevMiseBumpUpdateConfig struct {
+	Mode *string
 }
 
 type updevUIConfig struct {
@@ -151,6 +162,13 @@ func parseUpdevConfigTOML(data string) updevConfig {
 				config.Security.Homebrew.MinReleaseAgeDays = parseNonNegativeIntPtr(stringValue)
 			case "min_tap_age_days":
 				config.Security.Homebrew.MinTapAgeDays = parseNonNegativeIntPtr(stringValue)
+			case "outdated_timeout_seconds":
+				config.Security.Homebrew.OutdatedTimeoutSeconds = parseNonNegativeIntPtr(stringValue)
+			}
+		case "security.mise":
+			switch key {
+			case "min_release_age_days":
+				config.Security.Mise.MinReleaseAgeDays = parseNonNegativeIntPtr(stringValue)
 			}
 		case "security.vscode":
 			switch key {
@@ -171,6 +189,11 @@ func parseUpdevConfigTOML(data string) updevConfig {
 			if key == "security" && validUpdateSecurityMode(stringValue) {
 				normalized := stringValue
 				config.Update.Security = &normalized
+			}
+		case "update.mise_bump":
+			if key == "mode" && validMiseBumpMode(stringValue) {
+				normalized := strings.ToLower(strings.TrimSpace(stringValue))
+				config.Update.MiseBump.Mode = &normalized
 			}
 		case "ui":
 			switch key {
@@ -369,6 +392,15 @@ func parseBoolValue(value string) (bool, bool) {
 func validUpdateSecurityMode(value string) bool {
 	switch strings.ToLower(strings.TrimSpace(value)) {
 	case "off", "warn", "strict":
+		return true
+	default:
+		return false
+	}
+}
+
+func validMiseBumpMode(value string) bool {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "off", "manual", "safe", "auto":
 		return true
 	default:
 		return false

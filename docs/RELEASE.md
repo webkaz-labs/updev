@@ -10,276 +10,231 @@ stays an integer schema contract. `v0.x` releases are public preview releases;
 
 ## Current Release
 
-The current implemented release is `updev v0.5.8`. `updev version`,
+The current implemented release is `updev v0.6.0`. `updev version`,
 `updev --version`, and `updev -v` report this command contract.
 
-`updev v0.5.8` is the current dogfood performance, portability, and cached-report
-polish patch on the `v0.5.x` CLI scope. It keeps the accepted `v0.5.7`
-dashboard/list/detail action model while reducing perceived TTY latency,
-preserving provider log visibility, keeping `last`/`list` cache paths
-deterministic, and making manual inventory defaults portable outside this
-dotfiles repository. It also includes the `v0.5.6` Japanese
-description-translation UX and the `v0.5.7` routed action baseline.
+`updev v0.6.0` completes the first updev-owned provider gate model for the
+macOS/Homebrew/mise preview. It keeps the accepted routed TTY UX from
+`v0.5.7` and the performance/portability bridge from `v0.5.8`, then adds
+backend-specific release-age/advisory evidence for mise and candidate-scoped
+strict update execution for both mise and Homebrew.
 
-The `v0.5.8` performance and portability gate is tracked in [UX.md](UX.md).
-Provider command execution remains outside the alternate-screen TUI so brew/mise
-logs are visible. Post-provider review domains may refresh inside the dashboard
-only when canceled or partial results cannot be mistaken for completed cached
-reports. Keep regression commands in local test plans, not as a permanent
-release log here.
+Provider command execution remains outside the alternate-screen TUI so
+brew/mise logs stay visible. Post-provider review domains may refresh inside the
+dashboard only when canceled or partial results cannot be mistaken for completed
+cached reports. Keep detailed implementation history in git log and tag-specific
+notes in [release-notes](release-notes/).
 
-### v0.5.x Scope
-
-1. **Read-only app scan**: `updev inventory scan --provider manual` reports
-   evidence from `/Applications`, `~/Applications`, bundle `Info.plist`, Mac
-   App Store receipts / `mas list` where available, and cached Homebrew cask
-   inventory.
-2. **Normalized identity model**: manual/vendor app rows reconcile by display
-   name, normalized name, bundle id, MAS id, cask token, path, aliases, and
-   provider ownership evidence.
-3. **Cask/manual reconciliation**: Homebrew cask evidence merges into the manual
-   row instead of creating duplicate GUI app entries when identity matches.
-4. **Review candidates**: live-only or ambiguous rows emit
-   `review_candidates[]` with stable `reason_code`, `remediation_code`,
-   `confidence`, params, evidence, and suggested override fields.
-5. **Review override preview**: `updev inventory review --provider manual`
-   renders read-only TOML snippets for the configured inventory override file
-   and returns exit `2` while review is needed.
-6. **Generated report preview**: `updev inventory render --report manual-apps`
-   previews generated Markdown without writing desired state.
-7. **Manual inventory plan/check**: `updev inventory plan --provider manual`
-   and `check` group rows into `keep-manual`, `adopt-brew`, `adopt-mas`,
-   `ignore-local`, `open-vendor`, and `needs-review`.
-8. **Main human entry point**: interactive `updev`, `updev list`, and
-   `updev last` are the human-facing TTY entry points; `--plain` and
-   `--format json` are the stable agent/script outputs. `updev` can still
-   route to the manual plan when manual actions need review, but manual/vendor
-   rows remain outside the default package update table.
-9. **Override write actions**: `updev inventory review --provider manual
-   --action accept|edit|ignore --query <text>` appends exactly one selected
-   override to the configured overrides TOML.
-10. **Gated provider guidance**: plan JSON includes `attention_count`,
-    `suggested_provider`, `review_url`, `install_hint`, and quoted
-    `command_preview` fields for review; vendor installer commands are never
-    executed from inventory output.
-11. **mise native age-policy diagnostics**: `updev doctor dependencies` and
-    `updev check --dependencies` report mise `minimum_release_age`, source,
-    active/inactive status, and command-shape support.
-12. **mise fix age-policy evidence**: `updev fix mise` text/JSON reports include
-    whether `mise latest <tool>` resolutions ran under an effective mise
-    `minimum_release_age` policy.
-13. **Documentation source-of-truth checks**: `docs/agent/` is the canonical
-    agent guidance tree, `docs/release-notes/<tag>.md` is the GitHub Release
-    body source, and `mise run docs-check` covers release-note presence,
-    README links, agent guidance files, and mise/CI validation parity.
-14. **Description translation UX**: Japanese TTY `updev` and
-    `updev list` can best-effort refresh cached `updev list` descriptions via
-    the optional Codex CLI, `[ui].description_translation` can switch between
-    `auto`, `manual`, and `off`, missing Codex remains non-fatal, and
-    `updev doctor dependencies` reports the optional backend.
-15. **Default strict update gate**: `updev` runs with strict security by
-    default. Homebrew and mise update candidates pass through the updev-owned
-    gate vocabulary; current mise candidates default to review and strict mode
-    holds `mise upgrade` until an explicit temporary policy allow is written.
-
-### v0.5.x Non-Goals
-
-- automatic installation of paid, privileged, vendor-account, or
-  checksum-missing apps;
-- broad Linux/Windows package provider support;
-- replacing Homebrew casks that already work well;
-- making manual/vendor rows part of the default `updev` inventory;
-- claiming public `v1.0.0` readiness.
-
-### v0.5.x Release Criteria
-
-- read-only scan, reconciliation, plan/check, review, and render paths have
-  focused tests with fake filesystem / command evidence;
-- JSON reports expose identity, lifecycle, owner, evidence, confidence,
-  reason/remediation codes, params, suggested overrides, suggested providers,
-  install hints, review URLs, and command previews without ANSI color or
-  localization;
-- manual/vendor inventory stays opt-in;
-- docs-check passes for high-value documentation mirrors;
-- `go mod verify`, `go vet ./...`, `go test ./...`, `go build ./...`, and
-  `git diff --check` pass. Repository-local integration smoke checks may add
-  extra gates before mirroring a release.
-
-## Current Patch: v0.5.8 TUI Performance/Streaming Polish
-
-`updev v0.5.8` is the active dogfood polish line. The detailed UX contract and
-tracking checklist live in [UX.md](UX.md). The `v0.5.7` routed TUI baseline is
-accepted for the common human paths: dashboard, installed inventory, manual
-review, backend convergence, cached update/security detail, filters, query
-input, and safe write confirmations stay inside the same TTY review flow.
-
-The current patch is not a fully streaming update runner. Provider updates run
-before the dashboard opens so Homebrew/mise stdout and stderr remain visible in
-normal terminal output. After provider logs finish, the dashboard may refresh
-post-provider review domains such as manual inventory and backend convergence
-without restarting the selector. Scriptable output contracts stay deterministic:
-`--plain`, JSON, non-TTY fallback, and cached `last` output do not open the TUI
-or rewrite the wrong cached report.
-
-### v0.5.7 Routed UX Baseline
-
-- [x] **Action-rich detailed list**: detailed `updev list` / update views make
-  updated, deferred, held, skipped, errored, and review-needed rows visually
-  distinct, with collapsed badges for action count, update/defer counts,
-  security decision, release asset status, and backend applyability. Update
-  views include item-level updated/deferred rows in addition to provider log
-  rows, with enough expanded evidence to decide what changed and why.
-- [x] **Detail row actions foundation**: expanded rows can show numbered actions
-  and execute them from that context where a safe write path exists: security
-  allow/hold with default or custom reason/expiry, security allow plus provider
-  rerun, manual override accept/edit/ignore, cask/MAS/vendor evidence review,
-  safe backend rewrite, covered old mise-entry removal, and Brewfile ownership
-  removal when mise already owns the tool.
-- [x] **Manual plan operability after `updev`**: the post-`updev` manual review
-  plan must not feel like a dead-end Back-only screen. Rows that can be acted on
-  expose those actions clearly, and rows that are read-only explain the exact
-  next command or evidence needed.
-- [x] **Provider log formatting**: Homebrew and other provider stdout/stderr
-  keep meaningful newlines in expanded update/log detail instead of collapsing
-  into one wrapped paragraph.
-- [x] **Dashboard-in-dashboard actions**: the `updev` dashboard itself should be
-  an actionable detail view where feasible. Focused dashboard rows show their
-  `a/1`, `2`, ... action hints before expansion, while the footer selector stays
-  available for flows that cannot sensibly live inside dashboard rows.
-- [x] **Manual list brew/cask suppression**: `updev list --provider manual`
-  should not show Homebrew-managed GUI apps in the default Installed apps review
-  bucket. Homebrew cask evidence remains available through explicit status/query
-  filters.
-- [x] **Backend apply path**: backend convergence should not only show
-  suggestions. Safe mise backend rewrites and covered old-entry removals can be
-  applied from the `updev` / `updev list` detail browser after confirmation;
-  each row explains whether it is applyable or review-only. Brewfile ownership
-  removal is available only when the recommended mise entry already exists;
-  full brew-to-mise migration from a missing mise entry remains review-only.
-- [x] **Backend preference policy**: align default tiers with mise registry
-  acceptance guidance (`core`, `aqua`, `github`/`gitlab`, `conda`, then
-  language package backends), keep deprecated/legacy backends such as `ubi` and
-  `asdf` out of the default recommendation order, and add configurable
-  `[backends].preference_order` so future providers can be ranked without code
-  changes.
-- [x] **Backend GitHub coverage**: infer GitHub backend candidates from scalable
-  metadata sources, starting with Homebrew formula URLs and mise `cargo:` /
-  `npm:` package repository metadata. Known GitHub-backed tools such as `broot`
-  and `rtk` are dogfood fixtures, not one-off special cases.
-- [x] **Backend candidate evidence**: metadata-inferred `mise/github` moves are
-  review-only candidates, not direct recommendations. When `gh` is available,
-  latest-release asset names are sampled and matched against the current
-  OS/architecture; npm/cargo entries stay non-applyable until release assets,
-  version mapping, and official distribution ownership are verified. Japanese
-  TTY copy must label these rows as candidates. `cargo:` rows with missing or
-  non-matching release assets must explain that the local cargo build should be
-  kept until compatible binary release evidence exists.
-- [x] **Hands-on TTY acceptance pass**: run the actual `updev` and `updev list`
-  interactive flows in a real terminal, not only renderer tests or non-TTY
-  output, and verify the three dogfood UX promises end to end: focused-row action
-  hints are visible before expansion, manual app rows can execute their safe
-  actions from details, and backend/security detail actions can be selected,
-  confirmed, and either applied or clearly rejected as review-only. When the
-  live report has no actionable security finding, use a fixture-backed cached
-  report via `updev last --section security` for the security action
-  confirmation smoke.
-
-The `v0.5.7` routed-action release gate is closed. Automated renderer tests and
-PTY smoke remain useful regression checks, but real-terminal acceptance is the
-source of truth for the final UX read.
-
-### v0.5.8 Target Checklist
-
-- [x] **Fast local TTY regression loop**: keep `mise run test-e2e-fast` as the
-  short route smoke and the full PTY route suite as the release gate.
-- [x] **Provider log visibility**: non-dry-run update output streams brew/mise
-  logs before the post-update dashboard opens; real provider logs are not hidden
-  behind an alternate-screen TUI.
-- [x] **Shared dashboard context**: post-update manual/backend review loading
-  uses dashboard messages so completed results refresh in place and TUI exit
-  cancels context-aware loaders.
-- [x] **Deterministic cached reports**: real updates keep `last-update.json`,
-  dry-runs keep `last-dry-run.json`, and `updev last --plain` / JSON read the
-  intended cache without recomputing or normalizing the wrong report.
-- [x] **Readable update evidence**: duplicate Homebrew progress/outcome rows are
-  suppressed, skipped trusted-tap warnings are itemized, and list badges reuse
-  cached update/security/backend evidence without blocking initial inventory
-  rendering.
-- [x] **Portable manual defaults**: repository-local `docs/apps.md` is no longer
-  an implicit public desired-state source. Structured manual sources and draft
-  agent enrichment keep generated metadata reviewable before it becomes desired
-  state.
-- [x] **Future streaming boundary**: security, inventory, and translation
-  domains can reuse post-provider dashboard refresh only after canceled partial
-  reports are visibly distinct from completed cached reports.
-
-### v0.5.8 Non-Goals
-
-- broad Linux/Windows provider implementation;
-- automatic vendor installer execution;
-- silent Brewfile removal after backend migration;
-- changing JSON reports to execute actions implicitly;
-- changing provider policy decisions or gate vocabulary;
-- changing the `v0.6.0` mise gate contract;
-- owning provider command execution inside the alternate-screen TUI;
-- making partial reports look equivalent to completed reports in JSON output.
-
-## Next Minor: v0.6.0
-
-`updev v0.6.0` starts after the accepted `v0.5.7` routed UX baseline and the
-completed `v0.5.8` performance/portability bridge. It should finish the
-provider-wide gate model that `v0.5.7` started:
-Homebrew already has release-age evidence, and mise now has an updev-owned
-strict hold path for review candidates. v0.6.0 should add backend-specific
-release-age/advisory evidence for mise, then make that model the direction for
-VS Code and future providers. Linux scanner groundwork can proceed after this
-safety model is explicit.
-
-### v0.6.0 Target Scope
+### v0.6.0 Scope
 
 1. **Complete mise release-age gate**: evaluate GitHub and registry-backed mise
    candidates with updev config/env thresholds, cache keys, text/JSON evidence,
-   and `allow|hold|review|block` decisions aligned with Homebrew. Keep opaque
-   or unsupported candidates review-held instead of guessing release age.
+   and `allow|hold|review|block` decisions aligned with Homebrew. Supported
+   evidence sources include mise core/plugin metadata where cheap, GitHub
+   release/tag/ref dates for `github:` and repository-backed entries, and
+   registry publish dates for high-confidence `npm:` / `cargo:` / `pipx:`
+   identities.
 2. **Provider-native policy evidence**: report mise `minimum_release_age` as
    evidence, but keep updev-owned gate decisions independent and explainable.
+   If mise's own policy already held an update, show that as provider evidence
+   rather than silently treating it as an updev decision. Detect native holds
+   with two batch provider probes, not per-tool `mise latest` calls: compare
+   normal `mise outdated --json --cd <root>` with
+   `MISE_MINIMUM_RELEASE_AGE=0d mise outdated --json --cd <root>`. Rows present
+   only in the age-disabled result, or rows whose age-disabled `latest` is
+   newer than the normal `latest`, are shown as mise-native release-age holds.
 3. **Provider-wide gate contract**: document the common fields every provider
    gate should expose: candidate identity, release date/age, min age, evidence,
    policy source, decision, confidence, and remediation.
-4. **Agent skill command**: add `updev skill`, `updev skill --full`, and
-   `updev help agent` after the `docs/agent/` source tree exists. These commands
-   should embed the canonical files and avoid duplicating command reference in
-   code.
-5. **Documentation drift checks**: add a focused local/CI check for high-value
+4. **Unsupported/opaque candidate behavior**: keep unsupported, opaque, or
+   low-confidence mise candidates as `review` in strict mode. Do not allow a
+   candidate only because evidence is unavailable, and do not guess release age
+   from a version string.
+5. **Security review UX parity**: make mise held/review candidates visible in
+   the same dashboard/list/detail action surfaces as Homebrew findings. Rows
+   should show compact badges, expanded evidence, and safe temporary policy
+   actions with confirmation.
+6. **Pinned-version visibility**: expose read-only mise `--bump` candidates
+   separately from the normal update gate. Exact pins can make
+   `mise outdated --json` and `mise upgrade --dry-run` report no mutation while
+   `mise outdated --json --bump` has newer versions. These rows are not
+   automatic update candidates, but `updev list`, backend convergence, and
+   security detail should show them as pinned-version update opportunities,
+   using mise's JSON `bump` field as the source of truth. Rows with
+   `bump: null`, such as `node = "lts"`, remain desired state aliases and are
+   not rewritten by the bump gate. Major/minor prefix selectors such as
+   `node = "24"` or `node = "24.16"` follow mise's own `--bump` semantics,
+   including mise-native `minimum_release_age` holds detected by comparing
+   normal and age-disabled `--bump` output. `[update.mise_bump].mode` controls
+   how far updev goes: `off` hides the normal workflow integration, `manual`
+   shows item-scoped confirmed actions, `safe` also offers a confirmed safe
+   batch action, and `auto` automatically applies only safe bump candidates
+   during the normal update workflow. Safe item rows should expose a confirmed
+   bump action that previews and then runs the scoped provider command
+   (`mise upgrade --bump <tool>`). Safe batch and automatic modes must run an
+   explicit scoped tool list (`mise upgrade --bump <tool...>`), never a broad
+   unscoped bump. Held/review rows should route through security policy review
+   before any write action is enabled, and automatic mode must skip them.
+7. **Homebrew greedy gate parity**: align Homebrew safety evidence with the
+   actual update command. Because `updev` runs `brew upgrade --greedy`, the
+   safety gate must either use `brew outdated --json=v2 --greedy` or compare
+   normal and greedy JSON output so casks with `version :latest` or
+   `auto_updates true` are not updated without safety visibility. Keep
+   `HOMEBREW_NO_INSTALL_FROM_API=1` on Homebrew JSON probes so Homebrew 6
+   safety discovery reads local tap metadata instead of failing on unavailable
+   internal package JSON endpoints such as `packages.dunno_sequoia.jws.json`.
+8. **Candidate-scoped strict updates**: strict mode must not treat one
+   too-new candidate as a provider-wide block when safe candidates remain.
+   If the installed version is `1`, provider metadata says `2` is old enough,
+   and a newer `3` is still inside the release-age window, updev should apply
+   the safe `1 -> 2` candidate where the provider can do that and keep `3`
+   visible as held. For mise, scoped
+   `mise upgrade --minimum-release-age <Nd> <tool...>` uses the updev-configured
+   age policy so it does not depend on global mise native settings; native
+   `minimum_release_age` holds are still surfaced when present. For Homebrew,
+   normal `brew upgrade` cannot generally install an older intermediate release
+   for the same formula/cask, so updev
+   must upgrade only gated local-metadata candidates with
+   `HOMEBREW_NO_AUTO_UPDATE=1`, refresh metadata only after scoped upgrades or
+   as a metadata-only no-candidate step, immediately re-run the Homebrew gate
+   after metadata-only refresh without stale outdated caches, skip held Homebrew
+   packages while continuing scoped upgrades for other allowed Homebrew
+   candidates, and explain the provider limitation in the skipped evidence.
+9. **Documentation drift checks**: add a focused local/CI check for high-value
    mirrors such as release-note presence for tags, embedded agent skill output,
    README links, and mise/CI validation parity. Expand later only where drift
    has caused real maintenance risk.
-6. **Linux manual inventory scanner**: add read-only evidence from `.desktop`
-   files, Flatpak, Snap, AppImage, and distro package metadata where cheap.
-7. **Cross-platform fixtures**: cover Linux and Windows-style evidence with fake
-   runner / fixture tests so most implementation can proceed on macOS.
-8. **Windows scanner spike**: define registry / winget evidence mapping and keep
-   it read-only; mark it experimental until a Windows runner or real machine
-   dogfood exists.
-9. **Provider promotion parity**: map Linux/Windows manual app rows into the
-   same plan/check action vocabulary without making broad package management a
-   stable promise.
 10. **Evidence quality**: improve source URLs, ownership confidence, and
    provider-native metadata for manual/vendor decisions.
-11. **Provider-general structured inventory sources**: extend the TOML manual
-   source pattern to Linux/Windows app evidence and future JSON import/export
-   only after the macOS manual source flow has stabilized.
-12. **Provider-native enrichment sources**: add optional provider-native
-   metadata for manual/vendor decisions without changing the draft safety
-   boundary introduced in v0.5.8.
 
 ### v0.6.0 Non-Goals
 
 - default update inclusion for manual/vendor rows;
 - automatic external installer execution;
-- requiring a Windows environment for the first Linux scanner implementation;
+- requiring a Windows environment or runner;
+- claiming Linux/Windows provider support as stable;
 - silently mutating mise provider settings;
 - public `v1.0.0` stability promise.
+
+### v0.6.0 Release Criteria
+
+These criteria mirror the full v0.6.0 scope. They must remain checked before
+tagging or mirroring the release.
+
+- [x] `updev security gate --provider mise --format json` reports mise
+  `minimum_release_age` provider evidence even when no candidate is pending.
+- [x] mise-native `minimum_release_age` holds are detected with batch
+  `mise outdated --json` comparison against an age-disabled provider probe, so
+  item-level holds remain visible without per-tool `mise latest` probes.
+- [x] Provider gate docs define the shared candidate identity, release
+  date/age, minimum age, evidence, policy source, decision, confidence, and
+  remediation contract for current and future providers.
+- [x] Mise held/review candidates are visible from the same dashboard, list,
+  detail, and security action surfaces as Homebrew findings, including compact
+  badges, expanded evidence, and confirmed temporary policy actions.
+- [x] Read-only mise pinned-version opportunities from `mise outdated --bump`
+  are visible outside the mutation gate, including age-gated vs age-disabled
+  `--bump` differences.
+- [x] Safe mise pinned-version rows can be bumped from TTY detail/action flows
+  with scoped dry-run preview, confirmation, and post-action report refresh.
+- [x] `[update.mise_bump].mode = "auto"` runs only safe mise bump candidates
+  from the normal `updev` workflow with a dry-run preflight, scoped provider
+  command, release-age/security gates still active, and skipped held/review
+  candidates visible in the final report.
+- [x] Scoped mise bumps for `npm:*` tools avoid npm's `--before` /
+  `min-release-age` conflict by using a temporary npm user config that keeps
+  registry/auth entries while removing npm release-age keys for that command.
+- [x] Homebrew update safety covers the same candidate class as
+  `brew upgrade --greedy`, including greedy-only cask candidates, while keeping
+  the local-tap JSON fallback that avoids Homebrew package API 404s.
+- [x] Homebrew 6 tap trust gaps are diagnosed read-only: doctor checks
+  `brew trust --json=v1` through local tap metadata, compares it with
+  non-official `Brewfile.tmpl` tap/formula/cask entries, and security posture
+  rows show preferred item-scoped trust commands without auto-trusting anything.
+- [x] Strict update execution is candidate-scoped: safe mise candidates can
+  update while newer mise-native age holds remain visible, and Homebrew applies
+  allowed packages while skipping held packages instead of blocking the whole
+  provider. Homebrew strict upgrades do not run `brew update` before package
+  mutation, so continuously released packages can age in using local metadata
+  instead of being replaced by a fresh latest candidate every run. If no
+  package candidate is pending before metadata refresh, Homebrew is refreshed
+  and re-gated in the same run so auto mode is not forced to wait for another
+  invocation. If only held/review Homebrew candidates are pending, updev may
+  refresh metadata but does not run an unscoped provider-wide upgrade; those
+  package names remain visible as item-level skipped rows. Homebrew
+  intermediate release installs remain unsupported unless Homebrew itself
+  exposes a safe versioned path.
+- [x] GitHub-backed, explicit `aqua:`, mise-registry `aqua`, and selected core
+  runtime (`go`, `node`, `rust`) candidates can become `allow` or `hold` from
+  release/tag/ref age evidence; missing GitHub evidence stays `review`.
+- [x] `npm:`, `cargo:`, and `pipx:` mise candidates can become `allow` or
+  `hold` from registry publish/upload age evidence plus basic provenance
+  checks; deprecated, yanked, missing-version, missing-maintainer, or
+  missing-repository candidates stay `review`.
+- [x] vfox-backed mise candidates are resolved through a data-driven provider
+  metadata registry, not one-off tool branches. The first registry entry maps
+  `vfox:mise-plugins/vfox-gcloud` to Google Cloud CLI vendor release notes;
+  candidates become `allow` or `hold` only when the configured resolver returns
+  a release date for the exact candidate version. Missing resolver entries,
+  unavailable vendor metadata, parse failures, or unknown upstream evidence stay
+  `review`.
+- [x] Unsupported or opaque mise backends stay `review` in strict mode and are
+  never allowed by version-string guessing.
+- [x] Local policy is reapplied after cache load, and text/JSON output keeps
+  candidate identity, release date/age, minimum age, evidence, decision,
+  confidence, and remediation.
+- [x] Focused docs drift checks cover release-note presence, README links,
+  agent guidance files, release workflow expectations, and mise/CI validation
+  parity.
+- [x] Manual/vendor evidence quality is upgraded for v0.6.0: source URLs,
+  ownership confidence, and provider-native metadata are improved in the
+  scanner output, review plan, list/detail UX, and docs without relying on
+  machine-local `docs/apps.md` assumptions.
+- [x] `mise -C tools/updev run check`, `mise -C tools/updev run docs-check`,
+  `git diff --check`, and `chezmoi apply --dry-run` pass before release.
+
+## Next Patch: v0.6.x
+
+The next patch line should stay incremental and should not broaden the stable
+preview support promise without explicit dogfood. Start this line with the
+architecture/scalability track before adding broader provider surfaces:
+
+- extract the backend recommendation engine out of command handlers so provider
+  evidence, preference policy, action planning, and rendering can evolve without
+  adding command-local branches;
+- move curated backend rewrite seeds into an explicit registry or
+  provider-metadata resolver with source evidence and tests. New tool-specific
+  mappings should not be added as inline code branches;
+- keep backend recommendation UX parity while refactoring: `updev`, `updev
+  list`, `updev last`, installed inventory detail, manual inventory detail, and
+  backend review should continue to show compact badges, expanded evidence,
+  item-scoped actions, and correct Back/Home return paths;
+- audit direct subprocess usage against [ARCHITECTURE.md](ARCHITECTURE.md)
+  and route non-exception provider/action commands through `internal/runner`;
+- add confirmed Homebrew 6 tap trust write actions after the read-only
+  diagnostics have settled. Actions should prefer item-scoped
+  `brew trust --formula` / `brew trust --cask`, require explicit confirmation
+  for whole-tap trust, and never run automatically during update;
+- centralize path/env/root resolution for backend and inventory code so public
+  defaults do not depend on this dotfiles repository or one machine;
+- add `updev skill`, `updev skill --full`, and `updev help agent` only if the
+  embedded `docs/agent/` source tree can stay the single source of truth;
+- add read-only Linux manual inventory evidence and cross-platform fixtures
+  before claiming provider support beyond macOS/Homebrew/mise;
+- add a Windows scanner spike only as experimental read-only evidence;
+- extend provider-general structured inventory sources after the macOS manual
+  source flow remains stable;
+- broaden provider-native enrichment sources without changing the agent draft
+  safety boundary. New vfox/asdf-style backends must add data entries to the
+  provider metadata registry, identify the resolver type (`github_release`,
+  `github_tag`, `vendor_release_notes`, `vendor_json`, `package_registry`, or a
+  similarly bounded source), and prove candidate-version release dates in tests;
+- expand vfox provider metadata beyond the initial Google Cloud CLI fixture only
+  when the backend's upstream source, release-date source, and parser contract
+  can be verified. Generic vfox remains strict-mode review unless a registry
+  entry resolves the exact candidate version;
+- decide whether provider contract drift checks should only fail locally/CI or
+  also open/update GitHub issues with explicit public-repo credentials.
 
 ## Later Ordering
 
