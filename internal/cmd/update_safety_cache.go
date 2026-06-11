@@ -1,20 +1,14 @@
 package cmd
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
-	"encoding/json"
-	"os"
-	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/webkaz-labs/updev/internal/plan"
+	"github.com/webkaz-labs/updev/internal/securitygate"
 )
-
-const updateSafetyCacheVersion = 1
 
 var (
 	updateSafetyMarketplaceMaxAge   = 6 * time.Hour
@@ -24,105 +18,30 @@ var (
 	updateSafetyBrewOutdatedMaxAge  = 5 * time.Minute
 )
 
-type updateSafetyCacheEntry struct {
-	Version   int             `json:"version"`
-	Provider  string          `json:"provider"`
-	Key       string          `json:"key"`
-	CreatedAt time.Time       `json:"created_at"`
-	Status    plan.Status     `json:"status,omitempty"`
-	Error     string          `json:"error,omitempty"`
-	Findings  []safetyFinding `json:"findings"`
-	Warnings  []string        `json:"warnings,omitempty"`
-}
+type updateSafetyCacheEntry = securitygate.CacheEntry
 
 func loadUpdateSafetyCache(provider string, key string, maxAge time.Duration) (updateSafetyCacheEntry, bool) {
-	path := updateSafetyCachePath(provider, key)
-	if path == "" {
-		return updateSafetyCacheEntry{}, false
-	}
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return updateSafetyCacheEntry{}, false
-	}
-	var entry updateSafetyCacheEntry
-	if err := json.Unmarshal(data, &entry); err != nil {
-		return updateSafetyCacheEntry{}, false
-	}
-	if entry.Version != updateSafetyCacheVersion || entry.Provider != provider || entry.Key != key {
-		return updateSafetyCacheEntry{}, false
-	}
-	if maxAge > 0 && time.Since(entry.CreatedAt) > maxAge {
-		return updateSafetyCacheEntry{}, false
-	}
-	return entry, true
+	return securitygate.LoadCache(provider, key, maxAge)
 }
 
 func saveUpdateSafetyCache(provider string, key string, findings []safetyFinding, warnings []string) {
-	saveUpdateSafetyCacheEntry(updateSafetyCacheEntry{
-		Version:   updateSafetyCacheVersion,
-		Provider:  provider,
-		Key:       key,
-		CreatedAt: time.Now(),
-		Status:    plan.StatusOK,
-		Findings:  findings,
-		Warnings:  warnings,
-	})
+	securitygate.SaveCache(provider, key, findings, warnings)
 }
 
 func saveUpdateSafetyErrorCache(provider string, key string, status plan.Status, message string, warnings []string) {
-	if status == "" {
-		status = plan.StatusError
-	}
-	saveUpdateSafetyCacheEntry(updateSafetyCacheEntry{
-		Version:   updateSafetyCacheVersion,
-		Provider:  provider,
-		Key:       key,
-		CreatedAt: time.Now(),
-		Status:    status,
-		Error:     message,
-		Warnings:  warnings,
-	})
+	securitygate.SaveErrorCache(provider, key, status, message, warnings)
 }
 
 func saveUpdateSafetyUnavailableCache(provider string, key string, message string, findings []safetyFinding, warnings []string) {
-	saveUpdateSafetyCacheEntry(updateSafetyCacheEntry{
-		Version:   updateSafetyCacheVersion,
-		Provider:  provider,
-		Key:       key,
-		CreatedAt: time.Now(),
-		Status:    plan.StatusUnavailable,
-		Error:     message,
-		Findings:  findings,
-		Warnings:  warnings,
-	})
-}
-
-func saveUpdateSafetyCacheEntry(entry updateSafetyCacheEntry) {
-	path := updateSafetyCachePath(entry.Provider, entry.Key)
-	if path == "" {
-		return
-	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return
-	}
-	data, err := json.Marshal(entry)
-	if err != nil {
-		return
-	}
-	_ = os.WriteFile(path, data, 0o600)
+	securitygate.SaveUnavailableCache(provider, key, message, findings, warnings)
 }
 
 func updateSafetyCachePath(provider string, key string) string {
-	dir := updevCacheDir()
-	if dir == "" || provider == "" || key == "" {
-		return ""
-	}
-	return filepath.Join(dir, "update-safety-v1", provider, key+".json")
+	return securitygate.CachePath(provider, key)
 }
 
 func updateSafetyCacheKey(parts ...string) string {
-	hash := sha256.Sum256([]byte(strings.Join(parts, "\x00")))
-	return hex.EncodeToString(hash[:])
+	return securitygate.CacheKey(parts...)
 }
 
 func updateSafetyBrewCacheKey(root string, findings []safetyFinding, minReleaseAge time.Duration) string {

@@ -31,22 +31,22 @@ history in git log, and keep the current/next release target in
 - Documentation source-of-truth guidance, canonical `docs/agent/` usage/skill
   files, tag-specific release notes, and focused `docs-check` drift coverage are
   implemented.
-- `updev v0.6.0` mise/Homebrew provider gate scope is implemented: mise release
-  age evidence, native-policy visibility, scoped safe updates, pinned-version
-  bump visibility/actions, Homebrew greedy gate parity, and manual/vendor
-  evidence quality are in the current preview contract.
+- `updev v0.6.1` is the current preview contract: it keeps the `v0.6.0`
+  mise/Homebrew provider gate scope, then adds the first scalability refactor
+  slice, Homebrew trust detail actions, and public export drift checks.
 - `updev brewfile ...` and `brewfile` remain compatibility or low-level
   surfaces, not the primary human workflow.
 
 ## Near-Term Order
 
-1. Release and dogfood `updev v0.6.0`; keep macOS/Homebrew/mise as the supported
+1. Release and dogfood `updev v0.6.1`; keep macOS/Homebrew/mise as the supported
    preview path while Linux/Windows binaries stay experimental.
 2. Start the scalability refactor track in
    [ARCHITECTURE.md](ARCHITECTURE.md#scalability-audit-and-refactor-plan)
    before adding broad provider surfaces: package extraction, curated backend
-   seed migration, direct subprocess audit, path/env centralization, and test
-   file splits.
+   seed migration, direct subprocess policy enforcement, common
+   `internal/securitygate` report model, continued `internal/updevpath`
+   adoption for provider/platform paths, and test file splits.
 3. Add `updev skill` / `updev help agent` only if the canonical `docs/agent/`
    files can be embedded without duplicating command reference in code.
 4. Add Linux read-only manual inventory evidence after cross-platform fixtures

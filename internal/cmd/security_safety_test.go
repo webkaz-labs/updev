@@ -2253,6 +2253,63 @@ func TestUpdateDetailRowsExposeInventorySecurityAndLogs(t *testing.T) {
 	}
 }
 
+func TestHomebrewTrustSecurityDetailActionsPreferItemScopedTargets(t *testing.T) {
+	formula := safetyFinding{
+		Provider:     "brew",
+		Kind:         "brew",
+		Name:         "custom-tool",
+		Tap:          "vendor/tap",
+		Decision:     "review",
+		TrustStatus:  "needs-review",
+		TrustTarget:  "vendor/tap/custom-tool",
+		TrustCommand: "brew trust --formula vendor/tap/custom-tool",
+	}
+	actions := securityDetailActions(safetyGate{Provider: "brew"}, formula)
+	if len(actions) < 1 {
+		t.Fatalf("expected Homebrew trust action, got %#v", actions)
+	}
+	action, provider, kind, name, ok := parseSecurityDetailAction(actions[0].Value)
+	if !ok || action != securityActionBrewTrustFormula || provider != "brew" || kind != "formula" || name != "vendor/tap/custom-tool" {
+		t.Fatalf("expected item-scoped formula trust action, action=%q provider=%q kind=%q name=%q ok=%v actions=%#v", action, provider, kind, name, ok, actions)
+	}
+	if !securityDetailActionRequiresConfirmation(action) {
+		t.Fatalf("expected Homebrew trust action to require confirmation")
+	}
+	if command, ok := homebrewTrustCommandForSecurityAction(action, name); !ok || joinCommand(command) != "brew trust --formula vendor/tap/custom-tool" {
+		t.Fatalf("expected formula trust command, got command=%#v ok=%v", command, ok)
+	}
+
+	tapActions := securityDetailActions(safetyGate{Provider: "brew"}, safetyFinding{
+		Provider: "brew",
+		Kind:     "tap",
+		Name:     "vendor/tap",
+		Decision: "review",
+	})
+	if len(tapActions) == 0 {
+		t.Fatalf("expected whole-tap trust action for tap finding")
+	}
+	tapAction, _, tapKind, tapName, ok := parseSecurityDetailAction(tapActions[0].Value)
+	if !ok || tapAction != securityActionBrewTrustTap || tapKind != "tap" || tapName != "vendor/tap" {
+		t.Fatalf("expected tap trust action, action=%q kind=%q name=%q ok=%v actions=%#v", tapAction, tapKind, tapName, ok, tapActions)
+	}
+
+	official := securityDetailActions(safetyGate{Provider: "brew"}, safetyFinding{
+		Provider: "brew",
+		Kind:     "brew",
+		Name:     "git",
+		Tap:      "homebrew/core",
+		Decision: "review",
+	})
+	for _, action := range official {
+		if strings.Contains(action.Value, "brew-trust") {
+			t.Fatalf("expected official taps to avoid trust write actions, got %#v", official)
+		}
+	}
+	if _, ok := homebrewTrustCommandForSecurityAction(securityActionBrewTrustFormula, "--bad"); ok {
+		t.Fatalf("expected option-like Homebrew trust target to be rejected")
+	}
+}
+
 func TestUpdateLogDetailRowsDistinguishSkippedErrorAndPreserveLogLines(t *testing.T) {
 	rows := updateLogDetailRows(updateReport{Steps: []updateStep{
 		{
@@ -3286,8 +3343,11 @@ cask "https://example.com/custom-app.rb"
 	if findings[1].Name != "muxy" || findings[1].Decision != "review" || findings[1].Tap != "muxy-app/tap" {
 		t.Fatalf("expected custom tap cask review finding, got %#v", findings[1])
 	}
-	if !strings.Contains(findings[1].Remediation, "tap repository") {
-		t.Fatalf("expected tap remediation, got %#v", findings[1])
+	if findings[1].TrustTarget != "muxy-app/tap/muxy" || findings[1].TrustCommand != "brew trust --cask muxy-app/tap/muxy" {
+		t.Fatalf("expected item-scoped Homebrew trust metadata, got %#v", findings[1])
+	}
+	if !strings.Contains(findings[1].Remediation, "brew trust --cask muxy-app/tap/muxy") {
+		t.Fatalf("expected tap trust remediation, got %#v", findings[1])
 	}
 	warnings := manifestWarnings(manifest)
 	if len(warnings) != 1 || warnings[0].Name != "https://example.com/custom-app.rb" || warnings[0].Decision != "review" {

@@ -17,6 +17,7 @@ import (
 	"github.com/webkaz-labs/updev/internal/plan"
 	"github.com/webkaz-labs/updev/internal/runner"
 	"github.com/webkaz-labs/updev/internal/textui"
+	"github.com/webkaz-labs/updev/internal/updevpath"
 )
 
 type options struct {
@@ -31,7 +32,7 @@ type options struct {
 const (
 	usageExitCode = 64
 	toolName      = "updev"
-	toolVersion   = "v0.6.0"
+	toolVersion   = "v0.6.1"
 )
 
 type versionReport struct {
@@ -635,21 +636,7 @@ func runLegacy(args []string) int {
 }
 
 func defaultRoot() string {
-	if root := strings.TrimSpace(os.Getenv("UPDEV_ROOT")); root != "" {
-		return root
-	}
-	if root := configuredRoot(loadUpdevConfig()); root != "" {
-		return root
-	}
-	// Compatibility escape hatch for the original dotfiles-hosted workflow.
-	if root := strings.TrimSpace(os.Getenv("CHEZMOI_SOURCE_DIR")); root != "" {
-		return root
-	}
-	cwd, err := os.Getwd()
-	if err != nil {
-		return "."
-	}
-	return cwd
+	return updevpath.DefaultRoot(configuredRoot(loadUpdevConfig()))
 }
 
 func configuredRoot(config updevConfig) string {
@@ -660,20 +647,9 @@ func configuredRoot(config updevConfig) string {
 	if root == "" || strings.EqualFold(root, "auto") {
 		return ""
 	}
-	return resolveSourceRootConfigPath(root)
+	return updevpath.ResolveConfigRelative(root, updevConfigPath())
 }
 
 func resolveSourceRootConfigPath(path string) string {
-	path = strings.TrimSpace(path)
-	if path == "" {
-		return ""
-	}
-	if strings.HasPrefix(filepath.Clean(path), "~/") || filepath.IsAbs(path) {
-		return resolveUpdevConfigPath(".", path)
-	}
-	configPath := updevConfigPath()
-	if configPath == "" {
-		return filepath.Clean(path)
-	}
-	return filepath.Join(filepath.Dir(configPath), path)
+	return updevpath.ResolveConfigRelative(path, updevConfigPath())
 }

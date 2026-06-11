@@ -88,9 +88,19 @@ func TestDefaultRootUsesCWDWithoutMarkerClimb(t *testing.T) {
 			t.Fatal(err)
 		}
 	}()
-	if got := defaultRoot(); got != nested {
+	if got := defaultRoot(); !sameFilesystemPath(t, got, nested) {
 		t.Fatalf("expected cwd default without parent marker climb, got %q want %q", got, nested)
 	}
+}
+
+func sameFilesystemPath(t *testing.T, left string, right string) bool {
+	t.Helper()
+	leftEval, leftErr := filepath.EvalSymlinks(left)
+	rightEval, rightErr := filepath.EvalSymlinks(right)
+	if leftErr != nil || rightErr != nil {
+		return filepath.Clean(left) == filepath.Clean(right)
+	}
+	return leftEval == rightEval
 }
 
 func (fake *fakeCommandRunner) LookPath(name string) (string, error) {
@@ -223,7 +233,7 @@ func TestBuildVersionReport(t *testing.T) {
 	if report.SchemaVersion != 1 || report.Tool != toolName || report.Version != toolVersion {
 		t.Fatalf("unexpected version report: %#v", report)
 	}
-	if report.Major != 0 || report.Minor != 6 || report.Patch != 0 || report.Contract != "pre_stable" {
+	if report.Major != 0 || report.Minor != 6 || report.Patch != 1 || report.Contract != "pre_stable" {
 		t.Fatalf("unexpected version semantics: %#v", report)
 	}
 }

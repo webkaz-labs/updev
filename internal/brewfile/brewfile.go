@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+
+	"github.com/webkaz-labs/updev/internal/updevpath"
 )
 
 var lineRe = regexp.MustCompile(`^\s*(brew|cask|tap|vscode)\s+"([^"]+)"`)
@@ -53,7 +55,7 @@ func Run(ctx context.Context, root string, args []string) int {
 		if len(args) > 0 {
 			mode = args[0]
 		}
-		_ = runCommandQuiet(ctx, "chezmoi", "apply", filepath.Join(homeDir(), "Brewfile"))
+		_ = runCommandQuiet(ctx, "chezmoi", "apply", filepath.Join(updevpath.HomeDir(), "Brewfile"))
 		return runCommand(ctx, "brewtmplcheck", mode)
 	case "help", "--help", "-h":
 		usage()
@@ -261,17 +263,9 @@ func normalizeName(kind string, name string) string {
 
 func sourcePath(root string) string {
 	if root == "" {
-		root = filepath.Join(homeDir(), ".local", "share", "chezmoi")
+		root = updevpath.DefaultChezmoiSourceRoot()
 	}
 	return filepath.Join(root, "Brewfile.tmpl")
-}
-
-func homeDir() string {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return ""
-	}
-	return home
 }
 
 func runCommand(ctx context.Context, name string, args ...string) int {

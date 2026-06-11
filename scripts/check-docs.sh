@@ -39,7 +39,9 @@ fi
 require_file "docs/agent/USAGE.md"
 require_file "docs/agent/SKILL.md"
 require_grep 'docs/agent/' "docs/DESIGN.md"
-require_grep 'docs/release-notes/<tag>\.md' "docs/DESIGN.md"
+if [[ -f "$root/docs/PUBLISHING.md" ]]; then
+  require_grep 'docs/release-notes/<tag>\.md' "docs/DESIGN.md"
+fi
 
 require_grep 'uses: actions/setup-go@v6' ".github/workflows/ci.yml"
 require_grep 'run: scripts/check-docs\.sh' ".github/workflows/ci.yml"
@@ -49,25 +51,36 @@ require_grep 'run: go test \./\.\.\.' ".github/workflows/ci.yml"
 require_grep 'run: go build \./\.\.\.' ".github/workflows/ci.yml"
 require_grep 'depends = \["test", "vet", "mod-verify", "build"\]' "mise.toml"
 
-while IFS= read -r link; do
+"$root/scripts/check-direct-subprocesses.sh" || failures=$((failures + 1))
+
+while IFS=$'\t' read -r md_rel link; do
   target="${link%%#*}"
-  if [[ -z "$target" ]]; then
+  target="${target%% \"*}"
+  target="${target%% \'*}"
+  target="${target#<}"
+  target="${target%>}"
+  if [[ -z "$target" || "$target" == \#* ]]; then
     continue
   fi
-  if [[ "$target" == http://* || "$target" == https://* || "$target" == mailto:* ]]; then
+  if [[ "$target" =~ ^[A-Za-z][A-Za-z0-9+.-]*: || "$target" == /* ]]; then
     continue
   fi
-  if [[ "$target" == /* ]]; then
-    continue
-  fi
-  if [[ "$target" == docs/* || "$target" == README.md ]]; then
-    if [[ ! -e "$root/$target" ]]; then
-      fail "README link target does not exist: $target"
-    fi
+  md_dir="$(dirname "$md_rel")"
+  if ! (cd "$root/$md_dir" && [[ -e "$target" ]]); then
+    fail "$md_rel link target does not exist: $link"
   fi
 done < <(
-  grep -Eo '\[[^]]+\]\([^)]+\)' "$root/README.md" |
-    sed -E 's/^.*\(([^)]+)\)$/\1/'
+  find "$root" -path "$root/.git" -prune -o \( -name README.md -o -path "$root/docs/*.md" -o -path "$root/docs/*/*.md" \) -type f -print |
+    while IFS= read -r md; do
+      md_rel="${md#"$root"/}"
+      while IFS= read -r link; do
+        printf '%s\t%s\n' "$md_rel" "$link"
+      done < <(
+        grep -Eo '\[[^]]+\]\([^)]+\)' "$md" |
+          sed -E 's/^.*\(([^)]+)\)$/\1/' ||
+          true
+      )
+    done
 )
 
 if [[ "$failures" -gt 0 ]]; then
