@@ -15,6 +15,7 @@ import (
 	"github.com/webkaz-labs/updev/internal/plan"
 	"github.com/webkaz-labs/updev/internal/provider"
 	"github.com/webkaz-labs/updev/internal/runner"
+	"github.com/webkaz-labs/updev/internal/updevpath"
 )
 
 const inventoryCacheVersion = 4
@@ -132,38 +133,11 @@ func saveInventoryCache(entry inventoryCacheEntry) {
 }
 
 func inventoryCachePath(root string) string {
-	if stateDir := loadUpdevConfig().Inventory.StateDir; stateDir != nil {
-		if path := resolveUpdevConfigPath(root, *stateDir); path != "" {
-			return filepath.Join(path, "inventory-v1.json")
-		}
-	}
-	base := os.Getenv("XDG_CACHE_HOME")
-	if base == "" {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return ""
-		}
-		base = filepath.Join(home, ".cache")
-	}
-	return filepath.Join(base, "updev", "inventory-v1.json")
+	return updevpath.InventoryCacheFile(root, loadUpdevConfig().Inventory.StateDir)
 }
 
 func resolveUpdevConfigPath(root string, path string) string {
-	path = filepath.Clean(strings.TrimSpace(path))
-	if path == "." || path == "" {
-		return ""
-	}
-	if strings.HasPrefix(path, "~/") {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return ""
-		}
-		return filepath.Join(home, strings.TrimPrefix(path, "~/"))
-	}
-	if filepath.IsAbs(path) {
-		return path
-	}
-	return filepath.Join(root, path)
+	return updevpath.Resolve(root, path)
 }
 
 func annotateMiseManifestIssues(report *plan.Report, root string) {

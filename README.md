@@ -152,11 +152,11 @@ authenticated where needed, and visible on `PATH`.
 | Area | Requirement |
 |------|-------------|
 | macOS preview | Homebrew and mise installed locally. |
-| Homebrew provider | `brew` must support JSON output such as `brew outdated --json=v2` and, on Homebrew 6, `brew trust --json=v1`; package mutation still runs through Homebrew. updev uses local tap metadata for safety discovery and reports non-official tap trust gaps without auto-trusting them. |
+| Homebrew provider | `brew` must support JSON output such as `brew outdated --json=v2` and, on Homebrew 6, `brew trust --json=v1`; package mutation still runs through Homebrew. updev uses local tap metadata for safety discovery, reports non-official tap trust gaps, and exposes confirmed item-scoped `brew trust --formula` / `--cask` actions from security details. |
 | mise provider | `mise` must support `mise ls --current --json --cd <dir>`, `mise outdated --json --cd <dir>`, and scoped `mise upgrade --minimum-release-age <duration> <tool...>`. `updev` validates exact pins, rejects unsafe `latest` entries, and enforces its own age gate without requiring a global mise-native age setting. |
 | Description translation | Optional. `codex` on `PATH` enables Japanese description-cache updates for `updev list`; without it, `updev` keeps running with English descriptions. |
 | Manual app inventory | macOS `.app` bundle metadata is read locally; Mac App Store evidence is used only when receipts or `mas` evidence are available. |
-| Security gates | Network evidence is best-effort and provider-scoped. Strict mode can hold Homebrew updates, mise updates, and opt-in VS Code extension updates when required evidence is missing. Homebrew 6 tap trust is treated as a human security decision. |
+| Security gates | Network evidence is best-effort and provider-scoped. Strict mode can hold Homebrew updates, mise updates, and opt-in VS Code extension updates when required evidence is missing. Homebrew 6 trust remains a human security decision; whole-tap trust is confirmation-only and never runs automatically during update. |
 
 Known-good validation as of 2026-06-04:
 

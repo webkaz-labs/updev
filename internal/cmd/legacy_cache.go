@@ -9,6 +9,7 @@ import (
 	"sync"
 
 	"github.com/webkaz-labs/updev/internal/plan"
+	"github.com/webkaz-labs/updev/internal/updevpath"
 )
 
 const noDescription = "概要なし"
@@ -294,15 +295,7 @@ func legacyMiseCategory(name string) string {
 }
 
 func updevCacheDir() string {
-	base := os.Getenv("XDG_CACHE_HOME")
-	if base == "" {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return ""
-		}
-		base = filepath.Join(home, ".cache")
-	}
-	return filepath.Join(base, "updev")
+	return updevpath.CacheDir()
 }
 
 func loadTranslationTSV(path string, en map[string]string, ja map[string]string) {

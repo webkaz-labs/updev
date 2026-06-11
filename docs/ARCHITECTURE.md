@@ -15,6 +15,7 @@ support files such as `mise.toml`. Implementation belongs under `internal/`.
   mise.toml
   internal/
     cmd/        CLI commands, TTY routing, JSON/text output, cmd-only data
+    backend/    backend recommendation reports, preference registry, evidence probes
     provider/   provider interfaces and comparison helpers
     brew/       Homebrew and Brewfile provider
     mise/       mise provider
@@ -23,11 +24,14 @@ support files such as `mise.toml`. Implementation belongs under `internal/`.
     snapshot/   manifest snapshots and rollback helpers
     textui/     table, width, color, and non-TTY rendering helpers
     reviewui/   reusable TTY review/detail browser
+    securitygate/ provider gate, finding, summary, and update-safety cache model
+    updevpath/  updev root, XDG config/cache, policy, and source path resolution
 ```
 
-Keep new provider-specific code in its provider package when possible. Put code
-in `internal/cmd/` only when it is command parsing, report building,
-human/JSON rendering, or a command-local adapter.
+Keep new provider-specific code in its provider package when possible. Put
+backend/provider recommendation logic in `internal/backend`. Put code in
+`internal/cmd/` only when it is command parsing, command-local adapters,
+human/JSON rendering, or TTY route/action wiring.
 
 ## Provider Model
 
@@ -78,17 +82,28 @@ otherwise tool-local config trust can make unrelated tests fail.
 Known direct subprocess exceptions:
 
 - `main.go` calls `os.Exit(cmd.Run(...))`; this is the process boundary.
+- `runner.Local.RunStreamingWithEnv` is the single runner-backed subprocess
+  implementation that provider/scanner code should call through.
 - `cmd.runLegacy` delegates to the explicit Python compatibility escape hatch.
-- `cmd.openEditor` launches the user's editor for a foreground interactive edit
-  session.
-- `cmd.runTranslateWorker` launches Codex for description translation; this is
-  an explicit agent-assisted side path, not provider state collection.
-- `cmd.readMacOSLocale` shells out to `defaults` to read macOS global locale
+- `cmd.runEdit` and `cmd.editManualOverrideBlock` launch the user's editor for
+  foreground interactive edit sessions.
+- `cmd.translateBatch` launches Codex for description translation; this is an
+  explicit agent-assisted side path, not provider state collection.
+- `cmd.runManualAgentCommand` launches the configured local agent command for
+  manual inventory metadata enrichment after explicit opt-in; it validates the
+  structured draft before writing anything.
+- `cmd.readGlobalDefault` shells out to `defaults` to read macOS global locale
   when environment locale is not enough.
-- `cmd.githubToken` may call `gh auth token` as an isolated credential retrieval
-  fallback; provider and scanner commands still go through `internal/runner`.
-- `brewfile.runTemplate` / `brewfile.runBrewBundleCheck` are compatibility
-  wrapper internals and remain isolated from the primary Go provider path.
+- `cmd.githubTokenFromCLI` may call `gh auth token` as an isolated credential
+  retrieval fallback; provider and scanner commands still go through
+  `internal/runner`.
+- `brewfile.runCommand` and `brewfile.runCommandQuiet` are compatibility wrapper
+  internals and remain isolated from the primary Go provider path.
+
+`scripts/check-direct-subprocesses.sh`, called from `scripts/check-docs.sh`,
+keeps this exception list in sync with direct `exec.Command` /
+`exec.CommandContext` usage. Additions must be deliberate and documented before
+the docs check passes.
 
 ## TTY And Text UI
 
@@ -127,11 +142,11 @@ Current scalability risks and planned responses:
 
 | Area | Risk | Plan | Priority |
 |------|------|------|----------|
-| `internal/cmd` size | Command files mix CLI parsing, report building, provider evidence, TUI routing, and action execution. | Extract report builders, action services, backend recommendation, manual inventory, and security gate engines so `cmd` mostly assembles commands and views. | P1 |
-| Backend recommendations | Some curated backend preference seeds are code-level tool mappings. That does not scale across ecosystems. | Move tool-specific seeds into a registry or provider-metadata resolver with source evidence. New one-off mappings require a registry entry and tests, not an inline `case`. | P1 |
+| `internal/cmd` size | Command files can mix CLI parsing, report building, provider evidence, TUI routing, and action execution. | Keep backend recommendation reports in `internal/backend`; continue extracting action services, manual inventory, and security gate engines so `cmd` mostly assembles commands and views. | P1 |
+| Backend recommendations | Curated backend preference seeds can become opaque as ecosystems broaden. | Keep tool-specific seeds in the backend registry or a provider-metadata resolver with source evidence. Registry rules must carry source evidence that is surfaced in JSON/detail views and covered by tests. New one-off mappings require a registry entry and tests, not an inline `case`. | P1 |
 | Direct subprocesses | A direct `exec.Command` can bypass fakes, logs, policy, and test seams. | Keep direct subprocesses only in the documented exception list. Add periodic grep/docs-check coverage so new direct calls are reviewed. TUI actions that mutate state should call runner-backed services. | P1 |
-| OS/path defaults | macOS paths, XDG/Home, source-root, and repo-local markdown compatibility can become environment assumptions. | Centralize path/env resolution. Register OS scanners per platform. Keep repo-local markdown as explicit compatibility input, never an implicit public default. | P1 |
-| Security gates | Provider switches and feed parsing can grow into another command-local matrix. | Define provider gate contracts and move provider-specific release-age/advisory/native-audit evidence into provider or security subpackages. mise vfox/asdf-style ecosystems use data-driven provider metadata entries (`provider identity`, resolver type, bounded source URL, parser contract) instead of tool-name branches. Add contract drift checks for provider CLI/API/schema changes. | P1 |
+| OS/path defaults | macOS paths, XDG/Home, source-root, and repo-local markdown compatibility can become environment assumptions. | Keep root/config/cache/policy/source resolution in `internal/updevpath`. Continue moving provider/platform-specific paths behind explicit helpers or scanner contracts. Register OS scanners per platform. Keep repo-local markdown as explicit compatibility input, never an implicit public default. | P1 |
+| Security gates | Provider switches and feed parsing can grow into another command-local matrix. | Keep the common gate/finding/summary report model and update-safety cache store in `internal/securitygate`. Move provider-specific release-age/advisory/native-audit evidence into provider or security subpackages. mise vfox/asdf-style ecosystems use data-driven provider metadata entries (`provider identity`, resolver type, bounded source URL, parser contract) instead of tool-name branches. Add contract drift checks for provider CLI/API/schema changes. | P1 |
 | TUI routing | `updev`, `last`, `list`, manual review, and backend review can diverge in route handling and back-stack behavior. | Keep shared navigation, action focus, scroll preservation, and async refresh primitives in `reviewui`; command code supplies sections, rows, and action handlers. | P2 |
 | Width and localization | Hand-computed widths or embedded translated prose can regress tables and JSON contracts. | Keep display width in `textui`; keep recurring reason/status strings as stable codes plus render-time labels. | P1 |
 | Test structure | Large test files hide fixture duplication and make targeted runs slower. | Split tests by policy/scanner/native-audit/update/list/router/mise-bump domains and share fixture builders. Prefer focused unit tests before TTY acceptance tests. | P2 |
@@ -142,7 +157,7 @@ Execution order:
 1. Freeze the placement rules above and use them in release reviews.
 2. Move reusable TTY action and text primitives into `reviewui`/`textui` before
    adding more interactive screens.
-3. Extract the backend recommendation engine and curated rule registry.
+3. Expand the backend registry into data-backed entries with source evidence.
 4. Extract provider-specific security gate implementations.
 5. Split manual inventory scanners and enrichment into platform/source packages.
 6. Split large tests and add direct-subprocess/provider-contract drift checks.

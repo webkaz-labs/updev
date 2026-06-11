@@ -19,65 +19,16 @@ import (
 
 	"github.com/webkaz-labs/updev/internal/plan"
 	"github.com/webkaz-labs/updev/internal/runner"
+	"github.com/webkaz-labs/updev/internal/securitygate"
+	"github.com/webkaz-labs/updev/internal/updevpath"
 )
 
-type safetyGate struct {
-	Provider string          `json:"provider"`
-	Status   plan.Status     `json:"status"`
-	Summary  *safetySummary  `json:"summary,omitempty"`
-	Error    string          `json:"error,omitempty"`
-	Warnings []string        `json:"warnings,omitempty"`
-	Evidence []string        `json:"evidence,omitempty"`
-	Findings []safetyFinding `json:"findings,omitempty"`
-}
+type safetyGate = securitygate.Gate
+type safetySummary = securitygate.Summary
+type safetyFinding = securitygate.Finding
 
-type safetySummary struct {
-	Findings int `json:"findings"`
-	Allow    int `json:"allow,omitempty"`
-	Review   int `json:"review,omitempty"`
-	Hold     int `json:"hold,omitempty"`
-	Block    int `json:"block,omitempty"`
-	Unknown  int `json:"unknown,omitempty"`
-}
-
-type safetyFinding struct {
-	Provider          string   `json:"provider"`
-	Kind              string   `json:"kind"`
-	Name              string   `json:"name"`
-	InstalledVersions []string `json:"installed_versions,omitempty"`
-	CurrentVersion    string   `json:"current_version,omitempty"`
-	Decision          string   `json:"decision"`
-	Reason            string   `json:"reason"`
-	Remediation       string   `json:"remediation,omitempty"`
-	Evidence          []string `json:"evidence,omitempty"`
-	Source            string   `json:"source,omitempty"`
-	Tap               string   `json:"tap,omitempty"`
-	Publisher         string   `json:"publisher,omitempty"`
-	PublisherVerified *bool    `json:"publisher_verified,omitempty"`
-	ExecutesCode      bool     `json:"executes_code,omitempty"`
-	RepositoryURL     string   `json:"repository_url,omitempty"`
-	SupportURL        string   `json:"support_url,omitempty"`
-	LastUpdated       string   `json:"last_updated,omitempty"`
-	PublishedDate     string   `json:"published_date,omitempty"`
-	Flags             string   `json:"flags,omitempty"`
-	InstallCount      float64  `json:"install_count,omitempty"`
-	AverageRating     float64  `json:"average_rating,omitempty"`
-	Homepage          string   `json:"homepage,omitempty"`
-	URL               string   `json:"url,omitempty"`
-	HomepageHost      string   `json:"homepage_host,omitempty"`
-	URLHost           string   `json:"url_host,omitempty"`
-	HostMatched       bool     `json:"host_matched,omitempty"`
-	Version           string   `json:"version,omitempty"`
-	Deprecated        bool     `json:"deprecated,omitempty"`
-	Disabled          bool     `json:"disabled,omitempty"`
-	SkipLivecheck     bool     `json:"skip_livecheck,omitempty"`
-	Autobump          bool     `json:"autobump,omitempty"`
-	Confidence        string   `json:"confidence,omitempty"`
-	ReleaseDate       string   `json:"release_date,omitempty"`
-	ReleaseAgeDays    int      `json:"release_age_days,omitempty"`
-	MinReleaseAgeDays int      `json:"min_release_age_days,omitempty"`
-	AdvisoryIDs       []string `json:"advisory_ids,omitempty"`
-	FixedVersions     []string `json:"fixed_versions,omitempty"`
+func safetySummaryFromFindings(findings []safetyFinding) *safetySummary {
+	return securitygate.SummaryFromFindings(findings)
 }
 
 func collectUpdateSafety(ctx context.Context, commandRunner commandRunner, opts updateOptions) []safetyGate {
@@ -600,6 +551,9 @@ func brewSafetyFinding(kind string, item brewOutdatedItem, manifest brewSafetyMa
 	reason := "release-age and provenance evidence are not available in the first Go safety slice"
 	remediation := "retry after Homebrew metadata is available; strict mode requires metadata and release-age evidence"
 	confidence := "low"
+	trustKind := ""
+	trustTarget := ""
+	trustCommand := ""
 	if entry.URLBased {
 		decision = "review"
 		reason = "URL-based Homebrew cask needs manual provenance review before update"
@@ -607,13 +561,19 @@ func brewSafetyFinding(kind string, item brewOutdatedItem, manifest brewSafetyMa
 	} else if entry.Tap != "" && !isOfficialBrewTap(entry.Tap) {
 		decision = "review"
 		reason = "non-official Homebrew tap needs provenance review before update"
-		remediation = "review the tap repository and add a temporary allow policy with reason and expiry if accepted"
+		trustKind = "formula"
+		if kind == "cask" {
+			trustKind = "cask"
+		}
+		trustTarget = firstNonEmpty(entry.RawName, item.Name)
+		trustCommand = "brew trust --" + trustKind + " " + trustTarget
+		remediation = "review the tap repository; if the package is accepted, prefer item-scoped trust with " + trustCommand + " before adding a temporary allow policy"
 	} else if kind == "cask" {
 		decision = "review"
 		reason = "Homebrew cask updates need provenance and URL/release-age checks before strict mode can allow them"
 		remediation = "review vendor provenance and add a temporary allow policy with reason and expiry if accepted"
 	}
-	return safetyFinding{
+	finding := safetyFinding{
 		Provider:          "brew",
 		Kind:              kind,
 		Name:              item.Name,
@@ -627,6 +587,13 @@ func brewSafetyFinding(kind string, item brewOutdatedItem, manifest brewSafetyMa
 		Tap:               entry.Tap,
 		Confidence:        confidence,
 	}
+	if trustCommand != "" {
+		finding.TrustStatus = "needs-review"
+		finding.TrustTarget = trustTarget
+		finding.TrustCommand = trustCommand
+		finding.Evidence = appendEvidence(finding.Evidence, "Homebrew 6 tap trust target: "+trustKind+" "+trustTarget)
+	}
+	return finding
 }
 
 func enrichBrewSafetyFindings(ctx context.Context, client *http.Client, apiBase string, findings []safetyFinding, minReleaseAge time.Duration) []safetyFinding {
@@ -1170,30 +1137,8 @@ func appendEvidence(evidence []string, value string) []string {
 	return append(evidence, value)
 }
 
-func safetySummaryFromFindings(findings []safetyFinding) *safetySummary {
-	if len(findings) == 0 {
-		return nil
-	}
-	summary := safetySummary{Findings: len(findings)}
-	for _, finding := range findings {
-		switch strings.ToLower(strings.TrimSpace(finding.Decision)) {
-		case "allow":
-			summary.Allow++
-		case "review":
-			summary.Review++
-		case "hold":
-			summary.Hold++
-		case "block":
-			summary.Block++
-		default:
-			summary.Unknown++
-		}
-	}
-	return &summary
-}
-
 func loadBrewSafetyManifest(root string) (brewSafetyManifest, error) {
-	home, _ := os.UserHomeDir()
+	home := updevpath.HomeDir()
 	path := filepath.Join(home, "Brewfile")
 	if _, err := os.Stat(path); err != nil {
 		path = filepath.Join(root, "Brewfile.tmpl")

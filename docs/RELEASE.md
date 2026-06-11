@@ -10,10 +10,15 @@ stays an integer schema contract. `v0.x` releases are public preview releases;
 
 ## Current Release
 
-The current implemented release is `updev v0.6.0`. `updev version`,
+The current implemented release is `updev v0.6.1`. `updev version`,
 `updev --version`, and `updev -v` report this command contract.
 
-`updev v0.6.0` completes the first updev-owned provider gate model for the
+`updev v0.6.1` is the first patch on the `v0.6.0` provider-gate release. It
+keeps the `v0.6.0` macOS/Homebrew/mise scope, then finishes the first
+architecture cleanup slice and closes the release/export gaps found after the
+initial public tag.
+
+`updev v0.6.0` completed the first updev-owned provider gate model for the
 macOS/Homebrew/mise preview. It keeps the accepted routed TTY UX from
 `v0.5.7` and the performance/portability bridge from `v0.5.8`, then adds
 backend-specific release-age/advisory evidence for mise and candidate-scoped
@@ -24,6 +29,24 @@ brew/mise logs stay visible. Post-provider review domains may refresh inside the
 dashboard only when canceled or partial results cannot be mistaken for completed
 cached reports. Keep detailed implementation history in git log and tag-specific
 notes in [release-notes](release-notes/).
+
+### v0.6.1 Patch Scope
+
+- Extract the backend recommendation engine into `internal/backend` so
+  provider evidence, preference policy, action planning, and rendering can
+  evolve without command-local branches.
+- Centralize command/path/security-gate support code that had started to grow
+  in `internal/cmd`: direct subprocess detection, root/config/cache path
+  resolution, the common security gate model, and update-safety cache storage.
+- Add source evidence to backend recommendations so JSON/detail views can
+  explain why a provider rewrite is suggested.
+- Make Homebrew 6 trust findings actionable from security detail views with
+  confirmed item-scoped `brew trust --formula` / `brew trust --cask` actions.
+  Whole-tap trust remains a separate confirmation-only action and update never
+  auto-trusts taps.
+- Harden public export checks so the split public repository does not retain
+  dotfiles-only documentation links and exported Markdown local links are
+  checked before release.
 
 ### v0.6.0 Scope
 
@@ -147,10 +170,13 @@ tagging or mirroring the release.
 - [x] Homebrew update safety covers the same candidate class as
   `brew upgrade --greedy`, including greedy-only cask candidates, while keeping
   the local-tap JSON fallback that avoids Homebrew package API 404s.
-- [x] Homebrew 6 tap trust gaps are diagnosed read-only: doctor checks
+- [x] Homebrew 6 tap trust gaps are diagnosed and actionable: doctor checks
   `brew trust --json=v1` through local tap metadata, compares it with
   non-official `Brewfile.tmpl` tap/formula/cask entries, and security posture
-  rows show preferred item-scoped trust commands without auto-trusting anything.
+  rows show preferred item-scoped trust commands. Security detail actions can
+  run confirmed item-scoped `brew trust --formula` / `brew trust --cask`
+  commands; whole-tap trust requires separate confirmation and update never
+  auto-trusts anything.
 - [x] Strict update execution is candidate-scoped: safe mise candidates can
   update while newer mise-native age holds remain visible, and Homebrew applies
   allowed packages while skipping held packages instead of blocking the whole
@@ -193,30 +219,54 @@ tagging or mirroring the release.
 - [x] `mise -C tools/updev run check`, `mise -C tools/updev run docs-check`,
   `git diff --check`, and `chezmoi apply --dry-run` pass before release.
 
+### v0.6.1 Release Criteria
+
+- [x] `updev version`, `updev --version`, and `updev -v` report `updev v0.6.1`.
+- [x] Backend recommendation code is extracted into `internal/backend`, with
+  source evidence carried into JSON/detail output.
+- [x] Root/config/cache/security path resolution is centralized in
+  `internal/updevpath`; update-safety cache storage and the common gate model
+  live in `internal/securitygate`.
+- [x] Direct subprocess exceptions are checked by
+  `scripts/check-direct-subprocesses.sh` from `scripts/check-docs.sh`.
+- [x] Homebrew 6 non-official tap/package trust findings expose confirmed
+  item-scoped `brew trust --formula` / `brew trust --cask` detail actions; tap
+  trust remains confirmation-only and is never automatic during update.
+- [x] Public export removes dotfiles-only documentation rows and
+  `scripts/check-docs.sh` checks exported Markdown local links.
+- [x] Public export to `webkaz-labs/updev` passes `scripts/check-docs.sh`,
+  `go test ./...`, `go vet ./...`, and `go mod verify` before tagging.
+- [x] `mise -C tools/updev run check`, `mise -C tools/updev run docs-check`,
+  `git diff --check`, and `chezmoi apply --dry-run` pass before release.
+
 ## Next Patch: v0.6.x
 
 The next patch line should stay incremental and should not broaden the stable
 preview support promise without explicit dogfood. Start this line with the
 architecture/scalability track before adding broader provider surfaces:
 
-- extract the backend recommendation engine out of command handlers so provider
-  evidence, preference policy, action planning, and rendering can evolve without
-  adding command-local branches;
-- move curated backend rewrite seeds into an explicit registry or
-  provider-metadata resolver with source evidence and tests. New tool-specific
-  mappings should not be added as inline code branches;
+- keep the backend recommendation engine in `internal/backend` and continue
+  shrinking command handlers so provider evidence, preference policy, action
+  planning, and rendering evolve without command-local branches;
+- keep curated backend rewrite seeds in registry entries with source evidence
+  surfaced in JSON/detail views, then move broader ecosystems toward
+  provider-metadata resolvers. New tool-specific mappings should not be added
+  as inline code branches;
 - keep backend recommendation UX parity while refactoring: `updev`, `updev
   list`, `updev last`, installed inventory detail, manual inventory detail, and
   backend review should continue to show compact badges, expanded evidence,
   item-scoped actions, and correct Back/Home return paths;
-- audit direct subprocess usage against [ARCHITECTURE.md](ARCHITECTURE.md)
-  and route non-exception provider/action commands through `internal/runner`;
-- add confirmed Homebrew 6 tap trust write actions after the read-only
-  diagnostics have settled. Actions should prefer item-scoped
-  `brew trust --formula` / `brew trust --cask`, require explicit confirmation
-  for whole-tap trust, and never run automatically during update;
-- centralize path/env/root resolution for backend and inventory code so public
-  defaults do not depend on this dotfiles repository or one machine;
+- keep direct subprocess usage checked by `scripts/check-direct-subprocesses.sh`
+  against [ARCHITECTURE.md](ARCHITECTURE.md), and continue routing
+  non-exception provider/action commands through `internal/runner`;
+- keep the common security gate report model and update-safety cache store in
+  `internal/securitygate` so provider-specific gate engines can move out of
+  `cmd` without changing JSON/cache contracts;
+- keep path/env/root resolution centralized in `internal/updevpath`: root
+  selection, updev config path, cache dir, security policy path, inventory
+  override path, and Brewfile source fallback should not be reimplemented in
+  command/provider packages. Continue moving provider/platform-specific path
+  probes behind explicit helpers or scanner contracts;
 - add `updev skill`, `updev skill --full`, and `updev help agent` only if the
   embedded `docs/agent/` source tree can stay the single source of truth;
 - add read-only Linux manual inventory evidence and cross-platform fixtures

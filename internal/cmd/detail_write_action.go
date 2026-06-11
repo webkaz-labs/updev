@@ -56,6 +56,21 @@ func routedDetailWriteActionSpec(value string) (detailWriteActionSpec, bool) {
 		if !securityDetailActionRequiresConfirmation(action) {
 			return detailWriteActionSpec{}, false
 		}
+		if isHomebrewTrustSecurityAction(action) {
+			command, ok := homebrewTrustCommandForSecurityAction(action, name)
+			if !ok {
+				return detailWriteActionSpec{}, false
+			}
+			description := tr("Trust only this Homebrew package after reviewing its source.", "出所を確認したうえで、この Homebrew package だけを trust します。")
+			if action == securityActionBrewTrustTap {
+				description = tr("Trust the whole tap only when you accept all current and future entries.", "現在と今後の entry すべてを受け入れる場合だけ、tap 全体を trust します。")
+			}
+			return detailWriteActionSpec{
+				Title:       tr("homebrew trust action", "Homebrew trust 操作"),
+				Prompt:      fmt.Sprintf(tr("Run %s?", "%s を実行しますか?"), joinCommand(command)),
+				Description: description,
+			}, true
+		}
 		decision, reason, expires, _ := defaultSecurityDetailActionInputs(action)
 		spec := detailWriteActionSpec{
 			Title:          tr("security policy action", "security policy 操作"),

@@ -125,7 +125,7 @@ Global flags:
   and `--format json`; add global verbosity only when a concrete cross-command
   diagnostic need appears.
 - `updev version`, `updev --version`, and `updev -v` report the current
-  implemented release contract, currently `updev v0.6.0`. JSON output from
+  implemented release contract, currently `updev v0.6.1`. JSON output from
   `updev version --format json` includes SemVer parts and the stable/pre-stable
   contract label.
 - Read-only aliases are supported for common commands: `ls` for `list`,
@@ -449,8 +449,10 @@ fail; changed required JSON contracts return drift.
 On Homebrew 6, doctor also reads `brew trust --json=v1` with
 `HOMEBREW_NO_INSTALL_FROM_API=1` and compares it with non-official tap, formula,
 and cask entries in the configured `Brewfile.tmpl`. Missing trust is reported as
-drift with item-scoped remediation. updev does not auto-run `brew trust`; whole
-tap trust remains a human security decision.
+drift with item-scoped remediation. Security detail views in `updev`, `updev
+last`, and `updev list` can run confirmed item-scoped `brew trust --formula` /
+`brew trust --cask` actions. updev does not auto-run `brew trust`; whole-tap
+trust remains a human security decision and requires its own confirmation.
 
 ## Agent Contract
 
