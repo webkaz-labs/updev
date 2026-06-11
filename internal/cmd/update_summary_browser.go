@@ -25,6 +25,7 @@ const (
 	updateSummaryLineNormal      updateSummaryLineKind = ""
 	updateSummaryLineSection     updateSummaryLineKind = "section"
 	updateSummaryLineTableHeader updateSummaryLineKind = "table-header"
+	updateSummaryLineMeta        updateSummaryLineKind = "meta"
 )
 
 type updateSummaryRoute struct {
@@ -43,6 +44,7 @@ type updateSummaryBrowserModel struct {
 	Height    int
 	Width     int
 	Help      bool
+	TopAnchor bool
 	actionMap []int
 }
 
@@ -73,6 +75,9 @@ func newUpdateSummaryBrowserModelWithLoading(title string, report updateReport, 
 func newActionSummaryBrowserModel(title string, lines []updateSummaryLine, state reviewui.State, focusAction string, color bool) updateSummaryBrowserModel {
 	model := updateSummaryBrowserModel{Title: title, Lines: lines, State: state, Color: color}
 	model.refreshActionMap()
+	if state.Offset == 0 && state.Selected == 0 && state.Action == "" {
+		model.TopAnchor = true
+	}
 	if focusAction != "" {
 		model.focusAction(focusAction)
 	}
@@ -146,6 +151,10 @@ func updateSummaryBrowserLinesWithLoading(report updateReport, manualPlan invent
 			case strings.HasPrefix(trimmed, tr("report:", "レポート:")):
 				action = updateHubActionFull
 				label = tr("open full report", "full report を開く")
+				kind = updateSummaryLineMeta
+				allowTableRoute = false
+			case strings.HasPrefix(trimmed, tr("reason:", "理由:")):
+				kind = updateSummaryLineMeta
 				allowTableRoute = false
 			}
 		}
@@ -157,6 +166,7 @@ func updateSummaryBrowserLinesWithLoading(report updateReport, manualPlan invent
 			if route, routeLabel, ok := updateSummaryRouteForTableLine(section, trimmed); ok {
 				action = route.Encode()
 				label = routeLabel
+				styledLine = strings.TrimPrefix(styledLine, "  ")
 			}
 		}
 		out = append(out, updateSummaryLine{
@@ -195,15 +205,17 @@ func updateSummaryRouteForTableLine(section string, line string) (updateSummaryR
 		return updateSummaryRoute{Base: updateHubActionLogs, Provider: provider, Query: query}, fmt.Sprintf(tr("open %s update details", "%s の更新詳細を開く"), provider), true
 	case "security":
 		providerIndex := 0
+		hasDecision := false
 		if strings.EqualFold(fields[0], "hold") || strings.EqualFold(fields[0], "review") || strings.EqualFold(fields[0], "allow") || strings.EqualFold(fields[0], "block") {
 			providerIndex = 1
+			hasDecision = true
 		}
 		if providerIndex >= len(fields) {
 			return updateSummaryRoute{}, "", false
 		}
 		provider := fields[providerIndex]
 		query := ""
-		if providerIndex+1 < len(fields) {
+		if hasDecision && providerIndex+1 < len(fields) {
 			query = fields[providerIndex+1]
 		}
 		return updateSummaryRoute{Base: updateHubActionSecurity, Provider: provider, Query: query}, fmt.Sprintf(tr("open %s security details", "%s の security 詳細を開く"), provider), true
@@ -392,6 +404,8 @@ func (m updateSummaryBrowserModel) View() tea.View {
 			text = m.selectedLineText(line, text)
 		} else if line.Action == "" {
 			prefix = ""
+		} else if line.Kind == updateSummaryLineMeta {
+			prefix = ""
 		} else {
 			prefix = textui.StyleDim("  ", m.Color)
 		}
@@ -452,6 +466,7 @@ func (m *updateSummaryBrowserModel) move(delta int) {
 	if len(m.actionMap) == 0 {
 		return
 	}
+	m.TopAnchor = false
 	m.State.Selected += delta
 	m.clampSelection()
 }
@@ -472,6 +487,10 @@ func (m *updateSummaryBrowserModel) focusAction(action string) {
 }
 
 func (m *updateSummaryBrowserModel) ensureSelectedVisible() {
+	if m.TopAnchor {
+		m.State.Offset = 0
+		return
+	}
 	selectedLine := m.selectedLineIndex()
 	if selectedLine < 0 {
 		m.State.Offset = 0

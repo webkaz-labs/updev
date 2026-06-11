@@ -1039,10 +1039,15 @@ func TestGitHubRepoFromMiseName(t *testing.T) {
 
 func TestGitHubTokenPrefersEnvironment(t *testing.T) {
 	t.Setenv("UPDEV_GITHUB_TOKEN", "updev-token")
+	t.Setenv("GITHUB_API_TOKEN", "github-api-token")
 	t.Setenv("GITHUB_TOKEN", "github-token")
 	t.Setenv("GH_TOKEN", "gh-token")
 	if got := githubToken(); got != "updev-token" {
 		t.Fatalf("expected UPDEV_GITHUB_TOKEN to win, got %q", got)
+	}
+	t.Setenv("UPDEV_GITHUB_TOKEN", "")
+	if got := githubToken(); got != "github-api-token" {
+		t.Fatalf("expected GITHUB_API_TOKEN to win after UPDEV_GITHUB_TOKEN, got %q", got)
 	}
 }
 
@@ -1332,6 +1337,14 @@ cask "vendor/tap/custom-app"
 	}
 	if reasons["vendor/tap/custom-app"] != "non-official Homebrew tap needs provenance review" {
 		t.Fatalf("expected custom tap review reason, got %#v", postures)
+	}
+	trustCommands := map[string]string{}
+	for _, posture := range postures {
+		trustCommands[posture.Name] = posture.TrustCommand
+	}
+	if trustCommands["vendor/tap/custom-app"] != "brew trust --cask vendor/tap/custom-app" ||
+		trustCommands["vendor/tap"] != "brew trust --tap vendor/tap" {
+		t.Fatalf("expected Homebrew 6 trust commands on non-official entries, got %#v", postures)
 	}
 	remediations := map[string]string{}
 	for _, posture := range postures {

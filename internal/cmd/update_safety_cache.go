@@ -20,6 +20,7 @@ var (
 	updateSafetyMarketplaceMaxAge   = 6 * time.Hour
 	updateSafetyUnavailableMaxAge   = 45 * time.Minute
 	updateSafetyHomebrewMetadataAge = 12 * time.Hour
+	updateSafetyMiseMetadataAge     = 12 * time.Hour
 	updateSafetyBrewOutdatedMaxAge  = 5 * time.Minute
 )
 
@@ -143,6 +144,23 @@ func updateSafetyBrewCacheKey(root string, findings []safetyFinding, minReleaseA
 
 func updateSafetyBrewOutdatedErrorCacheKey(root string) string {
 	return updateSafetyCacheKey("brew", root, "outdated-json-v2")
+}
+
+func updateSafetyMiseCacheKey(root string, findings []safetyFinding, minReleaseAge time.Duration) string {
+	parts := []string{"mise", root, "mise-provider-metadata-v1", "min-release-age-days=" + strconv.Itoa(int(minReleaseAge.Hours()/24))}
+	for _, finding := range findings {
+		parts = append(parts, strings.Join([]string{
+			finding.Kind,
+			finding.Name,
+			strings.Join(finding.InstalledVersions, ","),
+			finding.CurrentVersion,
+			finding.Version,
+			finding.Source,
+			finding.RepositoryURL,
+		}, "\x1f"))
+	}
+	sort.Strings(parts[4:])
+	return updateSafetyCacheKey(parts...)
 }
 
 func updateSafetyBrewAdvisoryErrorCacheKey(candidateKey string) string {

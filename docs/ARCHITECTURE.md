@@ -105,6 +105,52 @@ HTML escaping, stderr error reporting, and encoding failure handling stay
 consistent across commands. Command handlers still decide the final semantic
 exit code after successful encoding.
 
+## Scalability Audit And Refactor Plan
+
+Before adding broad provider surfaces, review new work against these placement
+questions:
+
+- Is this provider-specific evidence, policy, or mutation logic? Keep it in the
+  provider package or a provider-oriented engine, not in the command handler.
+- Is this UI-only presentation? Keep behavior in the report/action model and
+  render it from `textui` or `reviewui`.
+- Is this curated policy data? Put it behind an explicit data/config-backed
+  registry with source evidence and tests.
+- Is this path, environment, OS, or profile resolution? Centralize it behind a
+  testable config/path helper and avoid implicit dotfiles-only defaults.
+- Is this an external command? Use `internal/runner` unless it is one of the
+  documented interactive or credential exceptions.
+- Is this user-facing text? Keep stable JSON codes and decisions first; localize
+  and shorten human labels at the render boundary.
+
+Current scalability risks and planned responses:
+
+| Area | Risk | Plan | Priority |
+|------|------|------|----------|
+| `internal/cmd` size | Command files mix CLI parsing, report building, provider evidence, TUI routing, and action execution. | Extract report builders, action services, backend recommendation, manual inventory, and security gate engines so `cmd` mostly assembles commands and views. | P1 |
+| Backend recommendations | Some curated backend preference seeds are code-level tool mappings. That does not scale across ecosystems. | Move tool-specific seeds into a registry or provider-metadata resolver with source evidence. New one-off mappings require a registry entry and tests, not an inline `case`. | P1 |
+| Direct subprocesses | A direct `exec.Command` can bypass fakes, logs, policy, and test seams. | Keep direct subprocesses only in the documented exception list. Add periodic grep/docs-check coverage so new direct calls are reviewed. TUI actions that mutate state should call runner-backed services. | P1 |
+| OS/path defaults | macOS paths, XDG/Home, source-root, and repo-local markdown compatibility can become environment assumptions. | Centralize path/env resolution. Register OS scanners per platform. Keep repo-local markdown as explicit compatibility input, never an implicit public default. | P1 |
+| Security gates | Provider switches and feed parsing can grow into another command-local matrix. | Define provider gate contracts and move provider-specific release-age/advisory/native-audit evidence into provider or security subpackages. mise vfox/asdf-style ecosystems use data-driven provider metadata entries (`provider identity`, resolver type, bounded source URL, parser contract) instead of tool-name branches. Add contract drift checks for provider CLI/API/schema changes. | P1 |
+| TUI routing | `updev`, `last`, `list`, manual review, and backend review can diverge in route handling and back-stack behavior. | Keep shared navigation, action focus, scroll preservation, and async refresh primitives in `reviewui`; command code supplies sections, rows, and action handlers. | P2 |
+| Width and localization | Hand-computed widths or embedded translated prose can regress tables and JSON contracts. | Keep display width in `textui`; keep recurring reason/status strings as stable codes plus render-time labels. | P1 |
+| Test structure | Large test files hide fixture duplication and make targeted runs slower. | Split tests by policy/scanner/native-audit/update/list/router/mise-bump domains and share fixture builders. Prefer focused unit tests before TTY acceptance tests. | P2 |
+| Cache/report schema | Caches can accidentally store final decisions instead of reusable evidence. | Document cache ownership and invalidation in the data model. Store raw provider evidence plus decision inputs; recompute decisions when policy changes. | P2 |
+
+Execution order:
+
+1. Freeze the placement rules above and use them in release reviews.
+2. Move reusable TTY action and text primitives into `reviewui`/`textui` before
+   adding more interactive screens.
+3. Extract the backend recommendation engine and curated rule registry.
+4. Extract provider-specific security gate implementations.
+5. Split manual inventory scanners and enrichment into platform/source packages.
+6. Split large tests and add direct-subprocess/provider-contract drift checks.
+
+Do not add new tool-name-only fixes, direct provider command calls, implicit
+repository-local defaults, or TUI-only behavior that is missing from the report
+model.
+
 ## Shared Internal Extraction
 
 Do not create a broad shared framework before two tools need the same behavior.

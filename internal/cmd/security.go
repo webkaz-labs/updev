@@ -2101,6 +2101,7 @@ func printSecurityText(w io.Writer, report securityReport, color bool) {
 				posture.Kind,
 				posture.Name,
 				posture.Tap,
+				firstNonEmpty(posture.TrustStatus, "-"),
 				posture.Decision,
 				localizedSecurityReason(posture.Reason),
 			})
@@ -2112,6 +2113,7 @@ func printSecurityText(w io.Writer, report securityReport, color bool) {
 			{Header: "kind", Min: 4, Max: 8},
 			{Header: "name", Min: 12, Max: 28},
 			{Header: "tap", Min: 8, Max: 18},
+			{Header: "trust", Min: 6, Max: 12},
 			{Header: "decision", Min: 8, Max: 10},
 			{Header: "reason", Min: 18, Max: 40},
 		}, rows, color)

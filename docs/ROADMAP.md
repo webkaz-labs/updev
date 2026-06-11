@@ -31,51 +31,64 @@ history in git log, and keep the current/next release target in
 - Documentation source-of-truth guidance, canonical `docs/agent/` usage/skill
   files, tag-specific release notes, and focused `docs-check` drift coverage are
   implemented.
+- `updev v0.6.0` mise/Homebrew provider gate scope is implemented: mise release
+  age evidence, native-policy visibility, scoped safe updates, pinned-version
+  bump visibility/actions, Homebrew greedy gate parity, and manual/vendor
+  evidence quality are in the current preview contract.
 - `updev brewfile ...` and `brewfile` remain compatibility or low-level
   surfaces, not the primary human workflow.
 
 ## Near-Term Order
 
-1. Ship `updev v0.6.0` as the first updev-owned mise release-age gate, aligned
-   with the Homebrew gate vocabulary and JSON/text evidence model. Add
-   `updev skill` / `updev help agent` only after they embed the canonical agent
-   guidance files rather than duplicating workflow text, and start focused docs
-   drift checks for the highest-risk mirrored surfaces. `broot` and `rtk` remain
-   dogfood fixtures for scalable backend resolver behavior, not one-off rules.
-   Continue hardening portable structured manual inventory sources and optional
+1. Release and dogfood `updev v0.6.0`; keep macOS/Homebrew/mise as the supported
+   preview path while Linux/Windows binaries stay experimental.
+2. Start the scalability refactor track in
+   [ARCHITECTURE.md](ARCHITECTURE.md#scalability-audit-and-refactor-plan)
+   before adding broad provider surfaces: package extraction, curated backend
+   seed migration, direct subprocess audit, path/env centralization, and test
+   file splits.
+3. Add `updev skill` / `updev help agent` only if the canonical `docs/agent/`
+   files can be embedded without duplicating command reference in code.
+4. Add Linux read-only manual inventory evidence after cross-platform fixtures
+   exist. Stable support should remain macOS/Homebrew/mise until real
+   Linux/Windows dogfood exists.
+5. Decide whether provider contract drift checks should only report/fail
+   locally and in CI, or also open/update GitHub issues automatically when the
+   public repository has credentials and an explicit opt-in.
+6. Continue hardening portable structured manual inventory sources and optional
    agent-assisted enrichment: agent output is structured draft metadata, not
    desired state, until the user accepts or edits it from CLI/TUI review.
-2. Continue provider-general inventory after the mise gate work:
+7. Continue provider-general inventory after the mise gate work:
    cross-platform fixtures, Linux read-only scanners, provider promotion
    suggestions, and a Windows evidence spike that remains experimental until a
    real Windows runner or machine is available.
-3. Continue provider evidence quality with richer source URLs and ownership
+8. Continue provider evidence quality with richer source URLs and ownership
    confidence where provider metadata is cheap and reliable.
-4. Broaden Homebrew and mise release-age/advisory confidence beyond GitHub and
+9. Broaden Homebrew and mise release-age/advisory confidence beyond GitHub and
    first registry paths.
-5. Broaden Homebrew release-age and advisory confidence beyond GitHub
+10. Broaden Homebrew release-age and advisory confidence beyond GitHub
    release/tag/ref URL paths.
-6. Add provider-native audit paths where package identity is reliable.
-7. Continue scanner hardening after OSV-Scanner, gitleaks, zizmor, Trivy, and
+11. Add provider-native audit paths where package identity is reliable.
+12. Continue scanner hardening after OSV-Scanner, gitleaks, zizmor, Trivy, and
    Grype. Keep Syft and Prowler explicit future commands, not default package
    update gates.
-8. Add provider contract drift checks for local and CI runs. These checks
+13. Add provider contract drift checks for local and CI runs. These checks
    should sample supported provider command shapes, detect upstream CLI/API or
    security-feed schema changes, mark affected provider versions unsupported
    when compatibility is unknown, and open/update documentation and GitHub
    issues for agent follow-up.
-9. Add pending-update gates for VS Code and future providers as their update
+14. Add pending-update gates for VS Code and future providers as their update
    flows move into Go, using the same updev-owned gate vocabulary.
-10. Add policy ergonomics: guided add/edit/list helpers, diagnostic indexes, and
+15. Add policy ergonomics: guided add/edit/list helpers, diagnostic indexes, and
    shadowed-rule references.
-11. Keep agent-assisted review optional for ambiguous candidates. Agent-generated
+16. Keep agent-assisted review optional for ambiguous candidates. Agent-generated
    manual app metadata must be schema-validated draft data, callable from the
    manual app TUI flow, and safe when Codex or another configured agent is not
    installed.
-12. Keep Go CLI standard checks as part of future release reviews; direct
+17. Keep Go CLI standard checks as part of future release reviews; direct
    subprocess exceptions, JSON encoding, and verbosity policy are documented for
    the current tool surface.
-13. Maintain the macOS/Homebrew/mise public preview with installation docs,
+18. Maintain the macOS/Homebrew/mise public preview with installation docs,
     privacy boundaries, and explicit experimental status for Linux/Windows
     providers. Reserve `updev v1.0.0` for the first stable public contract after
     that scope is deliberately narrowed and documented.

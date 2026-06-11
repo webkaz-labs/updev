@@ -72,22 +72,45 @@ func TestBuildSecurityGateReportRunsBrewSafetyOnly(t *testing.T) {
 	if len(report.Gates) != 1 || report.Gates[0].Provider != "brew" {
 		t.Fatalf("expected brew gate, got %#v", report.Gates)
 	}
-	if len(fake.calls) != 2 || !containsString(fake.calls[1], "HOMEBREW_NO_AUTO_UPDATE=1") || containsString(fake.calls[1], "HOMEBREW_NO_INSTALL_FROM_API=1") || !containsString(fake.calls[1], "brew") {
+	if len(fake.calls) != 1 || !containsString(fake.calls[0], "HOMEBREW_NO_AUTO_UPDATE=1") || !containsString(fake.calls[0], "HOMEBREW_NO_INSTALL_FROM_API=1") || !containsString(fake.calls[0], "brew") || !containsString(fake.calls[0], "--greedy") {
 		t.Fatalf("expected brew command, got %+v", fake.calls)
 	}
 }
 
-func TestRunBrewOutdatedUsesNoInstallFromAPIOnlyWhenCoreTapExists(t *testing.T) {
+func TestRunBrewOutdatedAlwaysUsesLocalTapMetadata(t *testing.T) {
 	fake := &fakeCommandRunner{results: map[string]runner.Result{
-		strings.Join([]string{"brew", "tap"}, "\x00"): {Stdout: "homebrew/core\nwebkaz/tap\n"},
-		strings.Join([]string{"env", "HOMEBREW_NO_AUTO_UPDATE=1", "HOMEBREW_NO_INSTALL_FROM_API=1", "brew", "outdated", "--json=v2"}, "\x00"): {Stdout: `{"formulae":[],"casks":[]}`},
+		strings.Join([]string{"env", "HOMEBREW_NO_AUTO_UPDATE=1", "HOMEBREW_NO_INSTALL_FROM_API=1", "brew", "outdated", "--json=v2", "--greedy"}, "\x00"): {Stdout: `{"formulae":[],"casks":[]}`},
 	}}
 	result := runBrewOutdatedJSON(context.Background(), fake)
-	if result.Stdout == "" || len(fake.calls) != 2 {
-		t.Fatalf("expected tap probe and no-install API command, result=%#v calls=%#v", result, fake.calls)
+	if result.Stdout == "" || len(fake.calls) != 1 {
+		t.Fatalf("expected no-install API command, result=%#v calls=%#v", result, fake.calls)
 	}
-	if !containsString(fake.calls[1], "HOMEBREW_NO_INSTALL_FROM_API=1") {
-		t.Fatalf("expected no-install API env when core tap exists, calls=%#v", fake.calls)
+	if !containsString(fake.calls[0], "HOMEBREW_NO_INSTALL_FROM_API=1") {
+		t.Fatalf("expected no-install API env, calls=%#v", fake.calls)
+	}
+}
+
+func TestBrewUpdateSafetyUsesGreedyOutdatedCandidates(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "Brewfile.tmpl"), []byte(`cask "wezterm@nightly"`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(http.NotFoundHandler())
+	defer server.Close()
+	t.Setenv("UPDEV_HOMEBREW_API_URL", server.URL)
+	fake := &fakeCommandRunner{results: map[string]runner.Result{
+		strings.Join([]string{"env", "HOMEBREW_NO_AUTO_UPDATE=1", "HOMEBREW_NO_INSTALL_FROM_API=1", "brew", "outdated", "--json=v2", "--greedy"}, "\x00"): {
+			Stdout: `{"formulae":[],"casks":[{"name":"wezterm@nightly","installed_versions":"latest","current_version":"latest"}]}`,
+		},
+	}}
+	gate := collectBrewUpdateSafetyWithPolicy(context.Background(), fake, root, securityPolicy{})
+	if len(fake.calls) < 1 || !containsString(fake.calls[0], "--greedy") {
+		t.Fatalf("expected greedy brew outdated probe, calls=%#v", fake.calls)
+	}
+	if gate.Status != plan.StatusHeld || len(gate.Findings) != 1 || gate.Findings[0].Kind != "cask" || gate.Findings[0].Name != "wezterm@nightly" {
+		t.Fatalf("expected greedy cask candidate to be gated, got %#v", gate)
 	}
 }
 
@@ -208,6 +231,31 @@ func TestBuildSecurityGateReportRunsMiseSafety(t *testing.T) {
 	}
 }
 
+func TestBuildSecurityGateReportReportsMiseMinimumReleaseAgeWithoutCandidates(t *testing.T) {
+	root := t.TempDir()
+	fake := &fakeCommandRunner{results: map[string]runner.Result{
+		strings.Join([]string{"mise", "settings", "ls", "--json-extended", "--cd", root}, "\x00"): {
+			Stdout: `{"minimum_release_age":{"value":"3d","type":"string","source":"/fake/mise/config.toml"}}`,
+		},
+		strings.Join([]string{"mise", "outdated", "--json", "--cd", root}, "\x00"): {
+			Stdout: `{}`,
+		},
+		strings.Join([]string{"env", "MISE_MINIMUM_RELEASE_AGE=0d", "mise", "outdated", "--json", "--cd", root}, "\x00"): {
+			Stdout: `{}`,
+		},
+	}}
+	report := buildSecurityGateReport(context.Background(), securityGateOptions{root: root, provider: "mise"}, fake)
+	if report.Status != plan.StatusOK || len(report.Gates) != 1 || report.Gates[0].Provider != "mise" {
+		t.Fatalf("expected ok mise gate, got %#v", report)
+	}
+	if len(report.Gates[0].Findings) != 0 {
+		t.Fatalf("expected no pending mise findings, got %#v", report.Gates[0].Findings)
+	}
+	if !containsSubstring(report.Gates[0].Evidence, "mise minimum_release_age active: 3d from /fake/mise/config.toml") {
+		t.Fatalf("expected minimum_release_age evidence without candidates, got %#v", report.Gates[0].Evidence)
+	}
+}
+
 func TestVSCodeInstalledVersionsErrorUsesExitStatus(t *testing.T) {
 	got := vscodeInstalledVersionsError(runner.Result{Code: 127})
 	if got != "code exited with status 127" {
@@ -247,8 +295,8 @@ func TestCollectUpdateSafetyIncludesVSCodeWhenBrewfileDeclaresExtensions(t *test
 	t.Setenv("UPDEV_VSCODE_MARKETPLACE_URL", marketplaceServer.URL)
 	t.Setenv("UPDEV_OSV_API_URL", osvServer.URL)
 	fake := &fakeCommandRunner{results: map[string]runner.Result{
-		strings.Join([]string{"brew", "outdated", "--json=v2"}, "\x00"):                {Stdout: `{"formulae":[],"casks":[]}`},
-		strings.Join([]string{"code", "--list-extensions", "--show-versions"}, "\x00"): {Stdout: "publisher.extension@0.9.0\n"},
+		strings.Join([]string{"env", "HOMEBREW_NO_AUTO_UPDATE=1", "HOMEBREW_NO_INSTALL_FROM_API=1", "brew", "outdated", "--json=v2", "--greedy"}, "\x00"): {Stdout: `{"formulae":[],"casks":[]}`},
+		strings.Join([]string{"code", "--list-extensions", "--show-versions"}, "\x00"):                                                                    {Stdout: "publisher.extension@0.9.0\n"},
 	}}
 	gates := collectUpdateSafetyWithPolicy(context.Background(), fake, updateOptions{root: root, security: "strict", includeVSCode: true}, securityPolicy{})
 	if len(gates) != 3 || gates[0].Provider != "brew" || gates[1].Provider != "mise" || gates[2].Provider != "vscode" {
@@ -266,8 +314,8 @@ func TestCollectUpdateSafetyExcludesVSCodeByDefault(t *testing.T) {
 		t.Fatal(err)
 	}
 	fake := &fakeCommandRunner{results: map[string]runner.Result{
-		strings.Join([]string{"brew", "outdated", "--json=v2"}, "\x00"):                {Stdout: `{"formulae":[],"casks":[]}`},
-		strings.Join([]string{"code", "--list-extensions", "--show-versions"}, "\x00"): {Stdout: "publisher.extension@0.9.0\n"},
+		strings.Join([]string{"env", "HOMEBREW_NO_AUTO_UPDATE=1", "HOMEBREW_NO_INSTALL_FROM_API=1", "brew", "outdated", "--json=v2", "--greedy"}, "\x00"): {Stdout: `{"formulae":[],"casks":[]}`},
+		strings.Join([]string{"code", "--list-extensions", "--show-versions"}, "\x00"):                                                                    {Stdout: "publisher.extension@0.9.0\n"},
 	}}
 	gates := collectUpdateSafetyWithPolicy(context.Background(), fake, updateOptions{root: root, security: "strict"}, securityPolicy{})
 	if len(gates) != 2 || gates[0].Provider != "brew" || gates[1].Provider != "mise" {
@@ -388,7 +436,7 @@ func TestCollectUpdateSafetyCachesBrewOutdatedError(t *testing.T) {
 	if first.Status != plan.StatusError || second.Status != plan.StatusError {
 		t.Fatalf("expected cached brew errors, got first=%#v second=%#v", first, second)
 	}
-	if len(fake.calls) != 2 {
+	if len(fake.calls) != 1 {
 		t.Fatalf("expected second call to use cached brew outdated error, calls=%#v", fake.calls)
 	}
 	if !strings.Contains(second.Error, "cached Homebrew outdated unavailable") {
@@ -426,6 +474,7 @@ func TestCollectUpdateSafetyParsesBrewOutdatedJSONWithNonZeroExit(t *testing.T) 
 func TestCollectUpdateSafetyCachesBrewOutdatedSuccessWithDeadline(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	t.Setenv("UPDEV_BREW_OUTDATED_TIMEOUT_SECONDS", "45")
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "Brewfile.tmpl"), []byte(`brew "example"`), 0o600); err != nil {
 		t.Fatal(err)
@@ -436,11 +485,37 @@ func TestCollectUpdateSafetyCachesBrewOutdatedSuccessWithDeadline(t *testing.T) 
 	if first.Status != plan.StatusOK || second.Status != plan.StatusOK {
 		t.Fatalf("expected ok brew safety gates, got first=%#v second=%#v", first, second)
 	}
-	if recording.calls != 2 {
+	if recording.calls != 1 {
 		t.Fatalf("expected second call to use cached brew outdated success, calls=%d", recording.calls)
 	}
 	if !recording.sawDeadline {
 		t.Fatal("expected brew outdated command to run with a deadline")
+	}
+	if got := brewOutdatedTimeout(); got != 45*time.Second {
+		t.Fatalf("expected configurable brew outdated timeout, got %s", got)
+	}
+}
+
+func TestMiseCommandsInjectGitHubTokenWithoutLeakingCommand(t *testing.T) {
+	t.Setenv("UPDEV_GITHUB_TOKEN", "updev-test-token")
+	root := t.TempDir()
+	recording := &envRecordingRunner{fakeCommandRunner: fakeCommandRunner{result: runner.Result{Stdout: `{}`}}}
+	_ = runMiseOutdatedJSON(context.Background(), recording, root)
+	if len(recording.envCalls) != 1 || !containsString(recording.envCalls[0], "MISE_GITHUB_TOKEN=updev-test-token") {
+		t.Fatalf("expected mise outdated to receive MISE_GITHUB_TOKEN env, got %#v", recording.envCalls)
+	}
+	if strings.Contains(strings.Join(recording.calls[0], " "), "updev-test-token") {
+		t.Fatalf("token leaked into recorded command: %#v", recording.calls[0])
+	}
+
+	recording = &envRecordingRunner{fakeCommandRunner: fakeCommandRunner{result: runner.Result{Stdout: "All tools are up to date"}}}
+	step := updateStep{Name: "mise", Command: []string{"zsh", "-c", "source ~/.zshenv && mise upgrade && mise prune"}}
+	_ = runUpdateStepWithHold(context.Background(), recording, step, false, "")
+	if len(recording.envCalls) != 1 || !containsString(recording.envCalls[0], "MISE_GITHUB_TOKEN=updev-test-token") {
+		t.Fatalf("expected mise upgrade step to receive MISE_GITHUB_TOKEN env, got %#v", recording.envCalls)
+	}
+	if strings.Contains(strings.Join(recording.calls[0], " "), "updev-test-token") {
+		t.Fatalf("token leaked into recorded update command: %#v", recording.calls[0])
 	}
 }
 
@@ -471,6 +546,9 @@ func TestTOMLConfigFeedsThresholdDefaults(t *testing.T) {
 min_release_age_days = 5
 min_tap_age_days = 21
 
+[security.mise]
+min_release_age_days = 4
+
 [security.vscode]
 min_install_count = 2500
 min_average_rating = 3.5
@@ -482,6 +560,9 @@ min_update_age_days = 7
 	}
 	if got := minHomebrewTapRepositoryAgeWithConfig(config); got != 21*24*time.Hour {
 		t.Fatalf("expected Homebrew tap age from config, got %s", got)
+	}
+	if got := minMiseReleaseAgeWithConfig(config); got != 4*24*time.Hour {
+		t.Fatalf("expected mise release age from config, got %s", got)
 	}
 	if got := minVSCodeInstallCountWithConfig(config); got != 2500 {
 		t.Fatalf("expected VS Code install threshold from config, got %v", got)
@@ -514,6 +595,9 @@ include_vscode = true
 
 [update]
 security = "strict"
+
+[update.mise_bump]
+mode = "safe"
 `), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -524,6 +608,9 @@ security = "strict"
 	}
 	if opts.security != "strict" {
 		t.Fatalf("expected update security from config, got %+v", opts)
+	}
+	if opts.miseBumpMode != "safe" {
+		t.Fatalf("expected mise bump mode from config, got %+v", opts)
 	}
 	if !includeVSCodeExtensionsByDefault() {
 		t.Fatal("expected VS Code include default from config")
@@ -539,6 +626,14 @@ security = "strict"
 	}
 	if opts.security != "off" {
 		t.Fatalf("expected env update security override, got %+v", opts)
+	}
+	t.Setenv("UPDEV_MISE_BUMP_MODE", "auto")
+	opts, err = parseUpdateOptions(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if opts.miseBumpMode != "auto" {
+		t.Fatalf("expected env mise bump override, got %+v", opts)
 	}
 }
 
@@ -619,6 +714,23 @@ func TestUpdateOutcomeRowsSplitItemAndVersionDetail(t *testing.T) {
 	}
 	if rows[1][2] != "Homebrew taps" || !strings.Contains(rows[1][3], "Updated 2 taps") {
 		t.Fatalf("expected Homebrew tap update row, got %#v", rows[1])
+	}
+}
+
+func TestUpdateOutcomeRowsSplitMiseBumpSkippedItems(t *testing.T) {
+	report := updateReport{Steps: []updateStep{{
+		Name:         miseBumpProvider,
+		Status:       plan.StatusDrift,
+		Skipped:      true,
+		Reason:       "mise bump candidates available; mode=manual requires item review",
+		SkippedItems: []string{"github:openai/codex 0.60.0 -> 0.60.1"},
+	}}}
+	rows := updateOutcomeRows(report, 10, false)
+	if len(rows) != 1 {
+		t.Fatalf("expected one outcome row, got %#v", rows)
+	}
+	if rows[0][2] != "github:openai/codex" || rows[0][3] != "0.60.0 -> 0.60.1" {
+		t.Fatalf("expected mise-bump skipped item/detail split, got %#v", rows[0])
 	}
 }
 
@@ -753,6 +865,18 @@ func TestRunUpdateStepCanBeHeldByStrictSafety(t *testing.T) {
 	}
 }
 
+func TestUpdateProviderStdoutWriterUsesStderrForInteractiveTTY(t *testing.T) {
+	if got := updateProviderStdoutWriterForTerminal(true, true); got != os.Stderr {
+		t.Fatalf("expected interactive provider stdout to stream to stderr, got %#v", got)
+	}
+	if got := updateProviderStdoutWriterForTerminal(false, true); got != os.Stdout {
+		t.Fatalf("expected non-interactive provider stdout to stay on stdout, got %#v", got)
+	}
+	if got := updateProviderStdoutWriterForTerminal(true, false); got != os.Stdout {
+		t.Fatalf("expected redirected provider stdout to stay on stdout, got %#v", got)
+	}
+}
+
 func TestRunUpdateStrictSafetyHoldsTooNewBrewCandidate(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("XDG_CACHE_HOME", t.TempDir())
@@ -786,8 +910,7 @@ func TestRunUpdateStrictSafetyHoldsTooNewBrewCandidate(t *testing.T) {
 	t.Setenv("UPDEV_GITHUB_API_URL", server.URL)
 	t.Setenv("UPDEV_OSV_API_URL", server.URL)
 	fake := &fakeCommandRunner{results: map[string]runner.Result{
-		"brew\x00tap": runner.Result{Stdout: "homebrew/core\n"},
-		"env\x00HOMEBREW_NO_AUTO_UPDATE=1\x00HOMEBREW_NO_INSTALL_FROM_API=1\x00brew\x00outdated\x00--json=v2": runner.Result{Stdout: `{"formulae":[{"name":"jq","installed_versions":["1.7"],"current_version":"1.8.1"}],"casks":[]}`},
+		"env\x00HOMEBREW_NO_AUTO_UPDATE=1\x00HOMEBREW_NO_INSTALL_FROM_API=1\x00brew\x00outdated\x00--json=v2\x00--greedy": runner.Result{Stdout: `{"formulae":[{"name":"jq","installed_versions":["1.7"],"current_version":"1.8.1"}],"casks":[]}`},
 	}}
 	code := runUpdate(updateOptions{format: "text", root: root, security: "strict"}, fake)
 	if code != 2 {
@@ -797,6 +920,9 @@ func TestRunUpdateStrictSafetyHoldsTooNewBrewCandidate(t *testing.T) {
 		if strings.Join(call, " ") == "bash -lc brew update && brew upgrade --greedy && brew cleanup" {
 			t.Fatalf("strict safety hold executed brew upgrade: %#v", fake.calls)
 		}
+	}
+	if !fakeCommandWasCalled(fake.calls, []string{"bash", "-lc", "brew update"}) {
+		t.Fatalf("strict safety should still refresh Homebrew metadata while holding only unsafe candidates: %#v", fake.calls)
 	}
 	entry, ok := loadLastUpdateReport()
 	if !ok {
@@ -808,17 +934,42 @@ func TestRunUpdateStrictSafetyHoldsTooNewBrewCandidate(t *testing.T) {
 	if len(entry.Report.Safety[0].Findings) != 1 || entry.Report.Safety[0].Findings[0].Decision != "hold" {
 		t.Fatalf("expected too-new hold finding, got %#v", entry.Report.Safety[0].Findings)
 	}
+	var brewStep updateStep
+	for _, step := range entry.Report.Steps {
+		if step.Name == "brew" {
+			brewStep = step
+			break
+		}
+	}
+	if brewStep.Status != plan.StatusHeld || !brewStep.Skipped || len(brewStep.SkippedItems) != 1 {
+		t.Fatalf("expected item-scoped brew hold, got %#v", brewStep)
+	}
+	if !strings.Contains(brewStep.SkippedItems[0], "jq -> 1.8.1 hold") || strings.Contains(brewStep.SkippedItems[0], "security=strict held update") {
+		t.Fatalf("expected package-specific hold reason, got %#v", brewStep.SkippedItems)
+	}
 }
 
 func TestRunUpdateStrictSafetyHoldsMiseCandidate(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("XDG_CACHE_HOME", t.TempDir())
 	root := t.TempDir()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/repos/openai/codex/releases/tags/0.61.0", "/repos/openai/codex/git/ref/tags/0.61.0",
+			"/repos/openai/codex/releases/tags/codex-0.61.0", "/repos/openai/codex/git/ref/tags/codex-0.61.0":
+			http.NotFound(w, r)
+		case "/repos/openai/codex/releases/tags/v0.61.0":
+			_, _ = w.Write([]byte(`{"published_at":"` + time.Now().UTC().Format(time.RFC3339) + `"}`))
+		default:
+			t.Fatalf("unexpected API path: %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+	t.Setenv("UPDEV_GITHUB_API_URL", server.URL)
 	fake := &fakeCommandRunner{results: map[string]runner.Result{
-		"brew\x00tap": runner.Result{Stdout: ""},
-		"env\x00HOMEBREW_NO_AUTO_UPDATE=1\x00brew\x00outdated\x00--json=v2":                                   {Stdout: `{"formulae":[],"casks":[]}`},
-		strings.Join([]string{"mise", "outdated", "--json", "--cd", root}, "\x00"):                            {Stdout: `{"github:openai/codex":{"requested":"0.60.0","current":"0.60.0","latest":"0.61.0"}}`},
-		strings.Join([]string{"bash", "-lc", "brew update && brew upgrade --greedy && brew cleanup"}, "\x00"): {Stdout: "Already up-to-date."},
+		"env\x00HOMEBREW_NO_AUTO_UPDATE=1\x00HOMEBREW_NO_INSTALL_FROM_API=1\x00brew\x00outdated\x00--json=v2\x00--greedy": {Stdout: `{"formulae":[],"casks":[]}`},
+		strings.Join([]string{"mise", "outdated", "--json", "--cd", root}, "\x00"):                                        {Stdout: `{"github:openai/codex":{"requested":"0.60.0","current":"0.60.0","latest":"0.61.0"}}`},
+		strings.Join([]string{"bash", "-lc", "brew update && brew upgrade --greedy && brew cleanup"}, "\x00"):             {Stdout: "Already up-to-date."},
 	}}
 	code := runUpdate(updateOptions{format: "text", root: root, security: "strict"}, fake)
 	if code != 2 {
@@ -836,9 +987,741 @@ func TestRunUpdateStrictSafetyHoldsMiseCandidate(t *testing.T) {
 	if entry.Report.Status != plan.StatusHeld || len(entry.Report.Safety) != 2 || entry.Report.Safety[1].Status != plan.StatusHeld {
 		t.Fatalf("expected held mise safety report, got %#v", entry.Report)
 	}
-	if len(entry.Report.Safety[1].Findings) != 1 || entry.Report.Safety[1].Findings[0].Provider != "mise" || entry.Report.Safety[1].Findings[0].Decision != "review" {
-		t.Fatalf("expected mise review finding, got %#v", entry.Report.Safety[1].Findings)
+	if len(entry.Report.Safety[1].Findings) != 1 || entry.Report.Safety[1].Findings[0].Provider != "mise" || entry.Report.Safety[1].Findings[0].Decision != "hold" {
+		t.Fatalf("expected mise hold finding, got %#v", entry.Report.Safety[1].Findings)
 	}
+}
+
+func TestRunUpdateStrictSafetyAppliesMiseSafeCandidateAndHoldsNewerNativeCandidate(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	root := t.TempDir()
+	oldRelease := time.Now().AddDate(0, 0, -4).UTC().Format(time.RFC3339)
+	newRelease := time.Now().AddDate(0, 0, -1).UTC().Format(time.RFC3339)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/repos/openai/codex/releases/tags/0.61.0", "/repos/openai/codex/git/ref/tags/0.61.0",
+			"/repos/openai/codex/releases/tags/codex-0.61.0", "/repos/openai/codex/git/ref/tags/codex-0.61.0":
+			http.NotFound(w, r)
+		case "/repos/openai/codex/releases/tags/v0.61.0":
+			_, _ = w.Write([]byte(`{"published_at":"` + oldRelease + `"}`))
+		case "/repos/openai/codex/releases/tags/0.62.0", "/repos/openai/codex/git/ref/tags/0.62.0",
+			"/repos/openai/codex/releases/tags/codex-0.62.0", "/repos/openai/codex/git/ref/tags/codex-0.62.0":
+			http.NotFound(w, r)
+		case "/repos/openai/codex/releases/tags/v0.62.0":
+			_, _ = w.Write([]byte(`{"published_at":"` + newRelease + `"}`))
+		default:
+			t.Fatalf("unexpected API path: %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+	t.Setenv("UPDEV_GITHUB_API_URL", server.URL)
+	scopedMiseKey := strings.Join([]string{"zsh", "-c", "source ~/.zshenv && mise upgrade --yes --minimum-release-age 3d --cd " + root + " github:openai/codex && mise prune"}, "\x00")
+	fake := &fakeCommandRunner{results: map[string]runner.Result{
+		"env\x00HOMEBREW_NO_AUTO_UPDATE=1\x00HOMEBREW_NO_INSTALL_FROM_API=1\x00brew\x00outdated\x00--json=v2\x00--greedy": {Stdout: `{"formulae":[],"casks":[]}`},
+		strings.Join([]string{"mise", "outdated", "--json", "--cd", root}, "\x00"):                                        {Stdout: `{"github:openai/codex":{"requested":"0.60.0","current":"0.60.0","latest":"0.61.0"}}`},
+		strings.Join([]string{"env", "MISE_MINIMUM_RELEASE_AGE=0d", "mise", "outdated", "--json", "--cd", root}, "\x00"):  {Stdout: `{"github:openai/codex":{"requested":"0.60.0","current":"0.60.0","latest":"0.62.0"}}`},
+		scopedMiseKey: {Stdout: "github:openai/codex 0.60.0 -> 0.61.0"},
+	}}
+	code := runUpdate(updateOptions{format: "text", root: root, security: "strict", noTUI: true}, fake)
+	if code != 2 {
+		t.Fatalf("expected held report with safe scoped mise update, got %d", code)
+	}
+	if !fakeCommandWasCalled(fake.calls, strings.Split(scopedMiseKey, "\x00")) {
+		t.Fatalf("expected scoped mise upgrade for safe candidate, calls=%#v", fake.calls)
+	}
+	for _, call := range fake.calls {
+		if strings.Join(call, " ") == "zsh -c source ~/.zshenv && mise upgrade && mise prune" {
+			t.Fatalf("mixed safety must not execute unscoped mise upgrade, calls=%#v", fake.calls)
+		}
+	}
+	entry, ok := loadLastUpdateReport()
+	if !ok {
+		t.Fatal("expected last update report to be saved")
+	}
+	var miseStep updateStep
+	for _, step := range entry.Report.Steps {
+		if step.Name == "mise" {
+			miseStep = step
+			break
+		}
+	}
+	if miseStep.Status != plan.StatusHeld || len(miseStep.Updated) != 1 || len(miseStep.SkippedItems) != 1 {
+		t.Fatalf("expected safe mise update plus held newer candidate, got %#v", miseStep)
+	}
+	if !strings.Contains(miseStep.Updated[0], "0.60.0 -> 0.61.0") || !strings.Contains(miseStep.SkippedItems[0], "0.62.0") {
+		t.Fatalf("expected safe and held mise versions in report, got updated=%#v skipped=%#v", miseStep.Updated, miseStep.SkippedItems)
+	}
+}
+
+func TestRunUpdateStrictSafetyAppliesBrewAllowedCandidatesAndSkipsHeldCandidates(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	root := t.TempDir()
+	allowed := safetyFinding{
+		Provider:          "brew",
+		Kind:              "brew",
+		Name:              "jq",
+		InstalledVersions: []string{"1.7"},
+		CurrentVersion:    "1.8.1",
+		Decision:          "allow",
+		Reason:            "candidate release age passed",
+	}
+	held := safetyFinding{
+		Provider:          "brew",
+		Kind:              "brew",
+		Name:              "fast-release",
+		InstalledVersions: []string{"1.0.0"},
+		CurrentVersion:    "3.0.0",
+		Decision:          "hold",
+		Reason:            "candidate release is too new: age 1 days, minimum 3 days",
+	}
+	scoped := updateSteps()[0]
+	scoped, holdReason := updateStepWithStrictSafety(scoped, updateOptions{root: root, security: "strict"}, []safetyGate{{
+		Provider: "brew",
+		Status:   plan.StatusHeld,
+		Findings: []safetyFinding{allowed, held},
+	}})
+	if holdReason != "" {
+		t.Fatalf("expected scoped brew command, got hold reason %q", holdReason)
+	}
+	wantCommand := []string{"bash", "-lc", "HOMEBREW_NO_AUTO_UPDATE=1 brew upgrade --greedy jq && HOMEBREW_NO_AUTO_UPDATE=1 brew cleanup && brew update"}
+	if strings.Join(scoped.Command, "\x00") != strings.Join(wantCommand, "\x00") {
+		t.Fatalf("expected scoped brew command %#v, got %#v", wantCommand, scoped.Command)
+	}
+	fake := &fakeCommandRunner{result: runner.Result{Stdout: "jq 1.7 -> 1.8.1"}}
+	result := runUpdateStepWithHold(context.Background(), fake, scoped, false, holdReason)
+	if result.Status != plan.StatusHeld || len(result.Updated) != 1 || len(result.SkippedItems) != 1 {
+		t.Fatalf("expected partial brew update with held skipped item, got %#v", result)
+	}
+	if !strings.Contains(result.SkippedItems[0], "fast-release -> 3.0.0 hold") {
+		t.Fatalf("expected held brew candidate summary, got %#v", result.SkippedItems)
+	}
+}
+
+func TestRunUpdateStrictSafetyScopesAllAllowedProviderCandidates(t *testing.T) {
+	root := t.TempDir()
+	brew := updateSteps()[0]
+	brew, holdReason := updateStepWithStrictSafety(brew, updateOptions{root: root, security: "strict"}, []safetyGate{{
+		Provider: "brew",
+		Status:   plan.StatusOK,
+		Findings: []safetyFinding{{
+			Provider:       "brew",
+			Kind:           "brew",
+			Name:           "jq",
+			CurrentVersion: "1.8.1",
+			Decision:       "allow",
+		}},
+	}})
+	if holdReason != "" {
+		t.Fatalf("expected scoped all-allow brew command, got hold reason %q", holdReason)
+	}
+	if got := strings.Join(brew.Command, " "); strings.Contains(got, "brew update && brew upgrade") || !strings.Contains(got, "brew upgrade --greedy jq") || !strings.HasSuffix(got, "brew update") {
+		t.Fatalf("expected scoped all-allow brew command without brew update, got %#v", brew.Command)
+	}
+	mise := updateSteps()[1]
+	mise, holdReason = updateStepWithStrictSafety(mise, updateOptions{root: root, security: "strict"}, []safetyGate{{
+		Provider: "mise",
+		Status:   plan.StatusOK,
+		Findings: []safetyFinding{{
+			Provider:       "mise",
+			Kind:           "tool",
+			Name:           "github:openai/codex",
+			CurrentVersion: "0.61.0",
+			Decision:       "allow",
+		}},
+	}})
+	if holdReason != "" {
+		t.Fatalf("expected scoped all-allow mise command, got hold reason %q", holdReason)
+	}
+	if got := strings.Join(mise.Command, " "); strings.Contains(got, "mise upgrade &&") || !strings.Contains(got, "mise upgrade --yes --minimum-release-age 3d --cd "+root+" github:openai/codex") {
+		t.Fatalf("expected scoped all-allow mise command, got %#v", mise.Command)
+	}
+}
+
+func TestScopedSecurityRerunStepOnlyTargetsSelectedFinding(t *testing.T) {
+	report := updateReport{
+		Root: "/repo",
+		Safety: []safetyGate{{
+			Provider: "brew",
+			Status:   plan.StatusOK,
+			Findings: []safetyFinding{{
+				Provider:       "brew",
+				Kind:           "cask",
+				Name:           "wezterm@nightly",
+				CurrentVersion: "latest",
+				Decision:       "allow",
+			}, {
+				Provider:       "brew",
+				Kind:           "cask",
+				Name:           "cursor",
+				CurrentVersion: "3.7.19",
+				Decision:       "allow",
+			}},
+		}},
+	}
+	step, ok := scopedSecurityRerunStep(report, "brew", "cask", "wezterm@nightly")
+	if !ok {
+		t.Fatal("expected scoped security rerun step")
+	}
+	command := strings.Join(step.Command, " ")
+	if !strings.Contains(command, "brew upgrade --greedy wezterm@nightly") || strings.Contains(command, "cursor") {
+		t.Fatalf("expected selected cask only in scoped brew rerun command, got %#v", step.Command)
+	}
+	if strings.Contains(command, "brew update && brew upgrade") {
+		t.Fatalf("expected scoped rerun not to use unscoped provider update command, got %#v", step.Command)
+	}
+}
+
+func TestScopedMiseUpgradeCommandUsesConfiguredMinimumReleaseAge(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("UPDEV_MISE_MIN_RELEASE_AGE_DAYS", "5")
+	root := t.TempDir()
+
+	command := scopedMiseUpgradeCommand(root, []safetyFinding{{
+		Provider: "mise",
+		Name:     "github:openai/codex",
+		Decision: "allow",
+	}})
+
+	got := strings.Join(command, " ")
+	want := "mise upgrade --yes --minimum-release-age 5d --cd " + root + " github:openai/codex"
+	if !strings.Contains(got, want) {
+		t.Fatalf("expected configured minimum release age in scoped mise command\nwant: %s\ngot:  %s", want, got)
+	}
+}
+
+func TestScopedMiseUpgradeCommandOmitsMinimumReleaseAgeWhenDisabled(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("UPDEV_MISE_MIN_RELEASE_AGE_DAYS", "0")
+
+	command := scopedMiseUpgradeCommand("", []safetyFinding{{
+		Provider: "mise",
+		Name:     "github:openai/codex",
+		Decision: "allow",
+	}})
+
+	got := strings.Join(command, " ")
+	if strings.Contains(got, "--minimum-release-age") {
+		t.Fatalf("expected disabled minimum release age to omit flag, got %s", got)
+	}
+}
+
+func TestRunUpdateStrictSafetyRefreshesBrewMetadataOnlyWhenNoCandidates(t *testing.T) {
+	brew := updateSteps()[0]
+	brew, holdReason := updateStepWithStrictSafety(brew, updateOptions{security: "strict"}, []safetyGate{{
+		Provider: "brew",
+		Status:   plan.StatusOK,
+	}})
+	if holdReason != "" {
+		t.Fatalf("expected metadata-only brew command, got hold reason %q", holdReason)
+	}
+	want := []string{"bash", "-lc", "brew update"}
+	if strings.Join(brew.Command, "\x00") != strings.Join(want, "\x00") {
+		t.Fatalf("expected metadata-only brew update, got %#v", brew.Command)
+	}
+	if !strings.Contains(brew.Reason, "metadata only") {
+		t.Fatalf("expected metadata-only reason, got %q", brew.Reason)
+	}
+}
+
+func TestRunUpdateStrictSafetyRefreshesBrewMetadataAndAppliesDiscoveredSafeCandidate(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	root := t.TempDir()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/formula/jq.json":
+			_, _ = w.Write([]byte(`{
+  "name": "jq",
+  "tap": "homebrew/core",
+  "homepage": "https://jqlang.github.io/jq/",
+  "versions": {"stable": "1.8.1"},
+  "urls": {"stable": {"url": "https://github.com/jqlang/jq/releases/download/jq-1.8.1/jq-1.8.1.tar.gz"}}
+}`))
+		case "/repos/jqlang/jq/releases/tags/jq-1.8.1":
+			_, _ = w.Write([]byte(`{"published_at":"` + time.Now().AddDate(0, 0, -4).UTC().Format(time.RFC3339) + `"}`))
+		case "/":
+			_, _ = w.Write([]byte(`{"results":[]}`))
+		default:
+			t.Fatalf("unexpected API path: %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+	t.Setenv("UPDEV_HOMEBREW_API_URL", server.URL)
+	t.Setenv("UPDEV_GITHUB_API_URL", server.URL)
+	t.Setenv("UPDEV_OSV_API_URL", server.URL)
+	outdatedKey := "env\x00HOMEBREW_NO_AUTO_UPDATE=1\x00HOMEBREW_NO_INSTALL_FROM_API=1\x00brew\x00outdated\x00--json=v2\x00--greedy"
+	scopedBrewKey := strings.Join([]string{"bash", "-lc", "HOMEBREW_NO_AUTO_UPDATE=1 brew upgrade --greedy jq && HOMEBREW_NO_AUTO_UPDATE=1 brew cleanup && brew update"}, "\x00")
+	fake := &fakeCommandRunner{
+		results: map[string]runner.Result{
+			strings.Join([]string{"bash", "-lc", "brew update"}, "\x00"): {Stdout: "Updated Homebrew metadata"},
+			scopedBrewKey: {Stdout: "jq 1.7 -> 1.8.1"},
+		},
+		sequences: map[string][]runner.Result{
+			outdatedKey: {
+				{Stdout: `{"formulae":[],"casks":[]}`},
+				{Stdout: `{"formulae":[{"name":"jq","installed_versions":["1.7"],"current_version":"1.8.1"}],"casks":[]}`},
+			},
+		},
+	}
+	code := runUpdate(updateOptions{format: "text", root: root, security: "strict", noTUI: true}, fake)
+	if code != 0 {
+		t.Fatalf("expected same-run safe Homebrew update after metadata refresh, got %d", code)
+	}
+	if !fakeCommandWasCalled(fake.calls, strings.Split(scopedBrewKey, "\x00")) {
+		t.Fatalf("expected scoped brew upgrade after metadata refresh, calls=%#v", fake.calls)
+	}
+	entry, ok := loadLastUpdateReport()
+	if !ok {
+		t.Fatal("expected last update report to be saved")
+	}
+	var brewStep updateStep
+	for _, step := range entry.Report.Steps {
+		if step.Name == "brew" {
+			brewStep = step
+			break
+		}
+	}
+	if brewStep.Status != plan.StatusOK || len(brewStep.Updated) != 1 || !strings.Contains(brewStep.Updated[0], "jq 1.7 -> 1.8.1") {
+		t.Fatalf("expected discovered safe Homebrew candidate to update in same run, got %#v", brewStep)
+	}
+}
+
+func TestRunUpdateAutoMiseBumpRunsScopedSafeCandidates(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	t.Setenv("UPDEV_CONFIG", filepath.Join(t.TempDir(), "missing-config.toml"))
+	t.Setenv("UPDEV_MISE_MIN_RELEASE_AGE_DAYS", "0")
+	root := t.TempDir()
+	safeBumpJSON := `{"github:openai/codex":{"requested":"0.60.0","current":"0.60.0","bump":"0.60.1","latest":"0.60.1"}}`
+	preflightKey := strings.Join([]string{"mise", "upgrade", "--dry-run", "--bump", "--cd", root, "github:openai/codex"}, "\x00")
+	applyKey := strings.Join([]string{"mise", "upgrade", "--bump", "--yes", "--cd", root, "github:openai/codex"}, "\x00")
+	fake := &fakeCommandRunner{results: map[string]runner.Result{
+		strings.Join([]string{"env", "HOMEBREW_NO_AUTO_UPDATE=1", "HOMEBREW_NO_INSTALL_FROM_API=1", "brew", "outdated", "--json=v2", "--greedy"}, "\x00"): {
+			Stdout: `{"formulae":[],"casks":[]}`,
+		},
+		strings.Join([]string{"mise", "settings", "ls", "--json-extended", "--cd", root}, "\x00"): {
+			Stdout: `{}`,
+		},
+		strings.Join([]string{"mise", "outdated", "--json", "--cd", root}, "\x00"): {
+			Stdout: `{}`,
+		},
+		strings.Join([]string{"env", "MISE_MINIMUM_RELEASE_AGE=0d", "mise", "outdated", "--json", "--cd", root}, "\x00"): {
+			Stdout: `{}`,
+		},
+		strings.Join([]string{"mise", "outdated", "--json", "--bump", "--cd", root}, "\x00"): {
+			Stdout: safeBumpJSON,
+		},
+		strings.Join([]string{"env", "MISE_MINIMUM_RELEASE_AGE=0d", "mise", "outdated", "--json", "--bump", "--cd", root}, "\x00"): {
+			Stdout: `{}`,
+		},
+		strings.Join([]string{"bash", "-lc", "brew update && brew upgrade --greedy && brew cleanup"}, "\x00"): {
+			Stdout: "Already up-to-date.",
+		},
+		strings.Join([]string{"zsh", "-c", "source ~/.zshenv && mise upgrade && mise prune"}, "\x00"): {
+			Stdout: "All tools are up to date",
+		},
+		preflightKey: {Stdout: "Would bump github:openai/codex"},
+		applyKey:     {Stdout: "github:openai/codex 0.60.0 -> 0.60.1"},
+	}}
+	code := runUpdate(updateOptions{format: "text", root: root, security: "strict", miseBumpMode: "auto", noTUI: true}, fake)
+	if code != 0 {
+		t.Fatalf("expected successful auto bump update, got %d", code)
+	}
+	if !fakeCommandWasCalled(fake.calls, strings.Split(preflightKey, "\x00")) {
+		t.Fatalf("expected scoped dry-run bump command, calls=%#v", fake.calls)
+	}
+	if !fakeCommandWasCalled(fake.calls, strings.Split(applyKey, "\x00")) {
+		t.Fatalf("expected scoped apply bump command, calls=%#v", fake.calls)
+	}
+	for _, call := range fake.calls {
+		if len(call) == 3 && call[0] == "mise" && call[1] == "upgrade" && call[2] == "--bump" {
+			t.Fatalf("unscoped mise bump must not run, calls=%#v", fake.calls)
+		}
+	}
+	entry, ok := loadLastUpdateReport()
+	if !ok {
+		t.Fatal("expected last update report to be saved")
+	}
+	var bumpStep updateStep
+	for _, step := range entry.Report.Steps {
+		if step.Name == miseBumpProvider {
+			bumpStep = step
+			break
+		}
+	}
+	if bumpStep.Status != plan.StatusOK || len(bumpStep.Updated) != 1 || !strings.Contains(bumpStep.Updated[0], "github:openai/codex") {
+		t.Fatalf("expected successful bump step in report, got %#v", bumpStep)
+	}
+}
+
+func TestRunMiseBumpAutoDryRunShowsWouldUpdateCandidates(t *testing.T) {
+	step, ok := runMiseBumpUpdateStep(context.Background(), &fakeCommandRunner{}, updateOptions{root: "/repo", security: "strict", miseBumpMode: "auto", dryRun: true}, []safetyGate{{
+		Provider: miseBumpProvider,
+		Status:   plan.StatusOK,
+		Findings: []safetyFinding{{
+			Provider:          "mise",
+			Kind:              "tool",
+			Name:              "github:openai/codex",
+			InstalledVersions: []string{"0.60.0"},
+			CurrentVersion:    "0.60.1",
+			Decision:          "allow",
+			Source:            miseBumpSource,
+		}},
+	}}, false)
+	if !ok || len(step.Updated) != 1 || len(step.SkippedItems) != 0 || !strings.HasPrefix(step.Updated[0], "would bump ") {
+		t.Fatalf("expected dry-run auto bump to expose would-update row, ok=%v step=%#v", ok, step)
+	}
+	rows := updateOutcomeRows(updateReport{DryRun: true, Steps: []updateStep{step}}, 10, false)
+	if len(rows) != 1 || rows[0][0] != "would" || !strings.Contains(rows[0][2], "github:openai/codex") {
+		t.Fatalf("expected dry-run outcome to render as would-update, got %#v", rows)
+	}
+}
+
+func TestRunMiseBumpOffModeDoesNotCreateUpdateStep(t *testing.T) {
+	fake := &fakeCommandRunner{}
+	step, ok := runMiseBumpUpdateStep(context.Background(), fake, updateOptions{root: "/repo", security: "strict", miseBumpMode: "off"}, []safetyGate{{
+		Provider: miseBumpProvider,
+		Status:   plan.StatusOK,
+		Findings: []safetyFinding{{
+			Provider:          "mise",
+			Kind:              "tool",
+			Name:              "github:openai/codex",
+			InstalledVersions: []string{"0.60.0"},
+			CurrentVersion:    "0.60.1",
+			Decision:          "allow",
+			Source:            miseBumpSource,
+		}},
+	}}, false)
+	if ok || step.Name != "" || len(fake.calls) != 0 {
+		t.Fatalf("expected off mode to skip mise-bump step without command calls, ok=%v step=%#v calls=%#v", ok, step, fake.calls)
+	}
+}
+
+func TestRunMiseBumpManualModeKeepsAllCandidatesReviewOnly(t *testing.T) {
+	safe := safetyFinding{
+		Provider:          "mise",
+		Kind:              "tool",
+		Name:              "github:openai/codex",
+		InstalledVersions: []string{"0.60.0"},
+		CurrentVersion:    "0.60.1",
+		Decision:          "allow",
+		Source:            miseBumpSource,
+	}
+	unsafe := safetyFinding{
+		Provider:          "mise",
+		Kind:              "tool",
+		Name:              "npm:@google/gemini-cli",
+		InstalledVersions: []string{"0.42.0"},
+		CurrentVersion:    "0.46.0",
+		Decision:          "review",
+		Source:            miseBumpSource,
+	}
+	fake := &fakeCommandRunner{}
+	step, ok := runMiseBumpUpdateStep(context.Background(), fake, updateOptions{root: "/repo", security: "strict", miseBumpMode: "manual"}, []safetyGate{{
+		Provider: miseBumpProvider,
+		Status:   plan.StatusHeld,
+		Findings: []safetyFinding{safe, unsafe},
+	}}, false)
+	if !ok || step.Status != plan.StatusDrift || !step.Skipped || len(step.Updated) != 0 || len(step.SkippedItems) != 2 || len(fake.calls) != 0 {
+		t.Fatalf("expected manual mode to expose all candidates without applying, ok=%v step=%#v calls=%#v", ok, step, fake.calls)
+	}
+	if !strings.Contains(strings.Join(step.SkippedItems, "\n"), "github:openai/codex") || !strings.Contains(strings.Join(step.SkippedItems, "\n"), "npm:@google/gemini-cli") {
+		t.Fatalf("expected manual mode skipped items to include safe and review candidates, got %#v", step.SkippedItems)
+	}
+}
+
+func TestRunMiseBumpSafeModeKeepsSafeCandidatesConfirmationOnly(t *testing.T) {
+	safe := safetyFinding{
+		Provider:          "mise",
+		Kind:              "tool",
+		Name:              "github:openai/codex",
+		InstalledVersions: []string{"0.60.0"},
+		CurrentVersion:    "0.60.1",
+		Decision:          "allow",
+		Source:            miseBumpSource,
+	}
+	fake := &fakeCommandRunner{}
+	step, ok := runMiseBumpUpdateStep(context.Background(), fake, updateOptions{root: "/repo", security: "strict", miseBumpMode: "safe"}, []safetyGate{{
+		Provider: miseBumpProvider,
+		Status:   plan.StatusOK,
+		Findings: []safetyFinding{safe},
+	}}, false)
+	if !ok || step.Status != plan.StatusDrift || !step.Skipped || len(step.Updated) != 0 || len(step.SkippedItems) != 1 || len(fake.calls) != 0 {
+		t.Fatalf("expected safe mode to expose confirmation-only batch without applying, ok=%v step=%#v calls=%#v", ok, step, fake.calls)
+	}
+	if !strings.Contains(step.Reason, "can be applied after confirmation") {
+		t.Fatalf("expected safe mode reason to describe confirmation boundary, got %q", step.Reason)
+	}
+}
+
+func TestRunMiseBumpAutoSkipsDependencyBlockedCandidate(t *testing.T) {
+	root := t.TempDir()
+	codex := safetyFinding{
+		Provider:          "mise",
+		Kind:              "tool",
+		Name:              "github:openai/codex",
+		InstalledVersions: []string{"0.60.0"},
+		CurrentVersion:    "0.60.1",
+		Decision:          "allow",
+		Source:            miseBumpSource,
+	}
+	broot := safetyFinding{
+		Provider:          "mise",
+		Kind:              "tool",
+		Name:              "cargo:broot",
+		InstalledVersions: []string{"1.56.0"},
+		CurrentVersion:    "1.57.0",
+		Decision:          "allow",
+		Source:            miseBumpSource,
+	}
+	validateKey := strings.Join([]string{"mise", "outdated", "--json", "--bump", "--cd", root}, "\x00")
+	firstPreflightKey := strings.Join([]string{"mise", "upgrade", "--dry-run", "--bump", "--cd", root, "cargo:broot", "github:openai/codex"}, "\x00")
+	secondPreflightKey := strings.Join([]string{"mise", "upgrade", "--dry-run", "--bump", "--cd", root, "github:openai/codex"}, "\x00")
+	applyKey := strings.Join([]string{"mise", "upgrade", "--bump", "--yes", "--cd", root, "github:openai/codex"}, "\x00")
+	fake := &fakeCommandRunner{
+		results: map[string]runner.Result{
+			validateKey:        {Stdout: `{"cargo:broot":{"requested":"1.56.0","current":"1.56.0","bump":"1.57.0","latest":"1.57.0"},"github:openai/codex":{"requested":"0.60.0","current":"0.60.0","bump":"0.60.1","latest":"0.60.1"}}`},
+			firstPreflightKey:  {Stderr: "mise WARN tool 'cargo:broot@1.57.0': depends on 'rust' which is not in the current install set"},
+			secondPreflightKey: {Stdout: "Would bump github:openai/codex"},
+			applyKey:           {Stdout: "github:openai/codex 0.60.0 -> 0.60.1"},
+		},
+	}
+	step, ok := runMiseBumpUpdateStep(context.Background(), fake, updateOptions{root: root, security: "strict", miseBumpMode: "auto"}, []safetyGate{{
+		Provider: miseBumpProvider,
+		Status:   plan.StatusOK,
+		Findings: []safetyFinding{codex, broot},
+	}}, false)
+	if !ok || step.Status != plan.StatusHeld || len(step.Updated) != 1 || !strings.Contains(step.Updated[0], "github:openai/codex") || len(step.SkippedItems) != 1 || !strings.Contains(step.SkippedItems[0], "cargo:broot") {
+		t.Fatalf("expected dependency-blocked candidate to be skipped while remaining safe candidate applies, ok=%v step=%#v", ok, step)
+	}
+	if fakeCommandWasCalled(fake.calls, strings.Split(strings.Join([]string{"mise", "upgrade", "--bump", "--yes", "--cd", root, "cargo:broot", "github:openai/codex"}, "\x00"), "\x00")) {
+		t.Fatalf("dependency-blocked candidate must not be passed to apply command, calls=%#v", fake.calls)
+	}
+	if !fakeCommandWasCalled(fake.calls, strings.Split(applyKey, "\x00")) {
+		t.Fatalf("expected remaining safe candidate to be applied, calls=%#v", fake.calls)
+	}
+}
+
+func TestSanitizedNPMUserConfigForMiseBumpKeepsRegistryAndDropsReleaseAge(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+	configDir := filepath.Join(home, ".config", "npm")
+	if err := os.MkdirAll(configDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(home, ".npmrc"), []byte("registry=https://registry.npmjs.org/\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(configDir, "npmrc"), []byte("@webkaz-labs:registry=https://npm.pkg.github.com\n//npm.pkg.github.com/:_authToken=${NODE_AUTH_TOKEN}\nmin-release-age=3\nminimum_release_age=3\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	content := sanitizedNPMUserConfigContentForMiseBump()
+	for _, want := range []string{
+		"registry=https://registry.npmjs.org/",
+		"@webkaz-labs:registry=https://npm.pkg.github.com",
+		"//npm.pkg.github.com/:_authToken=${NODE_AUTH_TOKEN}",
+	} {
+		if !strings.Contains(content, want) {
+			t.Fatalf("expected sanitized npm config to keep %q, got:\n%s", want, content)
+		}
+	}
+	if strings.Contains(content, "min-release-age") || strings.Contains(content, "minimum_release_age") {
+		t.Fatalf("expected sanitized npm config to drop release-age settings, got:\n%s", content)
+	}
+}
+
+func TestRunMiseBumpAutoWrapsNPMBackendWithSanitizedUserConfig(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+	configDir := filepath.Join(home, ".config", "npm")
+	if err := os.MkdirAll(configDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(configDir, "npmrc"), []byte("registry=https://registry.npmjs.org/\nmin-release-age=3\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	root := t.TempDir()
+	finding := safetyFinding{
+		Provider:          "mise",
+		Kind:              "npm",
+		Name:              "npm:agent-browser",
+		InstalledVersions: []string{"0.27.0"},
+		CurrentVersion:    "0.27.1",
+		Decision:          "allow",
+		Source:            miseBumpSource,
+	}
+	validateKey := strings.Join([]string{"mise", "outdated", "--json", "--bump", "--cd", root}, "\x00")
+	fake := &fakeCommandRunner{results: map[string]runner.Result{
+		validateKey: {Stdout: `{"npm:agent-browser":{"requested":"0.27.0","current":"0.27.0","bump":"0.27.1","latest":"0.27.1"}}`},
+	}}
+	step, ok := runMiseBumpUpdateStep(context.Background(), fake, updateOptions{root: root, security: "strict", miseBumpMode: "auto"}, []safetyGate{{
+		Provider: miseBumpProvider,
+		Status:   plan.StatusOK,
+		Findings: []safetyFinding{finding},
+	}}, false)
+	if !ok || step.Status != plan.StatusOK || len(step.Updated) != 1 {
+		t.Fatalf("expected npm bump to apply with sanitized npm config, ok=%v step=%#v", ok, step)
+	}
+	envCalls := [][]string{}
+	for _, call := range fake.calls {
+		if len(call) > 2 && call[0] == "env" && npmUserConfigAssignmentFromCommand(call) != "" {
+			envCalls = append(envCalls, call)
+		}
+	}
+	if len(envCalls) != 2 {
+		t.Fatalf("expected preflight and apply to use sanitized npm userconfig, calls=%#v", fake.calls)
+	}
+	for _, call := range envCalls {
+		if !containsString(call, "mise") || !containsString(call, "npm:agent-browser") {
+			t.Fatalf("expected sanitized npm env call to wrap scoped mise bump, got %#v", call)
+		}
+		if !containsString(call, "-u") || !containsString(call, "NPM_CONFIG_MIN_RELEASE_AGE") || !containsString(call, "npm_config_min_release_age") {
+			t.Fatalf("expected sanitized npm env call to unset release-age env vars, got %#v", call)
+		}
+		path := strings.TrimPrefix(npmUserConfigAssignmentFromCommand(call), "NPM_CONFIG_USERCONFIG=")
+		if _, err := os.Stat(path); !os.IsNotExist(err) {
+			t.Fatalf("expected temporary npm config to be cleaned up, path=%q err=%v", path, err)
+		}
+	}
+}
+
+func npmUserConfigAssignmentFromCommand(command []string) string {
+	for _, arg := range command {
+		if strings.HasPrefix(arg, "NPM_CONFIG_USERCONFIG=") {
+			return arg
+		}
+	}
+	return ""
+}
+
+func TestRunMiseBumpAutoKeepsPartialUpdatesOnApplyError(t *testing.T) {
+	root := t.TempDir()
+	finding := safetyFinding{
+		Provider:          "mise",
+		Kind:              "tool",
+		Name:              "github:openai/codex",
+		InstalledVersions: []string{"0.60.0"},
+		CurrentVersion:    "0.60.1",
+		Decision:          "allow",
+		Source:            miseBumpSource,
+	}
+	validateKey := strings.Join([]string{"mise", "outdated", "--json", "--bump", "--cd", root}, "\x00")
+	preflightKey := strings.Join([]string{"mise", "upgrade", "--dry-run", "--bump", "--cd", root, "github:openai/codex"}, "\x00")
+	applyKey := strings.Join([]string{"mise", "upgrade", "--bump", "--yes", "--cd", root, "github:openai/codex"}, "\x00")
+	fake := &fakeCommandRunner{results: map[string]runner.Result{
+		validateKey:  {Stdout: `{"github:openai/codex":{"requested":"0.60.0","current":"0.60.0","bump":"0.60.1","latest":"0.60.1"}}`},
+		preflightKey: {Stdout: "Would bump github:openai/codex"},
+		applyKey:     {Stdout: "github:openai/codex 0.60.0 -> 0.60.1", Stderr: "mise failed after partial update", Code: 1},
+	}}
+	step, ok := runMiseBumpUpdateStep(context.Background(), fake, updateOptions{root: root, security: "strict", miseBumpMode: "auto"}, []safetyGate{{
+		Provider: miseBumpProvider,
+		Status:   plan.StatusOK,
+		Findings: []safetyFinding{finding},
+	}}, false)
+	if !ok || step.Status != plan.StatusError || len(step.Updated) != 1 || !strings.Contains(step.Updated[0], "github:openai/codex") {
+		t.Fatalf("expected partial update evidence to survive apply error, ok=%v step=%#v", ok, step)
+	}
+}
+
+func TestRunMiseBumpAutoHoldsWhenCandidateChangesBeforeApply(t *testing.T) {
+	root := t.TempDir()
+	finding := safetyFinding{
+		Provider:          "mise",
+		Kind:              "tool",
+		Name:              "github:openai/codex",
+		InstalledVersions: []string{"0.60.0"},
+		CurrentVersion:    "0.60.1",
+		Decision:          "allow",
+		Source:            miseBumpSource,
+	}
+	fake := &fakeCommandRunner{results: map[string]runner.Result{
+		strings.Join([]string{"mise", "outdated", "--json", "--bump", "--cd", root}, "\x00"): {
+			Stdout: `{"github:openai/codex":{"requested":"0.60.0","current":"0.60.0","bump":"0.60.2","latest":"0.60.2"}}`,
+		},
+	}}
+	step, ok := runMiseBumpUpdateStep(context.Background(), fake, updateOptions{root: root, security: "strict", miseBumpMode: "auto"}, []safetyGate{{
+		Provider: miseBumpProvider,
+		Status:   plan.StatusOK,
+		Findings: []safetyFinding{finding},
+	}}, false)
+	if !ok || step.Status != plan.StatusHeld || !strings.Contains(step.Reason, "candidate set changed") {
+		t.Fatalf("expected changed candidate set to hold auto bump, ok=%v step=%#v", ok, step)
+	}
+	for _, call := range fake.calls {
+		if len(call) >= 2 && call[0] == "mise" && call[1] == "upgrade" {
+			t.Fatalf("changed candidate set must not execute upgrade, calls=%#v", fake.calls)
+		}
+	}
+}
+
+func TestRunMiseBumpAutoAppliesPolicyAllowedNativeAgeHold(t *testing.T) {
+	root := t.TempDir()
+	finding := safetyFinding{
+		Provider:          "mise-bump",
+		Kind:              "tool",
+		Name:              "github:ogulcancelik/herdr",
+		InstalledVersions: []string{"0.6.8"},
+		CurrentVersion:    "0.6.9",
+		Decision:          "allow",
+		Reason:            "reviewed locally",
+		Confidence:        "policy",
+		Evidence:          []string{"mise outdated --json with MISE_MINIMUM_RELEASE_AGE=0d", "security-policy"},
+		Source:            miseNativeReleaseAgeSource,
+	}
+	validateKey := strings.Join([]string{"env", "MISE_MINIMUM_RELEASE_AGE=0d", "mise", "outdated", "--json", "--bump", "--cd", root}, "\x00")
+	preflightKey := strings.Join([]string{"env", "MISE_MINIMUM_RELEASE_AGE=0d", "mise", "upgrade", "--dry-run", "--bump", "--cd", root, "github:ogulcancelik/herdr"}, "\x00")
+	applyKey := strings.Join([]string{"env", "MISE_MINIMUM_RELEASE_AGE=0d", "mise", "upgrade", "--bump", "--yes", "--cd", root, "github:ogulcancelik/herdr"}, "\x00")
+	fake := &fakeCommandRunner{results: map[string]runner.Result{
+		validateKey:  {Stdout: `{"github:ogulcancelik/herdr":{"requested":"0.6.8","current":"0.6.8","bump":"0.6.9","latest":"0.6.9"}}`},
+		preflightKey: {Stdout: "Would bump github:ogulcancelik/herdr"},
+		applyKey:     {Stdout: "github:ogulcancelik/herdr 0.6.8 -> 0.6.9"},
+	}}
+	step, ok := runMiseBumpUpdateStep(context.Background(), fake, updateOptions{root: root, security: "strict", miseBumpMode: "auto"}, []safetyGate{{
+		Provider: miseBumpProvider,
+		Status:   plan.StatusOK,
+		Findings: []safetyFinding{finding},
+	}}, false)
+	if !ok || step.Status != plan.StatusOK || len(step.Updated) != 1 || !strings.Contains(step.Updated[0], "github:ogulcancelik/herdr") {
+		t.Fatalf("expected policy-allowed native age hold to apply, ok=%v step=%#v calls=%#v", ok, step, fake.calls)
+	}
+	normalValidateKey := strings.Join([]string{"mise", "outdated", "--json", "--bump", "--cd", root}, "\x00")
+	if fakeCommandWasCalled(fake.calls, strings.Split(normalValidateKey, "\x00")) {
+		t.Fatalf("policy-allowed age hold must validate against age-disabled candidates, calls=%#v", fake.calls)
+	}
+	if !fakeCommandWasCalled(fake.calls, strings.Split(applyKey, "\x00")) {
+		t.Fatalf("expected scoped age-disabled apply command, calls=%#v", fake.calls)
+	}
+}
+
+func TestMiseBumpSafeModeExposesBatchAction(t *testing.T) {
+	t.Setenv("UPDEV_MISE_BUMP_MODE", "safe")
+	actions := updateStepDetailActions(updateStep{Name: miseBumpProvider, Status: plan.StatusDrift})
+	found := false
+	for _, action := range actions {
+		parsedAction, _, ok := parseMiseBumpDetailAction(action.Value)
+		if ok && parsedAction == "apply-batch" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected safe mode batch action, got %#v", actions)
+	}
+}
+
+func fakeCommandWasCalled(calls [][]string, want []string) bool {
+	for _, call := range calls {
+		if strings.Join(call, "\x00") == strings.Join(want, "\x00") {
+			return true
+		}
+	}
+	return false
 }
 
 func TestUpdateStepSummaryTextReportsSkippedHeldSteps(t *testing.T) {
@@ -846,8 +1729,35 @@ func TestUpdateStepSummaryTextReportsSkippedHeldSteps(t *testing.T) {
 		{Name: "brew", Status: plan.StatusHeld, Skipped: true, SkippedItems: []string{"security held"}},
 		{Name: "mise", Status: plan.StatusOK, Updated: []string{"node 22 -> 24"}},
 	})
-	if got != "2 steps, 1 updated, 1 deferred, 1 held, 1 skipped" {
+	if got != "2 provider steps, 1 updated items, 1 deferred items, 1 held steps, 1 skipped steps" {
 		t.Fatalf("unexpected update step summary: %q", got)
+	}
+}
+
+func TestUpdateOutcomeRowsShowsBrewHeldCandidateItem(t *testing.T) {
+	withDefaultLanguageForTest(t, "ja")
+	step := updateStep{
+		Name:    "brew",
+		Status:  plan.StatusHeld,
+		Skipped: true,
+		SkippedItems: updateSafetySkippedSummaries([]safetyFinding{{
+			Provider:       "brew",
+			Kind:           "cask",
+			Name:           "wezterm@nightly",
+			CurrentVersion: "latest",
+			Decision:       "review",
+			Reason:         "Homebrew cask download host differs from homepage host; vendor provenance review required",
+		}}),
+	}
+	rows := updateOutcomeRows(updateReport{Steps: []updateStep{step}}, 10, false)
+	if len(rows) != 1 {
+		t.Fatalf("expected one skipped row, got %#v", rows)
+	}
+	if rows[0][2] != "wezterm@nightly" {
+		t.Fatalf("expected skipped row item name, got %#v", rows[0])
+	}
+	if !strings.Contains(rows[0][3], "latest review") || !strings.Contains(rows[0][3], "Homebrew cask") {
+		t.Fatalf("expected skipped row detail to include version, decision, and localized reason, got %#v", rows[0])
 	}
 }
 
@@ -864,7 +1774,7 @@ func TestPrintUpdateTextIncludesSkippedStepStatus(t *testing.T) {
 		},
 	})
 	got := buffer.String()
-	for _, want := range []string{"update summary: 2 steps, 1 updated, 1 deferred, 1 held, 1 skipped", "update outcome", "node", "22.0.0 -> 22.1.0", "skipped", "brew", "yes", "reason: security=strict held update"} {
+	for _, want := range []string{"update summary: 2 provider steps, 1 updated items, 1 deferred items, 1 held steps, 1 skipped steps", "update outcome", "node", "22.0.0 -> 22.1.0", "skipped", "brew", "yes", "reason: security=strict held update"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("expected update text to include %q, got %q", want, got)
 		}
@@ -1131,6 +2041,31 @@ func TestPrintLastReportTextDoesNotRepeatUpdateHeader(t *testing.T) {
 	}
 }
 
+func TestLastReportHubUsesTopAnchoredUpdateSummary(t *testing.T) {
+	report := updateReport{
+		Status:   plan.StatusHeld,
+		Root:     "/repo",
+		Security: "strict",
+		Steps: []updateStep{{
+			Name:         "mise-bump",
+			Status:       plan.StatusHeld,
+			SkippedItems: []string{"aqua:modem-dev/hunk 0.14.0 -> 0.14.1"},
+		}},
+		Report: "/tmp/last-update.json",
+	}
+	model := newUpdateHubRouterModel(report, inventoryPlanReport{}, false, backendPlanReport{}, false, lastReportHubDefaultAction("summary"), updateHubActionDashboard, false)
+	model.height = 16
+	model.applyDashboardSize(&model.dashboard)
+	view := model.View().Content
+	rootIndex := strings.Index(view, "root:")
+	outcomeIndex := strings.Index(view, "update outcome")
+	headerIndex := strings.Index(view, "type")
+	rowIndex := strings.Index(view, "skipped")
+	if rootIndex < 0 || outcomeIndex < 0 || headerIndex < 0 || rowIndex < 0 || !(rootIndex < outcomeIndex && outcomeIndex < headerIndex && headerIndex < rowIndex) {
+		t.Fatalf("expected last-report hub summary to stay top-anchored with title/header before rows:\n%s", view)
+	}
+}
+
 func TestBuildUpdateReportSectionViewFiltersInventory(t *testing.T) {
 	entry := updateReportCacheEntry{
 		Version:   1,
@@ -1291,6 +2226,31 @@ func TestUpdateDetailRowsExposeInventorySecurityAndLogs(t *testing.T) {
 	if action, _, _, _, ok := parseSecurityDetailAction(nonRerunnable[0].Value); !ok || action != "allow-custom" {
 		t.Fatalf("expected custom allow to be the first non-rerunnable action, got %#v", nonRerunnable)
 	}
+	bumpReviewActions := securityDetailActions(safetyGate{Provider: miseBumpProvider}, safetyFinding{
+		Provider:       "mise",
+		Kind:           "tool",
+		Name:           "github:openai/codex",
+		CurrentVersion: "0.60.1",
+		Decision:       "review",
+		Source:         miseBumpSource,
+	})
+	for _, action := range bumpReviewActions {
+		if strings.Contains(action.Value, "rerun") {
+			t.Fatalf("expected mise-bump review actions to avoid normal provider rerun, got %#v", bumpReviewActions)
+		}
+	}
+	bumpAllowActions := securityDetailActions(safetyGate{Provider: miseBumpProvider}, safetyFinding{
+		Provider:          "mise",
+		Kind:              "tool",
+		Name:              "github:openai/codex",
+		InstalledVersions: []string{"0.60.0"},
+		CurrentVersion:    "0.60.1",
+		Decision:          "allow",
+		Source:            miseNativeReleaseAgeSource,
+	})
+	if len(bumpAllowActions) != 1 || bumpAllowActions[0].Value != miseBumpDetailActionValue("github:openai/codex") {
+		t.Fatalf("expected allowed mise-bump finding to route to scoped bump apply, got %#v", bumpAllowActions)
+	}
 }
 
 func TestUpdateLogDetailRowsDistinguishSkippedErrorAndPreserveLogLines(t *testing.T) {
@@ -1322,6 +2282,27 @@ func TestUpdateLogDetailRowsDistinguishSkippedErrorAndPreserveLogLines(t *testin
 	expanded := strings.Join(detailBrowserExpandedLinesWithWidth(rows[0], 80), "\n")
 	if !strings.Contains(expanded, "stdout: line one") || !strings.Contains(expanded, "line two") {
 		t.Fatalf("expected expanded update log to preserve stdout newlines, got %q", expanded)
+	}
+}
+
+func TestUpdateLogRouteQueryFiltersItemRows(t *testing.T) {
+	report := filterUpdateReport(updateReport{Steps: []updateStep{{
+		Name:   miseBumpProvider,
+		Status: plan.StatusDrift,
+		Reason: "mise bump candidates available; mode=manual requires item review",
+		SkippedItems: []string{
+			"aqua:modem-dev/hunk 0.14.0 -> 0.14.1",
+			"cloudflared 2026.5.0 -> 2026.5.2",
+			"copilot-cli 1.0.48 -> 1.0.61",
+		},
+	}}}, lastReportOptions{section: "logs", provider: miseBumpProvider, query: "cloudflared"})
+	rows := updateLogDetailRows(report)
+	if len(rows) != 2 {
+		t.Fatalf("expected one matching item row plus provider summary, got %#v", rows)
+	}
+	joined := strings.Join([]string{rows[0].Summary, rows[1].Summary, strings.Join(rows[1].Metadata, " ")}, " ")
+	if !strings.Contains(joined, "cloudflared") || strings.Contains(joined, "aqua:modem-dev/hunk") || strings.Contains(joined, "copilot-cli") {
+		t.Fatalf("expected query-filtered update logs to keep only cloudflared item, got %#v", rows)
 	}
 }
 
@@ -1361,6 +2342,7 @@ func TestUpdateDashboardDetailRowsExposeHubActions(t *testing.T) {
 		Steps: []updateStep{{
 			Name:         "brew",
 			Status:       plan.StatusHeld,
+			Reason:       "security=strict held update because safety gate requires review",
 			Updated:      []string{"jq 1.7 -> 1.8.1"},
 			SkippedItems: []string{"demo held"},
 		}},
@@ -1424,6 +2406,37 @@ func TestUpdateDashboardDetailRowsExposeHubActions(t *testing.T) {
 		if !strings.Contains(dashboardView, want) {
 			t.Fatalf("expected update hub view to contain %q:\n%s", want, dashboardView)
 		}
+	}
+	if !strings.Contains(dashboardView, "\n  provider") || !strings.Contains(dashboardView, "\n  brew") || strings.Contains(dashboardView, "\n    brew") {
+		t.Fatalf("expected selectable table rows to align with table headers:\n%s", dashboardView)
+	}
+	if strings.Contains(dashboardView, "\n  report:") || strings.Contains(dashboardView, "\n  レポート:") {
+		t.Fatalf("expected report metadata line to stay flush with summary labels:\n%s", dashboardView)
+	}
+	for _, line := range summaryModel.Lines {
+		if strings.HasPrefix(strings.TrimSpace(line.Text), "reason:") || strings.HasPrefix(strings.TrimSpace(line.Text), "理由:") {
+			if line.Action != "" {
+				t.Fatalf("expected reason line to be non-selectable metadata, got %#v", line)
+			}
+		}
+	}
+	focusedLowerSummary := newUpdateSummaryBrowserModel(updateHubTitle(report), report, manualPlan, backendPlan, detailBrowserState{}, updateHubActionManualPlan, false)
+	focusedLowerSummary.Height = 16
+	focusedLowerSummary.ensureSelectedVisible()
+	focusedLowerView := focusedLowerSummary.View().Content
+	rootIndex := strings.Index(focusedLowerView, "root:")
+	outcomeIndex := strings.Index(focusedLowerView, "update outcome")
+	headerIndex := strings.Index(focusedLowerView, "type")
+	rowIndex := strings.Index(focusedLowerView, "skipped")
+	if rootIndex < 0 || outcomeIndex < 0 || headerIndex < 0 || rowIndex < 0 || !(rootIndex < outcomeIndex && outcomeIndex < headerIndex && headerIndex < rowIndex) {
+		t.Fatalf("expected initial summary to stay top-anchored with outcome title/header before rows:\n%s", focusedLowerView)
+	}
+	router := newUpdateHubRouterModel(report, manualPlan, false, backendPlan, false, updateHubActionDashboard, updateHubActionDashboard, false)
+	router.detailStates["dashboard"] = detailBrowserState{Selected: 5, Offset: 8}
+	router.showDashboard(updateHubActionDashboard)
+	returnedView := router.View().Content
+	if router.dashboard.State.Offset != 0 || !strings.Contains(returnedView, "root: /repo") {
+		t.Fatalf("expected dashboard return to reset scroll to the report top, offset=%d:\n%s", router.dashboard.State.Offset, returnedView)
 	}
 	summaryActions := updateSummaryActionsByText(summaryModel.Lines)
 	for _, tc := range []struct {
@@ -1528,6 +2541,34 @@ func firstUpdateSummaryRoute(lines []updateSummaryLine, contains string) (update
 		}
 	}
 	return updateSummaryRoute{}, false
+}
+
+func TestUpdateSummarySecurityRoutesOpenNonEmptyDetails(t *testing.T) {
+	providerRoute, _, ok := updateSummaryRouteForTableLine("security", "brew held 1 review Homebrew cask host mismatch")
+	if !ok || providerRoute.Provider != "brew" || providerRoute.Query != "" {
+		t.Fatalf("expected provider summary security row to route by provider only, route=%+v ok=%v", providerRoute, ok)
+	}
+	itemRoute, _, ok := updateSummaryRouteForTableLine("security", "hold mise-bump tool/aqua:modem-dev/hunk 0.14.0 -> 0.15.0 release age")
+	if !ok || itemRoute.Provider != "mise-bump" || itemRoute.Query != "tool/aqua:modem-dev/hunk" {
+		t.Fatalf("expected security item row to route by provider and item identity, route=%+v ok=%v", itemRoute, ok)
+	}
+	report := updateReport{Security: "strict", Safety: []safetyGate{
+		{Provider: "brew", Status: plan.StatusHeld, Findings: []safetyFinding{{Provider: "brew", Kind: "cask", Name: "wezterm@nightly", Decision: "review", Reason: "host mismatch"}}},
+		{Provider: "mise", Status: plan.StatusOK},
+		{Provider: "mise-bump", Status: plan.StatusHeld, Findings: []safetyFinding{{Provider: "mise-bump", Kind: "tool", Name: "aqua:modem-dev/hunk", Decision: "hold", Reason: "release age"}}},
+	}}
+	for _, route := range []updateSummaryRoute{
+		providerRoute,
+		{Base: updateHubActionSecurity, Provider: "mise"},
+		itemRoute,
+		{Base: updateHubActionSecurity, Provider: "brew", Query: "cask/wezterm@nightly"},
+	} {
+		opts := lastReportOptions{section: "security", provider: route.Provider, query: route.Query}
+		filtered := filterUpdateReport(report, opts)
+		if rows := updateSecurityDetailRowsForFilter(filtered, opts); len(rows) == 0 {
+			t.Fatalf("expected non-empty security detail rows for route %+v", route)
+		}
+	}
 }
 
 func TestUpdateFacetCounts(t *testing.T) {
@@ -1635,6 +2676,577 @@ func TestParseMiseOutdatedBuildsReviewFindings(t *testing.T) {
 	}
 }
 
+func TestCollectMiseSafetyAllowsOldGitHubCandidate(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	t.Setenv("UPDEV_CONFIG", filepath.Join(t.TempDir(), "missing-config.toml"))
+	root := t.TempDir()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/repos/openai/codex/releases/tags/0.61.0", "/repos/openai/codex/git/ref/tags/0.61.0":
+			http.NotFound(w, r)
+		case "/repos/openai/codex/releases/tags/v0.61.0":
+			_, _ = w.Write([]byte(`{"published_at":"2026-05-20T00:00:00Z"}`))
+		default:
+			t.Fatalf("unexpected API path: %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+	t.Setenv("UPDEV_GITHUB_API_URL", server.URL)
+	fake := &fakeCommandRunner{result: runner.Result{Stdout: `{"github:openai/codex":{"requested":"0.60.0","current":"0.60.0","latest":"0.61.0"}}`}}
+	gate := collectMiseUpdateSafetyWithPolicy(context.Background(), fake, root, securityPolicy{})
+	if gate.Status != plan.StatusOK {
+		t.Fatalf("expected mise safety gate ok, got %#v", gate)
+	}
+	if len(gate.Findings) != 1 || gate.Findings[0].Decision != "allow" || gate.Findings[0].ReleaseDate == "" {
+		t.Fatalf("expected GitHub mise allow finding with release date, got %#v", gate.Findings)
+	}
+	if gate.Findings[0].RepositoryURL != "https://github.com/openai/codex" {
+		t.Fatalf("expected GitHub repository evidence, got %#v", gate.Findings[0])
+	}
+}
+
+func TestCollectMiseSafetyReportsNativeMinimumReleaseAgeEvidence(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	root := t.TempDir()
+	fake := &fakeCommandRunner{results: map[string]runner.Result{
+		strings.Join([]string{"mise", "settings", "ls", "--json-extended", "--cd", root}, "\x00"): {
+			Stdout: `{"minimum_release_age":{"value":"3d","source":"~/.config/mise/config.toml"}}`,
+		},
+		strings.Join([]string{"mise", "outdated", "--json", "--cd", root}, "\x00"): {
+			Stdout: `{}`,
+		},
+	}}
+	gate := collectMiseUpdateSafetyWithPolicy(context.Background(), fake, root, securityPolicy{})
+	if gate.Status != plan.StatusOK {
+		t.Fatalf("expected mise safety gate ok, got %#v", gate)
+	}
+	if !containsString(gate.Evidence, "mise minimum_release_age active: 3d from ~/.config/mise/config.toml") {
+		t.Fatalf("expected native mise minimum_release_age evidence, got %#v", gate.Evidence)
+	}
+}
+
+func TestCollectMiseSafetyReportsNativeHeldCandidateFromBatchComparison(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	t.Setenv("UPDEV_CONFIG", filepath.Join(t.TempDir(), "missing-config.toml"))
+	root := t.TempDir()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/repos/openai/codex/releases/tags/0.61.0", "/repos/openai/codex/git/ref/tags/0.61.0":
+			http.NotFound(w, r)
+		case "/repos/openai/codex/releases/tags/v0.61.0":
+			_, _ = w.Write([]byte(`{"published_at":"` + time.Now().UTC().Format(time.RFC3339) + `"}`))
+		default:
+			t.Fatalf("unexpected API path: %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+	t.Setenv("UPDEV_GITHUB_API_URL", server.URL)
+	fake := &fakeCommandRunner{results: map[string]runner.Result{
+		strings.Join([]string{"mise", "settings", "ls", "--json-extended", "--cd", root}, "\x00"): {
+			Stdout: `{"minimum_release_age":{"value":"3d","source":"~/.config/mise/config.toml"}}`,
+		},
+		strings.Join([]string{"mise", "outdated", "--json", "--cd", root}, "\x00"): {
+			Stdout: `{}`,
+		},
+		strings.Join([]string{"env", "MISE_MINIMUM_RELEASE_AGE=0d", "mise", "outdated", "--json", "--cd", root}, "\x00"): {
+			Stdout: `{"github:openai/codex":{"requested":"0.60.0","current":"0.60.0","latest":"0.61.0"}}`,
+		},
+	}}
+	gate := collectMiseUpdateSafetyWithPolicy(context.Background(), fake, root, securityPolicy{})
+	if gate.Status != plan.StatusHeld {
+		t.Fatalf("expected mise safety gate held, got %#v", gate)
+	}
+	if len(gate.Findings) != 1 || gate.Findings[0].Decision != "hold" || gate.Findings[0].Source != miseNativeReleaseAgeSource {
+		t.Fatalf("expected native release-age hold finding, got %#v", gate.Findings)
+	}
+	if !containsString(gate.Findings[0].Evidence, "mise outdated --json with MISE_MINIMUM_RELEASE_AGE=0d") {
+		t.Fatalf("expected age-disabled evidence, got %#v", gate.Findings[0].Evidence)
+	}
+	if gate.Findings[0].ReleaseDate == "" || gate.Findings[0].ReleaseAgeDays != 0 {
+		t.Fatalf("expected release-age enrichment on native hold, got %#v", gate.Findings[0])
+	}
+}
+
+func TestCollectMiseSafetyReportsNativeHeldNewerCandidateFromLatestDiff(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	t.Setenv("UPDEV_CONFIG", filepath.Join(t.TempDir(), "missing-config.toml"))
+	root := t.TempDir()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/repos/openai/codex/releases/tags/0.60.1", "/repos/openai/codex/git/ref/tags/0.60.1",
+			"/repos/openai/codex/releases/tags/codex-0.60.1", "/repos/openai/codex/git/ref/tags/codex-0.60.1":
+			http.NotFound(w, r)
+		case "/repos/openai/codex/releases/tags/v0.60.1":
+			_, _ = w.Write([]byte(`{"published_at":"2026-05-20T00:00:00Z"}`))
+		case "/repos/openai/codex/releases/tags/0.61.0", "/repos/openai/codex/git/ref/tags/0.61.0":
+			http.NotFound(w, r)
+		case "/repos/openai/codex/releases/tags/v0.61.0":
+			_, _ = w.Write([]byte(`{"published_at":"` + time.Now().UTC().Format(time.RFC3339) + `"}`))
+		default:
+			t.Fatalf("unexpected API path: %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+	t.Setenv("UPDEV_GITHUB_API_URL", server.URL)
+	fake := &fakeCommandRunner{results: map[string]runner.Result{
+		strings.Join([]string{"mise", "settings", "ls", "--json-extended", "--cd", root}, "\x00"): {
+			Stdout: `{"minimum_release_age":{"value":"3d","source":"~/.config/mise/config.toml"}}`,
+		},
+		strings.Join([]string{"mise", "outdated", "--json", "--cd", root}, "\x00"): {
+			Stdout: `{"github:openai/codex":{"requested":"0.60.0","current":"0.60.0","latest":"0.60.1"}}`,
+		},
+		strings.Join([]string{"env", "MISE_MINIMUM_RELEASE_AGE=0d", "mise", "outdated", "--json", "--cd", root}, "\x00"): {
+			Stdout: `{"github:openai/codex":{"requested":"0.60.0","current":"0.60.0","latest":"0.61.0"}}`,
+		},
+	}}
+	gate := collectMiseUpdateSafetyWithPolicy(context.Background(), fake, root, securityPolicy{})
+	if gate.Status != plan.StatusHeld {
+		t.Fatalf("expected mise safety gate held, got %#v", gate)
+	}
+	if len(gate.Findings) != 2 {
+		t.Fatalf("expected normal candidate and native hold finding, got %#v", gate.Findings)
+	}
+	if gate.Findings[0].Decision != "allow" || gate.Findings[1].Decision != "hold" || gate.Findings[1].CurrentVersion != "0.61.0" {
+		t.Fatalf("expected allowed age-gated candidate plus held newer native candidate, got %#v", gate.Findings)
+	}
+	if !strings.Contains(gate.Findings[1].Reason, "normal age-gated candidate is 0.60.1") {
+		t.Fatalf("expected native hold reason to mention normal candidate, got %#v", gate.Findings[1])
+	}
+}
+
+func TestCollectMiseBumpSafetyAllowsSafePinnedCandidate(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	t.Setenv("UPDEV_CONFIG", filepath.Join(t.TempDir(), "missing-config.toml"))
+	t.Setenv("UPDEV_MISE_MIN_RELEASE_AGE_DAYS", "0")
+	root := t.TempDir()
+	fake := &fakeCommandRunner{results: map[string]runner.Result{
+		strings.Join([]string{"mise", "outdated", "--json", "--bump", "--cd", root}, "\x00"): {
+			Stdout: `{"github:openai/codex":{"requested":"0.60.0","current":"0.60.0","bump":"0.60.1","latest":"0.60.1"}}`,
+		},
+		strings.Join([]string{"env", "MISE_MINIMUM_RELEASE_AGE=0d", "mise", "outdated", "--json", "--bump", "--cd", root}, "\x00"): {
+			Stdout: `{}`,
+		},
+	}}
+	gate := collectMiseBumpSafetyWithPolicy(context.Background(), fake, root, securityPolicy{})
+	if gate.Provider != miseBumpProvider || gate.Status != plan.StatusOK {
+		t.Fatalf("expected ok mise-bump gate, got %#v", gate)
+	}
+	if len(gate.Findings) != 1 || gate.Findings[0].Decision != "allow" || gate.Findings[0].Source != miseBumpSource {
+		t.Fatalf("expected allowed bump finding, got %#v", gate.Findings)
+	}
+	if !containsString(gate.Findings[0].Evidence, "mise outdated --json --bump") {
+		t.Fatalf("expected bump evidence, got %#v", gate.Findings[0].Evidence)
+	}
+}
+
+func TestCollectMiseBumpSafetyReviewsMajorPinnedCandidate(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	t.Setenv("UPDEV_CONFIG", filepath.Join(t.TempDir(), "missing-config.toml"))
+	t.Setenv("UPDEV_MISE_MIN_RELEASE_AGE_DAYS", "0")
+	root := t.TempDir()
+	fake := &fakeCommandRunner{results: map[string]runner.Result{
+		strings.Join([]string{"mise", "outdated", "--json", "--bump", "--cd", root}, "\x00"): {
+			Stdout: `{"github:openai/codex":{"requested":"0.60.0","current":"0.60.0","bump":"1.0.0","latest":"1.0.0"}}`,
+		},
+		strings.Join([]string{"env", "MISE_MINIMUM_RELEASE_AGE=0d", "mise", "outdated", "--json", "--bump", "--cd", root}, "\x00"): {
+			Stdout: `{}`,
+		},
+	}}
+	gate := collectMiseBumpSafetyWithPolicy(context.Background(), fake, root, securityPolicy{})
+	if gate.Status != plan.StatusHeld {
+		t.Fatalf("expected major bump to hold gate, got %#v", gate)
+	}
+	if len(gate.Findings) != 1 || gate.Findings[0].Decision != "review" || !strings.Contains(gate.Findings[0].Reason, "major version") {
+		t.Fatalf("expected major bump review finding, got %#v", gate.Findings)
+	}
+}
+
+func TestCollectMiseBumpSafetyHoldsRateLimitedDiscovery(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	root := t.TempDir()
+	fake := &fakeCommandRunner{result: runner.Result{
+		Code:   1,
+		Stderr: "mise WARN GitHub rate limit exceeded. Resets at 2026-06-11 20:49:57 +09:00",
+	}}
+	gate := collectMiseBumpSafetyWithPolicy(context.Background(), fake, root, securityPolicy{})
+	if gate.Status != plan.StatusHeld || gate.Error != "" {
+		t.Fatalf("expected rate-limited mise-bump discovery to be held without gate error, got %#v", gate)
+	}
+	if len(gate.Findings) != 1 || gate.Findings[0].Decision != "review" || gate.Findings[0].Name != "candidate-discovery" {
+		t.Fatalf("expected generic review finding for unavailable bump discovery, got %#v", gate.Findings)
+	}
+	if !strings.Contains(gate.Findings[0].Reason, "GitHub rate limit exceeded") {
+		t.Fatalf("expected rate limit reason in finding, got %#v", gate.Findings[0])
+	}
+}
+
+func TestParseMiseBumpOutdatedUsesMiseBumpField(t *testing.T) {
+	findings, err := parseMiseBumpOutdated(`{
+  "node": {"requested":"lts","current":"24.16.0","bump":null,"latest":"26.3.0"},
+  "go": {"requested":"1.26","current":"1.26.3","bump":"1.27","latest":"1.27.0"},
+  "python": {"requested":"3","current":"3.14.5","bump":"3.15","latest":"3.15.0"}
+}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(findings) != 2 {
+		t.Fatalf("expected only rows with mise bump values, got %#v", findings)
+	}
+	if findings[0].Name != "go" || findings[0].CurrentVersion != "1.27" || findings[0].Version != "1.26" {
+		t.Fatalf("expected go bump value to be used, got %#v", findings[0])
+	}
+	if findings[1].Name != "python" || findings[1].CurrentVersion != "3.15" || findings[1].Version != "3" {
+		t.Fatalf("expected python bump value to be used, got %#v", findings[1])
+	}
+}
+
+func TestCollectMiseSafetyHoldsTooNewGitHubCandidate(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	t.Setenv("UPDEV_CONFIG", filepath.Join(t.TempDir(), "missing-config.toml"))
+	root := t.TempDir()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/repos/openai/codex/releases/tags/0.61.0", "/repos/openai/codex/git/ref/tags/0.61.0":
+			http.NotFound(w, r)
+		case "/repos/openai/codex/releases/tags/v0.61.0":
+			_, _ = w.Write([]byte(`{"published_at":"` + time.Now().UTC().Format(time.RFC3339) + `"}`))
+		default:
+			t.Fatalf("unexpected API path: %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+	t.Setenv("UPDEV_GITHUB_API_URL", server.URL)
+	fake := &fakeCommandRunner{result: runner.Result{Stdout: `{"github:openai/codex":{"requested":"0.60.0","current":"0.60.0","latest":"0.61.0"}}`}}
+	gate := collectMiseUpdateSafetyWithPolicy(context.Background(), fake, root, securityPolicy{})
+	if gate.Status != plan.StatusHeld {
+		t.Fatalf("expected mise safety gate held, got %#v", gate)
+	}
+	if len(gate.Findings) != 1 || gate.Findings[0].Decision != "hold" || gate.Findings[0].ReleaseAgeDays != 0 {
+		t.Fatalf("expected too-new GitHub mise hold, got %#v", gate.Findings)
+	}
+	if !containsString(gate.Findings[0].Evidence, "GitHub inferred release metadata") {
+		t.Fatalf("expected GitHub release evidence, got %#v", gate.Findings[0].Evidence)
+	}
+}
+
+func TestCollectMiseSafetyAllowsOldNPMCandidate(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	t.Setenv("UPDEV_CONFIG", filepath.Join(t.TempDir(), "missing-config.toml"))
+	root := t.TempDir()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/pnpm" {
+			t.Fatalf("unexpected npm path: %s", r.URL.Path)
+		}
+		_, _ = w.Write([]byte(`{
+  "name": "pnpm",
+  "repository": {"type": "git", "url": "git+https://github.com/pnpm/pnpm.git"},
+  "maintainers": [{"name": "maintainer"}],
+  "dist-tags": {"latest": "11.0.0"},
+  "time": {"11.0.0": "2026-05-20T00:00:00.000Z", "modified": "2026-05-20T00:00:00.000Z"},
+  "versions": {"11.0.0": {"version": "11.0.0", "repository": {"type": "git", "url": "git+https://github.com/pnpm/pnpm.git"}}}
+}`))
+	}))
+	defer server.Close()
+	t.Setenv("UPDEV_NPM_REGISTRY_URL", server.URL)
+	fake := &fakeCommandRunner{result: runner.Result{Stdout: `{"npm:pnpm":{"requested":"10.0.0","current":"10.0.0","latest":"11.0.0"}}`}}
+	gate := collectMiseUpdateSafetyWithPolicy(context.Background(), fake, root, securityPolicy{})
+	if gate.Status != plan.StatusOK {
+		t.Fatalf("expected mise npm safety gate ok, got %#v", gate)
+	}
+	if len(gate.Findings) != 1 || gate.Findings[0].Decision != "allow" || gate.Findings[0].Kind != "npm" {
+		t.Fatalf("expected npm allow finding, got %#v", gate.Findings)
+	}
+	if gate.Findings[0].RepositoryURL != "https://github.com/pnpm/pnpm" || gate.Findings[0].PublishedDate == "" {
+		t.Fatalf("expected npm provenance and publish evidence, got %#v", gate.Findings[0])
+	}
+}
+
+func TestCollectMiseSafetyAllowsOldCargoCandidate(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	t.Setenv("UPDEV_CONFIG", filepath.Join(t.TempDir(), "missing-config.toml"))
+	root := t.TempDir()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/crates/broot" {
+			t.Fatalf("unexpected crates.io path: %s", r.URL.Path)
+		}
+		_, _ = w.Write([]byte(`{
+  "crate": {"id": "broot", "max_version": "2.0.0", "repository": "https://github.com/Canop/broot", "updated_at": "2026-05-20T00:00:00Z", "downloads": 1000},
+  "versions": [{"num": "2.0.0", "yanked": false, "created_at": "2026-05-20T00:00:00Z"}]
+}`))
+	}))
+	defer server.Close()
+	t.Setenv("UPDEV_CRATES_IO_API_URL", server.URL)
+	fake := &fakeCommandRunner{result: runner.Result{Stdout: `{"cargo:broot":{"requested":"1.0.0","current":"1.0.0","latest":"2.0.0"}}`}}
+	gate := collectMiseUpdateSafetyWithPolicy(context.Background(), fake, root, securityPolicy{})
+	if gate.Status != plan.StatusOK {
+		t.Fatalf("expected mise cargo safety gate ok, got %#v", gate)
+	}
+	if len(gate.Findings) != 1 || gate.Findings[0].Decision != "allow" || gate.Findings[0].Kind != "cargo" {
+		t.Fatalf("expected cargo allow finding, got %#v", gate.Findings)
+	}
+}
+
+func TestCollectMiseSafetyHoldsTooNewPipxCandidate(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	t.Setenv("UPDEV_CONFIG", filepath.Join(t.TempDir(), "missing-config.toml"))
+	root := t.TempDir()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/black/json" {
+			t.Fatalf("unexpected PyPI path: %s", r.URL.Path)
+		}
+		_, _ = w.Write([]byte(`{
+  "info": {"name": "black", "version": "26.1.0", "project_urls": {"Source": "https://github.com/psf/black"}},
+  "releases": {"26.1.0": [{"upload_time_iso_8601": "` + time.Now().UTC().Format(time.RFC3339Nano) + `", "yanked": false}]}
+}`))
+	}))
+	defer server.Close()
+	t.Setenv("UPDEV_PYPI_API_URL", server.URL)
+	fake := &fakeCommandRunner{result: runner.Result{Stdout: `{"pipx:black":{"requested":"25.1.0","current":"25.1.0","latest":"26.1.0"}}`}}
+	gate := collectMiseUpdateSafetyWithPolicy(context.Background(), fake, root, securityPolicy{})
+	if gate.Status != plan.StatusHeld {
+		t.Fatalf("expected mise pipx safety gate held, got %#v", gate)
+	}
+	if len(gate.Findings) != 1 || gate.Findings[0].Decision != "hold" || gate.Findings[0].Kind != "pipx" {
+		t.Fatalf("expected too-new pipx hold finding, got %#v", gate.Findings)
+	}
+}
+
+func TestCollectMiseSafetyUsesRegistryAquaGitHubBackend(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	t.Setenv("UPDEV_CONFIG", filepath.Join(t.TempDir(), "missing-config.toml"))
+	root := t.TempDir()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/repos/astral-sh/uv/releases/tags/0.11.19", "/repos/astral-sh/uv/git/ref/tags/0.11.19":
+			http.NotFound(w, r)
+		case "/repos/astral-sh/uv/releases/tags/v0.11.19":
+			_, _ = w.Write([]byte(`{"published_at":"2026-05-20T00:00:00Z"}`))
+		default:
+			t.Fatalf("unexpected API path: %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+	t.Setenv("UPDEV_GITHUB_API_URL", server.URL)
+	fake := &fakeCommandRunner{results: map[string]runner.Result{
+		strings.Join([]string{"mise", "settings", "ls", "--json-extended", "--cd", root}, "\x00"): {
+			Stdout: `{"minimum_release_age":{"value":"3d","source":"~/.config/mise/config.toml"}}`,
+		},
+		strings.Join([]string{"mise", "outdated", "--json", "--cd", root}, "\x00"): {
+			Stdout: `{"uv":{"requested":"0.11.14","current":"0.11.14","latest":"0.11.19"}}`,
+		},
+		strings.Join([]string{"env", "MISE_MINIMUM_RELEASE_AGE=0d", "mise", "outdated", "--json", "--cd", root}, "\x00"): {
+			Stdout: `{}`,
+		},
+		strings.Join([]string{"mise", "registry", "--json"}, "\x00"): {
+			Stdout: `[{"short":"uv","backends":["aqua:astral-sh/uv","pipx:uv"]}]`,
+		},
+	}}
+	gate := collectMiseUpdateSafetyWithPolicy(context.Background(), fake, root, securityPolicy{})
+	if gate.Status != plan.StatusOK {
+		t.Fatalf("expected registry-backed mise safety gate ok, got %#v", gate)
+	}
+	if len(gate.Findings) != 1 || gate.Findings[0].Decision != "allow" || gate.Findings[0].RepositoryURL != "https://github.com/astral-sh/uv" {
+		t.Fatalf("expected uv to be allowed via mise registry aqua GitHub metadata, got %#v", gate.Findings)
+	}
+	if !containsString(gate.Findings[0].Evidence, "mise registry backend aqua:astral-sh/uv") {
+		t.Fatalf("expected mise registry backend evidence, got %#v", gate.Findings[0].Evidence)
+	}
+}
+
+func TestCollectMiseSafetyUsesExplicitAquaGitHubBackend(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	t.Setenv("UPDEV_CONFIG", filepath.Join(t.TempDir(), "missing-config.toml"))
+	root := t.TempDir()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/repos/modem-dev/hunk/releases/tags/0.14.1", "/repos/modem-dev/hunk/git/ref/tags/0.14.1":
+			http.NotFound(w, r)
+		case "/repos/modem-dev/hunk/releases/tags/v0.14.1":
+			_, _ = w.Write([]byte(`{"published_at":"2026-05-20T00:00:00Z"}`))
+		default:
+			t.Fatalf("unexpected API path: %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+	t.Setenv("UPDEV_GITHUB_API_URL", server.URL)
+	fake := &fakeCommandRunner{results: map[string]runner.Result{
+		strings.Join([]string{"mise", "settings", "ls", "--json-extended", "--cd", root}, "\x00"): {
+			Stdout: `{"minimum_release_age":{"value":"3d","source":"~/.config/mise/config.toml"}}`,
+		},
+		strings.Join([]string{"mise", "outdated", "--json", "--cd", root}, "\x00"): {
+			Stdout: `{"aqua:modem-dev/hunk":{"requested":"0.14.0","current":"0.14.0","latest":"0.14.1"}}`,
+		},
+		strings.Join([]string{"env", "MISE_MINIMUM_RELEASE_AGE=0d", "mise", "outdated", "--json", "--cd", root}, "\x00"): {
+			Stdout: `{}`,
+		},
+	}}
+	gate := collectMiseUpdateSafetyWithPolicy(context.Background(), fake, root, securityPolicy{})
+	if gate.Status != plan.StatusOK {
+		t.Fatalf("expected explicit aqua-backed mise safety gate ok, got %#v", gate)
+	}
+	if len(gate.Findings) != 1 || gate.Findings[0].Decision != "allow" || gate.Findings[0].RepositoryURL != "https://github.com/modem-dev/hunk" {
+		t.Fatalf("expected hunk to be allowed via aqua GitHub metadata, got %#v", gate.Findings)
+	}
+	if !containsString(gate.Findings[0].Evidence, "mise aqua backend modem-dev/hunk") {
+		t.Fatalf("expected mise aqua backend evidence, got %#v", gate.Findings[0].Evidence)
+	}
+}
+
+func TestCollectMiseSafetyUsesCoreGitHubReleaseTags(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	t.Setenv("UPDEV_CONFIG", filepath.Join(t.TempDir(), "missing-config.toml"))
+	root := t.TempDir()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/repos/golang/go/releases/tags/go1.26.4":
+			_, _ = w.Write([]byte(`{"published_at":"2026-05-20T00:00:00Z"}`))
+		default:
+			t.Fatalf("unexpected API path: %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+	t.Setenv("UPDEV_GITHUB_API_URL", server.URL)
+	fake := &fakeCommandRunner{results: map[string]runner.Result{
+		strings.Join([]string{"mise", "settings", "ls", "--json-extended", "--cd", root}, "\x00"): {
+			Stdout: `{"minimum_release_age":{"value":"3d","source":"~/.config/mise/config.toml"}}`,
+		},
+		strings.Join([]string{"mise", "outdated", "--json", "--cd", root}, "\x00"): {
+			Stdout: `{"go":{"requested":"1.26.3","current":"1.26.3","latest":"1.26.4"}}`,
+		},
+		strings.Join([]string{"env", "MISE_MINIMUM_RELEASE_AGE=0d", "mise", "outdated", "--json", "--cd", root}, "\x00"): {
+			Stdout: `{}`,
+		},
+		strings.Join([]string{"mise", "registry", "--json"}, "\x00"): {
+			Stdout: `[{"short":"go","backends":["core:go"]}]`,
+		},
+	}}
+	gate := collectMiseUpdateSafetyWithPolicy(context.Background(), fake, root, securityPolicy{})
+	if gate.Status != plan.StatusOK {
+		t.Fatalf("expected core-backed mise safety gate ok, got %#v", gate)
+	}
+	if len(gate.Findings) != 1 || gate.Findings[0].Decision != "allow" || gate.Findings[0].RepositoryURL != "https://github.com/golang/go" {
+		t.Fatalf("expected go to be allowed via mise core GitHub metadata, got %#v", gate.Findings)
+	}
+	if !containsString(gate.Findings[0].Evidence, "mise core backend go") {
+		t.Fatalf("expected mise core backend evidence, got %#v", gate.Findings[0].Evidence)
+	}
+}
+
+func TestCollectMiseSafetyUsesVfoxProviderMetadataRegistry(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	t.Setenv("UPDEV_CONFIG", filepath.Join(t.TempDir(), "missing-config.toml"))
+	root := t.TempDir()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/release-notes" {
+			t.Fatalf("unexpected vendor release notes path: %s", r.URL.Path)
+		}
+		_, _ = w.Write([]byte(`<h2 id="57200_2026-05-20">572.0.0 (2026-05-20)</h2>`))
+	}))
+	defer server.Close()
+	t.Setenv("UPDEV_PROVIDER_METADATA_URL_GOOGLE_CLOUD_CLI", server.URL+"/release-notes")
+	fake := &fakeCommandRunner{results: map[string]runner.Result{
+		strings.Join([]string{"mise", "settings", "ls", "--json-extended", "--cd", root}, "\x00"): {
+			Stdout: `{"minimum_release_age":{"value":"3d","source":"~/.config/mise/config.toml"}}`,
+		},
+		strings.Join([]string{"mise", "outdated", "--json", "--cd", root}, "\x00"): {
+			Stdout: `{"vfox:gcloud":{"requested":"568.0.0","current":"568.0.0","latest":"572.0.0"}}`,
+		},
+		strings.Join([]string{"env", "MISE_MINIMUM_RELEASE_AGE=0d", "mise", "outdated", "--json", "--cd", root}, "\x00"): {
+			Stdout: `{}`,
+		},
+		strings.Join([]string{"mise", "registry", "--json"}, "\x00"): {
+			Stdout: `[{"short":"gcloud","backends":["vfox:mise-plugins/vfox-gcloud","asdf:mise-plugins/mise-gcloud"]}]`,
+		},
+	}}
+	gate := collectMiseUpdateSafetyWithPolicy(context.Background(), fake, root, securityPolicy{})
+	if gate.Status != plan.StatusOK {
+		t.Fatalf("expected vfox provider metadata gate ok, got %#v", gate)
+	}
+	if len(gate.Findings) != 1 || gate.Findings[0].Decision != "allow" || gate.Findings[0].ReleaseDate == "" {
+		t.Fatalf("expected gcloud to be allowed from provider metadata, got %#v", gate.Findings)
+	}
+	if gate.Findings[0].URL != server.URL+"/release-notes" || gate.Findings[0].SupportURL == "" {
+		t.Fatalf("expected vendor source URLs, got %#v", gate.Findings[0])
+	}
+	for _, want := range []string{"mise registry backend vfox:mise-plugins/vfox-gcloud", "provider metadata google-cloud-cli", "Google Cloud CLI release notes"} {
+		if !containsString(gate.Findings[0].Evidence, want) {
+			t.Fatalf("expected evidence %q, got %#v", want, gate.Findings[0].Evidence)
+		}
+	}
+}
+
+func TestCollectMiseSafetyReviewsVfoxWhenProviderMetadataMissingVersion(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	t.Setenv("UPDEV_CONFIG", filepath.Join(t.TempDir(), "missing-config.toml"))
+	root := t.TempDir()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`<h2>571.0.0 (2026-05-20)</h2>`))
+	}))
+	defer server.Close()
+	t.Setenv("UPDEV_PROVIDER_METADATA_URL_GOOGLE_CLOUD_CLI", server.URL)
+	fake := &fakeCommandRunner{results: map[string]runner.Result{
+		strings.Join([]string{"mise", "settings", "ls", "--json-extended", "--cd", root}, "\x00"): {
+			Stdout: `{"minimum_release_age":{"value":"3d","source":"~/.config/mise/config.toml"}}`,
+		},
+		strings.Join([]string{"mise", "outdated", "--json", "--cd", root}, "\x00"): {
+			Stdout: `{"vfox:gcloud":{"requested":"568.0.0","current":"568.0.0","latest":"572.0.0"}}`,
+		},
+		strings.Join([]string{"env", "MISE_MINIMUM_RELEASE_AGE=0d", "mise", "outdated", "--json", "--cd", root}, "\x00"): {
+			Stdout: `{}`,
+		},
+		strings.Join([]string{"mise", "registry", "--json"}, "\x00"): {
+			Stdout: `[{"short":"gcloud","backends":["vfox:mise-plugins/vfox-gcloud"]}]`,
+		},
+	}}
+	gate := collectMiseUpdateSafetyWithPolicy(context.Background(), fake, root, securityPolicy{})
+	if gate.Status != plan.StatusHeld {
+		t.Fatalf("expected missing provider metadata version to hold gate, got %#v", gate)
+	}
+	if len(gate.Findings) != 1 || gate.Findings[0].Decision != "review" || !strings.Contains(gate.Findings[0].Reason, "version 572.0.0 was not found") {
+		t.Fatalf("expected provider metadata review finding, got %#v", gate.Findings)
+	}
+}
+
+func TestCollectMiseSafetyReviewsUnsupportedBackend(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	root := t.TempDir()
+	fake := &fakeCommandRunner{result: runner.Result{Stdout: `{"vfox:gcloud":{"requested":"568.0.0","current":"568.0.0","latest":"572.0.0"}}`}}
+	gate := collectMiseUpdateSafetyWithPolicy(context.Background(), fake, root, securityPolicy{})
+	if gate.Status != plan.StatusHeld {
+		t.Fatalf("expected unsupported mise backend to hold gate, got %#v", gate)
+	}
+	if len(gate.Findings) != 1 || gate.Findings[0].Decision != "review" || !strings.Contains(gate.Findings[0].Reason, "unsupported or opaque") {
+		t.Fatalf("expected unsupported backend review, got %#v", gate.Findings)
+	}
+}
+
+func TestMinMiseReleaseAgeEnvOverridesTOMLConfig(t *testing.T) {
+	config := updevConfig{}
+	days := 5
+	config.Security.Mise.MinReleaseAgeDays = &days
+	t.Setenv("UPDEV_MISE_MIN_RELEASE_AGE_DAYS", "1")
+	if got := minMiseReleaseAgeWithConfig(config); got != 24*time.Hour {
+		t.Fatalf("expected env min release age override, got %s", got)
+	}
+}
+
 func TestBrewOutdatedCachedErrorRejectsProviderLogNoise(t *testing.T) {
 	if brewOutdatedCachedErrorIsReusable("==> Auto-updating Homebrew... Adjust how often this is run with $HOMEBREW_AUTO_UPDATE_SECS.") {
 		t.Fatal("expected Homebrew auto-update log cache to be ignored")
@@ -1642,7 +3254,7 @@ func TestBrewOutdatedCachedErrorRejectsProviderLogNoise(t *testing.T) {
 	if brewOutdatedCachedErrorIsReusable("==> Tapping homebrew/core\nCloning into '/usr/local/Homebrew/Library/Taps/homebrew/homebrew-core'...\nUpdating files: 100%") {
 		t.Fatal("expected Homebrew tap clone log cache to be ignored")
 	}
-	if !brewOutdatedCachedErrorIsReusable("brew outdated --json=v2 timed out after 15s") {
+	if !brewOutdatedCachedErrorIsReusable("brew outdated --json=v2 --greedy timed out after 15s") {
 		t.Fatal("expected real unavailable cache to be reusable")
 	}
 }
@@ -1695,7 +3307,7 @@ func TestApplyHomebrewSafetyMetadataAllowsOfficialFormula(t *testing.T) {
 		CurrentVersion:    "1.8.1",
 		Decision:          "unknown",
 		Reason:            "release-age and provenance evidence are not available in the first Go safety slice",
-		Evidence:          []string{"brew outdated --json=v2"},
+		Evidence:          []string{"brew outdated --json=v2 --greedy"},
 		Confidence:        "low",
 	}
 	metadata := homebrewMetadata{
@@ -2362,9 +3974,124 @@ func TestSafetySummaryTextReportsHeldAndDecisionCounts(t *testing.T) {
 			{},
 		},
 	}})
-	want := "1 gates, 1 held gates, 4 findings (1 allow, 1 review, 1 hold, 1 unknown)"
+	want := "1 provider gates, 1 held providers, 4 findings (1 allow, 1 review, 1 hold, 1 unknown)"
 	if got != want {
 		t.Fatalf("expected safety summary %q, got %q", want, got)
+	}
+}
+
+func TestJapaneseSummaryTextUsesDistinctCountLabels(t *testing.T) {
+	withDefaultLanguageForTest(t, "ja")
+	updateGot := updateStepSummaryText([]updateStep{
+		{Name: "brew", Status: plan.StatusHeld, Skipped: true, SkippedItems: []string{"security held"}},
+		{Name: "mise", Status: plan.StatusOK, Updated: []string{"node 22 -> 24"}},
+	})
+	updateWant := "provider step 2件, 更新項目 1件, 見送り項目 1件, 保留step 1件, skip step 1件"
+	if updateGot != updateWant {
+		t.Fatalf("expected Japanese update summary %q, got %q", updateWant, updateGot)
+	}
+
+	safetyGot := safetySummaryText([]safetyGate{{
+		Provider: "brew",
+		Status:   plan.StatusHeld,
+		Findings: []safetyFinding{
+			{Decision: "allow"},
+			{Decision: "hold"},
+		},
+	}})
+	safetyWant := "provider確認 1件, 保留provider 1件, 検出項目 2件 (allow 1件, hold 1件)"
+	if safetyGot != safetyWant {
+		t.Fatalf("expected Japanese safety summary %q, got %q", safetyWant, safetyGot)
+	}
+}
+
+func TestLocalizedUpdateStepReasonCoversStrictRefreshAndMiseBumpDrift(t *testing.T) {
+	withDefaultLanguageForTest(t, "ja")
+	cases := []struct {
+		reason string
+		want   string
+	}{
+		{
+			reason: "strict safety refreshed Homebrew metadata; no package candidates found",
+			want:   "strict safety のため Homebrew metadata を更新しました。更新対象の package 候補はありません",
+		},
+		{
+			reason: "strict safety refreshed Homebrew metadata before rechecking package candidates",
+			want:   "strict safety のため Homebrew metadata を更新し、package 候補を再確認しました",
+		},
+		{
+			reason: "strict safety refreshes Homebrew metadata only before rechecking package candidates",
+			want:   "strict safety のため Homebrew metadata の更新だけを実行し、package 候補を再確認します",
+		},
+		{
+			reason: "security=strict held mise update because no scoped safe candidates were found",
+			want:   "security=strict のため mise 更新を保留しました: 適用できる scoped safe 候補がありません",
+		},
+		{
+			reason: "strict safety will apply 2 safe mise candidates and hold 3 unsafe candidates",
+			want:   "strict safety は mise の safe 候補 2件だけを適用し、unsafe 候補 3件を保留します",
+		},
+		{
+			reason: "strict safety will apply 1 safe Homebrew candidates and hold 4 unsafe candidates; Homebrew cannot generally install an older intermediate release",
+			want:   "strict safety は Homebrew の safe 候補 1件だけを適用し、unsafe 候補 4件を保留します。Homebrew は通常、古い中間 version を指定して install できません",
+		},
+		{
+			reason: "mise bump candidates available; mode=manual requires item review",
+			want:   "mise bump 候補があります。mode=manual のため item ごとの確認が必要です",
+		},
+		{
+			reason: "mise bump candidates require review",
+			want:   "mise bump 候補の確認が必要です",
+		},
+		{
+			reason: "mise bump candidates require review; no safe auto candidates",
+			want:   "mise bump 候補の確認が必要です。自動適用できる safe 候補はありません",
+		},
+		{
+			reason: "mise bump candidates available; 2 safe candidates can be applied after confirmation",
+			want:   "mise bump 候補があります。確認後に safe 候補 2件を適用できます",
+		},
+		{
+			reason: "mise bump auto would apply 2 safe candidates",
+			want:   "mise bump auto は safe 候補 2件を適用します",
+		},
+		{
+			reason: "mise bump auto would apply 2 safe candidates; 3 candidates require review",
+			want:   "mise bump auto は safe 候補 2件を適用し、3件は確認待ちにします",
+		},
+		{
+			reason: "mise bump candidate set changed before apply: planned candidate github:ogulcancelik/herdr is no longer reported by mise outdated --bump",
+			want:   "mise bump の候補が適用直前に変わったため保留しました: 予定していた候補 github:ogulcancelik/herdr は現在の mise outdated --bump に出ていません",
+		},
+		{
+			reason: "mise bump candidate set changed before preview: planned candidate go changed from 1.26.3 to 1.26.4",
+			want:   "mise bump の候補が preview 直前に変わりました: 予定していた候補 go は 1.26.3 から 1.26.4 に変わりました",
+		},
+		{
+			reason: "mise bump auto found only dependency-blocked candidates",
+			want:   "mise bump auto で見つかった候補は dependency 不足で block されたものだけです",
+		},
+		{
+			reason: "mise bump dry-run preflight failed: dependency missing",
+			want:   "mise bump の dry-run preflight が失敗しました: dependency missing",
+		},
+		{
+			reason: "mise bump failed: install failed",
+			want:   "mise bump が失敗しました: install failed",
+		},
+		{
+			reason: "mise bump applied 2 safe candidates; 3 candidates require review",
+			want:   "mise bump は safe 候補 2件を適用し、3件は確認待ちです",
+		},
+		{
+			reason: "security policy reran scoped mise-bump update for mise-bump/tool github:ogulcancelik/herdr",
+			want:   "security policy に従い、mise-bump の scoped update を再実行しました: mise-bump/tool github:ogulcancelik/herdr",
+		},
+	}
+	for _, tt := range cases {
+		if got := localizedUpdateStepReason(tt.reason); got != tt.want {
+			t.Fatalf("expected localized reason %q, got %q", tt.want, got)
+		}
 	}
 }
 

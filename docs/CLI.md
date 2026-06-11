@@ -120,12 +120,12 @@ Global flags:
   invocation. It is equivalent to setting `UPDEV_CONFIG` before running updev.
 - `--no-color` disables ANSI color for human text output by setting the
   standard `NO_COLOR` behavior at the CLI boundary.
-- `updev v0.5.x` does not add global `--verbose` or `--quiet`. Current diagnostic
+- `updev v0.x` does not add global `--verbose` or `--quiet`. Current diagnostic
   affordances are command-specific `--details`, `updev last --section ...`,
   and `--format json`; add global verbosity only when a concrete cross-command
   diagnostic need appears.
 - `updev version`, `updev --version`, and `updev -v` report the current
-  implemented release contract, currently `updev v0.5.8`. JSON output from
+  implemented release contract, currently `updev v0.6.0`. JSON output from
   `updev version --format json` includes SemVer parts and the stable/pre-stable
   contract label.
 - Read-only aliases are supported for common commands: `ls` for `list`,
@@ -216,7 +216,80 @@ missing, stale, low-confidence, or policy-blocked. `warn` mode may proceed
 while showing safety gaps. `off` skips mutation gates and must be visible in the
 report. The default update gate covers Homebrew candidates and mise candidates
 from `mise outdated --json --cd <root>`; Brewfile-managed VS Code extension
-updates remain opt-in.
+updates remain opt-in. The updev-owned mise gate release-age checks
+`github:`, `npm:`, `cargo:`, and `pipx:` candidates when provider metadata is
+available; unsupported or opaque mise backends stay review-held in strict mode.
+`[security.mise].min_release_age_days` and
+`UPDEV_MISE_MIN_RELEASE_AGE_DAYS` control the mise threshold without changing
+the Homebrew threshold. `[security.homebrew].outdated_timeout_seconds` and
+`UPDEV_BREW_OUTDATED_TIMEOUT_SECONDS` control the bounded Homebrew outdated
+probe timeout. mise native `minimum_release_age` holds are surfaced by comparing
+normal `mise outdated --json` output with a single age-disabled
+`MISE_MINIMUM_RELEASE_AGE=0d mise outdated --json` provider probe, avoiding
+per-tool `mise latest` calls in the normal gate path.
+When updev launches mise subprocesses, it passes an available GitHub token from
+updev/gh environment sources as `MISE_GITHUB_TOKEN` without recording the token
+in the command line.
+
+Strict update execution is candidate-scoped. If mise reports an age-allowed
+candidate while a newer age-disabled probe candidate is still too new, updev
+runs scoped `mise upgrade --minimum-release-age <Nd> <tool...>` using the
+updev-configured threshold and keeps the newer candidate visible as held. This
+does not require mise's global native age setting to be configured, though a
+native hold is still surfaced when present. Homebrew is also scoped to allowed
+package names so held packages do not block unrelated Homebrew updates; however
+normal `brew upgrade` cannot generally install an older intermediate release
+for the same formula/cask, so a too-new latest Homebrew candidate stays held
+until it ages in or is explicitly allowed by policy. To avoid holding
+continuously released packages forever, strict Homebrew upgrades do not run
+`brew update` before `brew upgrade`; they upgrade gated local-metadata
+candidates with `HOMEBREW_NO_AUTO_UPDATE=1`, then refresh metadata afterward.
+Homebrew candidate discovery also sets `HOMEBREW_NO_INSTALL_FROM_API=1` so
+Homebrew 6 reads local tap metadata for `brew outdated --json=v2 --greedy`
+instead of depending on unavailable internal package JSON endpoints.
+Metadata-only `brew update` is allowed when no package mutation is pending;
+updev immediately re-runs the Homebrew gate after that refresh and applies
+newly discovered safe candidates in the same run while keeping unsafe ones
+held.
+
+Pinned mise manifests are a separate update class because `mise upgrade` does
+not rewrite fixed versions unless bump mode is requested. updev should inspect
+`mise outdated --json --bump --cd <root>` so fixed-version opportunities are
+visible in `updev`, `updev list`, `updev last`, and JSON reports without
+pretending they were part of the normal provider mutation set. updev uses
+mise's JSON `bump` field as the source of truth for bump eligibility. Rows with
+`bump: null`, such as `node = "lts"`, stay desired state aliases and are
+ignored by the bump gate even when mise also reports a newer `latest` value.
+Prefix selectors such as `node = "24"` or `node = "24.16"` follow mise's own
+`--bump` semantics instead of being reimplemented by updev.
+`[update.mise_bump].mode` controls mutation:
+
+| Mode | Behavior |
+|------|----------|
+| `off` | Do not add pinned-version opportunities to the normal update/list UX. Explicit future bump commands may still exist. |
+| `manual` | Show read-only opportunities and item-scoped confirmed actions only. This is the default. |
+| `safe` | Add a confirmed safe-batch action for all currently safe bump candidates. |
+| `auto` | During the normal `updev` workflow, automatically apply only currently safe bump candidates after a dry-run preflight. |
+
+Manual, safe-batch, and automatic writes all use scoped provider commands:
+`mise upgrade --bump <tool>` for one row or `mise upgrade --bump <tool...>` for
+the safe set. updev must not call an unscoped `mise upgrade --bump` from a
+routine workflow. Actual writes may add `--yes` after updev has already shown
+its own confirmation, so provider prompts cannot freeze the review flow.
+Automatic mode keeps mise native `minimum_release_age` and updev-owned
+release-age/security checks active; it must not use `MISE_MINIMUM_RELEASE_AGE=0d`
+for mutation, and it must skip held, review, blocked, unsupported, opaque,
+major-version, or otherwise uncertain rows. Skipped rows remain visible in the
+final dashboard/report with their reason and the route to security or manual
+review. `UPDEV_MISE_BUMP_MODE` can override the TOML mode for one invocation.
+If the dry-run preflight candidate set does not match the planned safe set,
+auto mode aborts that bump batch and reports it as review-needed.
+
+When a scoped mise bump includes `npm:*` tools, updev runs that mise command
+with a temporary npm user config that preserves registry/auth entries but drops
+npm `min-release-age` settings. This avoids npm's `--before` /
+`min-release-age` conflict while keeping npm's standalone config unchanged;
+mise and updev remain the release-age gate for that provider command.
 
 ## List And Inventory Flow
 
@@ -260,7 +333,12 @@ Intel Mac compatibility builds, are treated as Homebrew evidence and normal
 `brew/cask` inventory rows, not as manual desired state.
 Manual live-only app rows also emit JSON `review_candidates` with stable
 `reason_code`, `remediation_code`, `confidence`, evidence, params, and
-suggested override fields.
+suggested override fields. Manual evidence preserves source quality fields
+where available: `review_url`, `source_url`, `owner`, `managed_by`,
+`update_owner`, `ownership_confidence`, and `provider_metadata`. App bundle
+rows use `Info.plist` as low-confidence provider metadata, MAS receipt/list
+rows use high-confidence App Store ownership metadata, and Homebrew cask rows
+use high-confidence Homebrew ownership metadata.
 
 `updev last` / `updev report` inspect the cached last update report without
 rerunning providers. On TTY text output, `updev last` opens the same post-update
@@ -367,6 +445,12 @@ scanner checks cover installed versions of OSV-Scanner, gitleaks, zizmor,
 Trivy, Grype, and the optional Codex description-translation backend. Missing
 optional integrations are reported as unavailable but do not make the report
 fail; changed required JSON contracts return drift.
+
+On Homebrew 6, doctor also reads `brew trust --json=v1` with
+`HOMEBREW_NO_INSTALL_FROM_API=1` and compares it with non-official tap, formula,
+and cask entries in the configured `Brewfile.tmpl`. Missing trust is reported as
+drift with item-scoped remediation. updev does not auto-run `brew trust`; whole
+tap trust remains a human security decision.
 
 ## Agent Contract
 

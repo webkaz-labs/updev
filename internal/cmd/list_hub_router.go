@@ -620,7 +620,7 @@ func listStatusFilterRows() []detailBrowserRow {
 }
 
 func (m *listHubRouterModel) showListFiltered(title string, report listReport, stateKey string, returnAction string, nextAction string, previousAction string) {
-	title = listTitleWithEvidenceSummary(title, report.Evidence)
+	title = listTitleWithEvidenceSummary(title, report)
 	sections := listTableSections(report)
 	if toolTableRowCount(sections) > 0 || nextAction != "" || previousAction != "" {
 		actions := tableBrowserActions()

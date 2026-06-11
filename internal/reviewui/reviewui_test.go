@@ -232,7 +232,7 @@ func TestStyledRowPrioritizesSecurityAndUpdateBadges(t *testing.T) {
 	if len(row) != 5 {
 		t.Fatalf("expected five table columns, got %#v", row)
 	}
-	if row[3] != "▶sec ▶upd ▶bak" {
+	if row[3] != "▶upd ▶sec ▶bak" {
 		t.Fatalf("expected security and update badges to stay visible, got %#v", row)
 	}
 }

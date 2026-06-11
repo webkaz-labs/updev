@@ -29,6 +29,9 @@ type homebrewPosture struct {
 	URLHost       string   `json:"url_host,omitempty"`
 	HostMatched   bool     `json:"host_matched,omitempty"`
 	Version       string   `json:"version,omitempty"`
+	TrustStatus   string   `json:"trust_status,omitempty"`
+	TrustTarget   string   `json:"trust_target,omitempty"`
+	TrustCommand  string   `json:"trust_command,omitempty"`
 	Deprecated    bool     `json:"deprecated"`
 	Disabled      bool     `json:"disabled"`
 	SkipLivecheck bool     `json:"skip_livecheck"`
@@ -161,8 +164,11 @@ func homebrewTapPosture(item plan.Item) homebrewPosture {
 	if !isOfficialBrewTap(item.Name) {
 		posture.Decision = "review"
 		posture.Confidence = "low"
+		posture.TrustStatus = "needs-review"
+		posture.TrustTarget = item.Name
+		posture.TrustCommand = "brew trust --tap " + item.Name
 		posture.Reason = "non-official Homebrew tap needs provenance review"
-		posture.Remediation = "review the tap repository provenance and add a temporary policy override only with reason and expiry"
+		posture.Remediation = "review the tap repository provenance; prefer item-scoped trust for packages, or run " + posture.TrustCommand + " only if the whole tap is trusted"
 	}
 	return posture
 }
@@ -251,7 +257,7 @@ func homebrewPostureFromMetadata(item plan.Item, entry brewSafetyEntry, metadata
 
 func homebrewManifestPosture(item plan.Item, entry brewSafetyEntry, reason string) homebrewPosture {
 	name := firstNonEmpty(entry.RawName, item.Name)
-	return homebrewPosture{
+	posture := homebrewPosture{
 		Provider:    "brew",
 		Kind:        item.Kind,
 		Name:        name,
@@ -261,6 +267,18 @@ func homebrewManifestPosture(item plan.Item, entry brewSafetyEntry, reason strin
 		Reason:      reason,
 		Remediation: "review the Brewfile entry provenance and add a temporary policy override only with reason and expiry",
 	}
+	if entry.Tap != "" && !isOfficialBrewTap(entry.Tap) {
+		trustKind := "formula"
+		if item.Kind == "cask" {
+			trustKind = "cask"
+		}
+		posture.TrustStatus = "needs-review"
+		posture.TrustTarget = name
+		posture.TrustCommand = "brew trust --" + trustKind + " " + name
+		posture.Remediation = "review the Brewfile entry provenance, then prefer item-scoped trust with " + posture.TrustCommand + "; trust the whole tap only when you accept all current and future entries"
+		posture.Evidence = appendEvidence(posture.Evidence, "Homebrew 6 tap trust target: "+trustKind+" "+name)
+	}
+	return posture
 }
 
 func homebrewMetadataUnavailable(item plan.Item, entry brewSafetyEntry, err error) homebrewPosture {

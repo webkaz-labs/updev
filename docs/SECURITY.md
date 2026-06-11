@@ -35,8 +35,8 @@ security platform.
 Done for v1 means:
 
 - `updev update` runs with strict security evidence enabled by default, shows
-  what was held or skipped, and holds risky Homebrew and mise mutations in
-  strict mode;
+  what was held or skipped, and applies only candidate-scoped safe Homebrew and
+  mise mutations while holding risky candidates in strict mode;
 - VS Code extension safety evidence exists as an opt-in path;
 - `updev security scan` collects normalized evidence from package inventory,
   project manifests, provider-native audits, selected scanners,
@@ -66,7 +66,7 @@ whole workstation or repository.
 Update order:
 
 1. discover pending update candidates with cheap provider-native sources, such
-   as `brew outdated --json=v2`;
+   as `HOMEBREW_NO_INSTALL_FROM_API=1 brew outdated --json=v2 --greedy`;
 2. skip mutation gates for providers with no pending candidates;
 3. build candidate identities from provider, kind, name, installed version,
    candidate version, tap/source URL, repository, tag, and extension publisher
@@ -75,23 +75,67 @@ Update order:
    policy every run;
 5. fetch only missing or stale evidence;
 6. decide `allow`, `hold`, `review`, or `block`;
-7. run or skip provider update according to `--security warn|strict|off`.
+7. run safe candidates and skip unsafe candidates according to
+   `--security warn|strict|off`.
 
 Mode semantics:
 
 | Mode | Behavior |
 |------|----------|
 | `warn` | May proceed with stale or missing non-critical evidence, but must show the gap. |
-| `strict` | Default. Holds mutation when required evidence is missing, stale, low-confidence, or policy-blocked. |
+| `strict` | Default. Runs only candidates with allow evidence. Candidates with missing, stale, low-confidence, too-new, or policy-blocked evidence are held and remain visible as skipped items. |
 | `off` | Skips mutation gates and makes that mode visible in the report. |
 
 Default update gate scope:
 
 - Homebrew formula/cask candidates from the pending update set.
-- mise candidates from `mise outdated --json --cd <root>`. Until
-  backend-specific release-age evidence is available for every mise backend,
-  update candidates default to `review` and strict mode holds `mise upgrade`;
-  a temporary policy `allow` can unblock an accepted candidate.
+- mise candidates from `mise outdated --json --cd <root>`. GitHub-backed
+  entries, explicit `aqua:<owner>/<repo>` entries, mise registry entries whose
+  preferred backend is `aqua:<owner>/<repo>`, and selected core runtimes
+  (`go`, `node`, `rust`) use GitHub release/tag/ref dates. `npm:`, `cargo:`,
+  and `pipx:` entries use registry publish/upload dates plus basic provenance
+  checks. vfox-backed entries are not trusted by backend name alone. updev first
+  resolves the short name through `mise registry --json`, then looks up the
+  concrete backend identity such as `vfox:<owner>/<plugin>` in a data-driven
+  provider metadata registry. A provider metadata resolver may use bounded
+  sources such as `vendor_release_notes`, `vendor_json`, `github_release`,
+  `github_tag`, or `package_registry`; the candidate can become `allow` or
+  `hold` only when the resolver returns a release date for the exact candidate
+  version. Missing resolver entries, unavailable vendor metadata, parse
+  failures, or unknown upstream evidence stay `review`. The initial
+  vfox metadata fixture is Google Cloud CLI, where
+  `vfox:mise-plugins/vfox-gcloud` resolves release dates from the official
+  Google Cloud CLI release notes.
+  Candidates newer than the configured minimum age are `hold`; candidates with
+  enough evidence and age are `allow`; unsupported or opaque backends remain
+  `review`. Strict mode uses scoped
+  `mise upgrade --minimum-release-age <Nd> <tool...>` for allowed candidates
+  instead of an unscoped provider-wide upgrade when held/review rows also
+  exist. The `<Nd>` value comes from updev config/env, so the mutation path does
+  not depend on a global mise native setting. updev also compares the normal
+  `mise outdated --json` output with an age-disabled
+  `MISE_MINIMUM_RELEASE_AGE=0d mise outdated --json` probe, so candidates held
+  by mise's native `minimum_release_age` can still appear as item-level holds
+  without per-tool `mise latest` probes.
+- Homebrew can safely scope upgrades to allowed formula/cask names, so one held
+  Homebrew candidate does not block unrelated allowed Homebrew updates. Homebrew
+  cannot generally install an older intermediate release for the same
+  formula/cask through normal `brew upgrade`; if the latest Homebrew candidate
+  is still inside the release-age window, that package stays held until
+  Homebrew exposes an older versioned path, the latest ages in, or the user
+  explicitly allows it by policy after review. Strict mode must not run
+  `brew update` immediately before `brew upgrade`, because refreshing metadata
+  first can replace an already-aged local candidate with a brand-new latest
+  candidate and cause continuously released packages to stay held forever.
+  Instead, package upgrades use `HOMEBREW_NO_AUTO_UPDATE=1` against the gated
+  local metadata, then refresh Homebrew metadata after the scoped upgrade. If
+  the gate has no Homebrew candidates, strict mode may run metadata-only
+  `brew update`, immediately re-run the Homebrew gate without using stale
+  outdated caches, and apply newly discovered safe candidates in the same run.
+  Newly discovered unsafe candidates remain held. If the pending Homebrew set
+  contains only held/review candidates, updev may refresh Homebrew metadata but
+  must not run an unscoped `brew upgrade`; the held package names remain visible
+  as item-level skipped rows instead of a generic provider-wide block.
 - Brewfile-managed VS Code extensions only when opted in.
 - Local policy evaluation for those candidates.
 
@@ -169,6 +213,7 @@ Recommended TTLs:
 |----------|-----|
 | Pending update list | Fresh for real mutation; 5-10 minutes for dry-run/report reuse. |
 | Homebrew metadata | 12-24 hours. |
+| mise GitHub/registry candidate metadata | 12-24 hours. |
 | VS Code Marketplace metadata | 6-24 hours. |
 | GitHub release/tag/ref date | 12-24 hours. |
 | OSV/GitHub Advisory clean result | 6 hours. |
@@ -185,11 +230,18 @@ Provider scope:
 | Option | Scope |
 |--------|-------|
 | no provider | Installed/desired package scan, project native audits, default external scanners. |
-| `--provider mise` | mise pending-update gate from `mise outdated --json`; current candidates default to review until provider-specific release-age evidence is available. |
+| `--provider mise` | mise pending-update gate from `mise outdated --json`; GitHub/aqua/registry-backed core runtime/npm/cargo/pipx candidates are release-age checked, native `minimum_release_age` holds are detected by batch comparison, and unsupported or opaque backends stay review-held. |
 | `--provider brew` | Homebrew posture/advisory evidence; VS Code excluded unless opted in. |
 | `--provider vscode` | Brewfile-managed VS Code posture/advisory evidence only. |
 | `--provider project` | Project native audits and external source/directory scanners. |
 | `--provider all` | All high-confidence package ecosystems, Homebrew posture, project audits, selected scanners; VS Code remains opt-in. |
+
+Homebrew 6 tap trust is handled as security posture, not as an automatic
+mutation. `updev doctor dependencies` reads `brew trust --json=v1` with
+`HOMEBREW_NO_INSTALL_FROM_API=1` and compares it with non-official entries in
+the configured `Brewfile.tmpl`. Security posture rows for non-official taps and
+qualified formula/cask entries include the preferred item-scoped `brew trust`
+command, but updev does not auto-trust taps or packages during update.
 
 Scanner scope:
 
@@ -212,6 +264,71 @@ text, and JSON:
 | `review` | Human or agent review is required before trusting the candidate. |
 | `block` | Known vulnerability, malware, revoked/disabled package, or explicit deny. |
 | `unknown` | Insufficient data; provider policy decides whether this holds or only warns. |
+
+## Release-Age Configuration
+
+Default release-age holds use three days for both Homebrew and updev-owned mise
+candidate gates.
+
+```toml
+[security.homebrew]
+min_release_age_days = 3
+outdated_timeout_seconds = 60
+
+[security.mise]
+min_release_age_days = 3
+```
+
+Environment overrides are available for one-off checks:
+
+```bash
+UPDEV_HOMEBREW_MIN_RELEASE_AGE_DAYS=1 updev --plain
+UPDEV_BREW_OUTDATED_TIMEOUT_SECONDS=90 updev --plain
+UPDEV_MISE_MIN_RELEASE_AGE_DAYS=1 updev --plain
+```
+
+`mise-bump` candidate discovery is optional. If `mise outdated --json --bump`
+is temporarily unavailable, for example because GitHub rate limits are
+exceeded, updev reports the bump gate as held/review instead of failing the
+whole update.
+
+For mise subprocesses, updev bridges GitHub credentials from
+`UPDEV_GITHUB_TOKEN`, `GITHUB_API_TOKEN`, `GITHUB_TOKEN`, `GH_TOKEN`, or
+`gh auth token` into the child environment as `MISE_GITHUB_TOKEN`. The token is
+not added to the recorded command line or report output.
+
+mise native `minimum_release_age` remains provider evidence. updev reports it in
+dependency diagnostics and mise fixer output, but the updev-owned mise gate still
+records its own allow/hold/review decision so Homebrew, mise, and future
+providers can converge on the same report contract.
+
+Pinned mise bump opportunities use the same release-age/security vocabulary,
+but they are separate from ordinary `mise upgrade` candidates. The normal
+configuration is:
+
+```toml
+[update.mise_bump]
+mode = "manual" # off | manual | safe | auto
+```
+
+updev does not reimplement mise alias or prefix resolution for bump
+eligibility. It trusts mise's JSON `bump` field: rows with `bump: null`, such
+as `node = "lts"`, are ignored by the bump gate even if `latest` is newer.
+Major-only and minor-only prefix selectors such as `node = "24"` or
+`node = "24.16"` follow mise's own `--bump` semantics.
+
+`auto` never disables mise native `minimum_release_age` and never applies rows
+whose updev decision is hold, review, block, unsupported, opaque, major-version,
+or otherwise uncertain. Automatic and safe-batch modes must run a scoped
+`mise upgrade --bump <tool...>` command after dry-run preflight; actual writes
+may add `--yes` after updev confirmation. Unscoped bump commands are not part
+of the trusted update path. Use `UPDEV_MISE_BUMP_MODE` for a one-off mode
+override.
+
+For scoped `npm:*` mise bumps, updev supplies a temporary npm user config that
+keeps registry/auth entries and removes npm `min-release-age` settings. npm's
+standalone supply-chain gate can stay in the user's normal npmrc, while mise
+and updev own release-age enforcement for the provider command.
 
 External advisory matching keeps confidence explicit:
 

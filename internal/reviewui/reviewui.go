@@ -277,13 +277,13 @@ func actionBadgePriority(label string) int {
 		base = fields[0]
 	}
 	switch base {
-	case actionBadgeSecurityToken:
-		return 10
-	case actionBadgeHoldToken:
-		return 15
 	case actionBadgeUpdatedToken:
-		return 20
+		return 10
 	case actionBadgeUpdateToken:
+		return 15
+	case actionBadgeSecurityToken:
+		return 20
+	case actionBadgeHoldToken:
 		return 25
 	case actionBadgeManualToken:
 		return 30
@@ -359,7 +359,7 @@ func actionBadgeNerdMarker(token string) string {
 	case actionBadgeUpdatedToken:
 		return "✅"
 	case actionBadgeHoldToken:
-		return "⏸"
+		return "⏳"
 	case actionBadgeUpdateToken:
 		return "🔄"
 	case actionBadgeManualToken:
@@ -661,7 +661,7 @@ func isExpandedKeyValueLine(line string) bool {
 	switch strings.ToLower(key) {
 	case "linked evidence", "update evidence", "security evidence", "backend evidence", "next action":
 		return true
-	case "関連 evidence", "次の操作":
+	case "関連 evidence", "更新根拠", "セキュリティ根拠", "backend 根拠", "次の操作":
 		return true
 	default:
 		return false

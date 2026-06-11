@@ -83,8 +83,8 @@ evidence inspection.
 
 ## Current Performance Model
 
-The current `v0.5.8` baseline optimizes post-report review and post-provider
-review loading, not the entire provider execution pipeline.
+The current baseline optimizes post-report review and post-provider review
+loading, not the entire provider execution pipeline.
 
 - `updev`, `updev last`, and `updev list` keep common review navigation inside
   one routed TUI once the first screen is open.
@@ -106,7 +106,7 @@ available.
 
 ## Future Performance Track
 
-Future streaming work can build on the `v0.5.8` post-provider dashboard model
+Future streaming work can build on the current post-provider dashboard model
 only where partial/canceled reports cannot be confused with completed cached
 reports.
 
@@ -182,7 +182,7 @@ Security actions:
 
 - `allow 7 days`
 - `custom allow`
-- `allow and rerun provider`
+- `allow and rerun item`
 - `hold`
 - `open security review`
 
@@ -192,17 +192,31 @@ Update/log actions:
 - `open security review` for held security steps
 - `open backend review` or `open manual review` when the update evidence points
   to those domains
+- `preview mise bump` for pinned-version opportunities. The action must be
+  scoped to the focused tool, show the equivalent dry-run command
+  (`mise upgrade --bump <tool>`), require confirmation, and refresh the report
+  after success. Held or review-needed bump rows route through security review
+  before the write action is available.
+- `apply safe mise bumps` when `[update.mise_bump].mode = "safe"` and at least
+  two safe candidates are present. The action opens a review table, runs a
+  scoped dry-run preflight, asks for confirmation, then runs
+  `mise upgrade --bump <tool...>` for exactly the reviewed safe set.
+- `auto mise bumps` when `[update.mise_bump].mode = "auto"`. The dashboard must
+  show the automatic bump plan and final result as normal update evidence, not
+  as a hidden side effect. Held/review/blocked candidates stay visible with
+  their review route.
 
 Installed inventory actions:
 
 - Write actions are not executed directly from the installed inventory table.
 - Routing actions are allowed and expected: open manual review, backend review,
-  security review, or update evidence for the focused item.
+  security review, mise bump opportunities, or update evidence for the focused
+  item.
 
-## Acceptance Contract
+## Completed UX Baseline
 
-The v0.5.x UX polish is complete only when these user-visible behaviors hold in
-the real TTY, not only in renderer tests:
+The routed UX baseline is complete only while these user-visible behaviors keep
+holding in the real TTY, not only in renderer tests:
 
 1. Update review clarity
    - `updev --dry-run --interactive` opens the old compact summary as the
@@ -326,13 +340,11 @@ the real TTY, not only in renderer tests:
 
 ## Release Boundary
 
-The `v0.5.7` UX baseline is complete: the tracking checklist above is green and
-the real-terminal dogfood pass has accepted the routed dashboard/list/detail
-flow. `v0.6.0` can start after the `v0.5.8` performance track is either
-complete or explicitly deferred, because provider gates should build on the
-same action-review model instead of creating a separate flow.
+The routed dashboard/list/detail flow is the accepted baseline. Current and
+future provider gates should build on the same action-review model instead of
+creating separate flows.
 
-## v0.5.8 Performance Checklist
+## Completed Performance Checklist
 
 - [x] Continue reducing PTY route-suite runtime; fast PTY smoke is the default
   local TTY check, while the full route suite remains for release gates or

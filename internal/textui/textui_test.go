@@ -12,6 +12,32 @@ func TestDisplayWidthIgnoresANSISequences(t *testing.T) {
 	}
 }
 
+func TestDisplayWidthUsesGraphemeAwareSegmentsAroundANSI(t *testing.T) {
+	value := StyleName("👨‍💻", true) + "dev"
+	want := displayWidthCondition.StringWidth("👨‍💻dev")
+	if got := DisplayWidth(value); got != want {
+		t.Fatalf("expected grapheme-aware width %d, got %d for %q", want, got, value)
+	}
+}
+
+func TestDisplayWidthKeepsActionTriangleNarrowAndEmojiWide(t *testing.T) {
+	tests := []struct {
+		value string
+		want  int
+	}{
+		{value: "▶bak", want: 4},
+		{value: "▶sec", want: 4},
+		{value: "🔄upd", want: 5},
+		{value: "✅up", want: 4},
+		{value: "確認", want: 4},
+	}
+	for _, tt := range tests {
+		if got := DisplayWidth(tt.value); got != tt.want {
+			t.Fatalf("DisplayWidth(%q)=%d want %d", tt.value, got, tt.want)
+		}
+	}
+}
+
 func TestTruncatePreservesANSIReset(t *testing.T) {
 	value := StyleName("very-long-tool-name", true)
 	got := Truncate(value, 8)
