@@ -47,6 +47,12 @@ func manualMASListSectionsFromOutput(output string) []toolSection {
 		if app.Version != "" {
 			details = append(details, "version: "+app.Version)
 		}
+		details = append(details,
+			"managed_by: mas",
+			"update_owner: mas",
+			"ownership_confidence: high",
+			"provider_metadata: mas list",
+		)
 		rows = append(rows, toolRow{
 			Name:    app.Name,
 			Version: app.Version,

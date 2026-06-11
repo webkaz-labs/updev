@@ -508,7 +508,7 @@ func printListAttentionSummary(w io.Writer, report listReport, color bool) {
 }
 
 func printListEvidenceSummary(w io.Writer, report listReport, color bool) {
-	summary := listEvidenceSummary(report.Evidence, color)
+	summary := listReportEvidenceSummary(report, color)
 	if summary == "" {
 		return
 	}
@@ -936,6 +936,11 @@ func runListHub(report listReport, selectorHub bool) {
 				defaultAction = listHubActionFull
 				continue
 			}
+			if handleMiseBumpDetailAction(&lastUpdate.Report, state.Action) {
+				hasLastUpdate = true
+				defaultAction = listHubActionSecurity
+				continue
+			}
 			if handleSecurityDetailAction(&lastUpdate.Report, state.Action) {
 				hasLastUpdate = true
 				defaultAction = listHubActionSecurity
@@ -1056,6 +1061,12 @@ func handleListHubRouterResult(root string, result listHubRouterResult, backendP
 			return result.ReturnAction, false
 		}
 		return listHubActionBackends, false
+	case handleMiseBumpDetailAction(lastUpdate, action):
+		*hasLastUpdate = true
+		if result.FromRoute && result.ReturnAction != "" {
+			return result.ReturnAction, false
+		}
+		return listHubActionSecurity, false
 	case handleSecurityDetailAction(lastUpdate, action):
 		*hasLastUpdate = true
 		if result.FromRoute && result.ReturnAction != "" {
@@ -1590,6 +1601,7 @@ func runListRouteDetail(root string, route listRouteAction, backendPlan backendP
 		_ = handleBackendDetailAction(root, state.Action)
 	case listHubActionSecurity:
 		if hasLastUpdate {
+			_ = handleMiseBumpDetailAction(&lastUpdate, state.Action)
 			_ = handleSecurityDetailAction(&lastUpdate, state.Action)
 		}
 	}
@@ -1686,16 +1698,25 @@ type listItemEvidence struct {
 	Backends []string
 }
 
-func listTitleWithEvidenceSummary(title string, evidence listEvidenceIndex) string {
-	summary := listEvidenceSummary(evidence, false)
+func listTitleWithEvidenceSummary(title string, report listReport) string {
+	summary := listReportEvidenceSummary(report, false)
 	if summary == "" {
 		return title
 	}
 	return title + " [" + summary + "]"
 }
 
+func listReportEvidenceSummary(report listReport, color bool) string {
+	updates, security, backends := listReportEvidenceCounts(report)
+	return listEvidenceCountSummary(updates, security, backends, color)
+}
+
 func listEvidenceSummary(evidence listEvidenceIndex, color bool) string {
 	updates, security, backends := listEvidenceCounts(evidence)
+	return listEvidenceCountSummary(updates, security, backends, color)
+}
+
+func listEvidenceCountSummary(updates int, security int, backends int, color bool) string {
 	return fmt.Sprintf("%s=%s %s=%s %s=%s",
 		textui.StyleRequested("upd", color),
 		textui.StyleCount(fmt.Sprint(updates), color),
@@ -1704,6 +1725,40 @@ func listEvidenceSummary(evidence listEvidenceIndex, color bool) string {
 		textui.StyleRequested("bak", color),
 		textui.StyleCount(fmt.Sprint(backends), color),
 	)
+}
+
+func listReportEvidenceCounts(report listReport) (int, int, int) {
+	updateKeys := map[string]bool{}
+	securityKeys := map[string]bool{}
+	backendKeys := map[string]bool{}
+	for _, section := range listTableSections(report) {
+		for _, row := range section.Rows {
+			for _, action := range row.Actions {
+				route, ok := parseListRouteAction(action.Value)
+				if !ok {
+					continue
+				}
+				key := listEvidenceActionCountKey(route, action)
+				switch route.Domain {
+				case listHubActionUpdates:
+					updateKeys[key] = true
+				case listHubActionSecurity:
+					securityKeys[key] = true
+				case listHubActionBackends:
+					backendKeys[key] = true
+				}
+			}
+		}
+	}
+	return len(updateKeys), len(securityKeys), len(backendKeys)
+}
+
+func listEvidenceActionCountKey(route listRouteAction, action reviewui.Action) string {
+	key := strings.Join([]string{route.Domain, route.Provider, route.Kind, route.Name}, "\x00")
+	if strings.Trim(key, "\x00") != "" {
+		return key
+	}
+	return strings.TrimSpace(action.Value + "\x00" + action.Description)
 }
 
 func listEvidenceCounts(evidence listEvidenceIndex) (int, int, int) {
@@ -1768,7 +1823,7 @@ func listSecurityEvidenceDetail(report updateReport, gate safetyGate, finding sa
 	if decision == "" {
 		decision = "security review"
 	}
-	reason := strings.TrimSpace(localizedSafetyReason(finding.Reason))
+	reason := strings.TrimSpace(localizedSafetyReasonWithReleaseAge(finding))
 	if report.Security == "strict" && gate.Status == plan.StatusHeld && securityDecisionNeedsAttention(decision) {
 		if strings.EqualFold(decision, "hold") || strings.EqualFold(decision, "held") {
 			return listEvidenceDetailWithReason(decision, reason)
@@ -1809,6 +1864,11 @@ func listEvidenceUpdateItemKeys(provider string, item string) []string {
 			add(listEvidenceExactKey(provider, "brew", name))
 			add(listEvidenceExactKey(provider, "cask", name))
 			add(listEvidenceExactKey(provider, "tap", name))
+		}
+		if strings.EqualFold(provider, miseBumpProvider) {
+			add(listEvidenceExactKey("mise", "tool", name))
+			add(listEvidenceProviderNameKey("mise", name))
+			add(listEvidenceNameKey(name))
 		}
 	}
 	return keys
@@ -2025,13 +2085,13 @@ func listEvidenceToken(value string) string {
 func (e listItemEvidence) Metadata() []string {
 	metadata := []string{}
 	for _, value := range e.Updates {
-		metadata = append(metadata, tr("update evidence: ", "update evidence: ")+localizedListEvidenceText(value))
+		metadata = append(metadata, tr("update evidence: ", "更新根拠: ")+localizedListEvidenceText(value))
 	}
 	for _, value := range e.Security {
-		metadata = append(metadata, tr("security evidence: ", "security evidence: ")+localizedListEvidenceText(value))
+		metadata = append(metadata, tr("security evidence: ", "セキュリティ根拠: ")+localizedListEvidenceText(value))
 	}
 	for _, value := range e.Backends {
-		metadata = append(metadata, tr("backend evidence: ", "backend evidence: ")+localizedListEvidenceText(value))
+		metadata = append(metadata, tr("backend evidence: ", "backend 根拠: ")+localizedListEvidenceText(value))
 	}
 	return metadata
 }
@@ -2099,12 +2159,158 @@ func localizedListEvidenceText(value string) string {
 	if defaultLanguage() != "ja" {
 		return value
 	}
+	value = localizedListEvidencePrefixes(value)
 	switch value {
 	case "backend convergence review":
 		return "backend 整理の確認"
+	case "mise bump candidates available; mode=manual requires item review":
+		return "mise の更新候補があります。mode=manual のため項目ごとの確認が必要です"
+	case "mise bump candidates require review; no safe auto candidates":
+		return "mise の更新候補は確認が必要です。自動適用できる安全な候補はありません"
+	case "mise bump applied 1 safe candidates; 18 candidates require review":
+		return "安全な更新候補 1 件を適用済みです。18 件は確認が必要です"
+	case "mise backend is unsupported or opaque for updev-owned release-age evidence":
+		return "mise のバックエンドから updev がリリース経過日数の根拠を十分に確認できないため、確認が必要です"
+	case "mise minimum_release_age held candidate before it appeared in normal outdated output":
+		return "mise のリリース経過日数ゲートにより、通常の更新候補一覧に出る前の候補を保留しています"
 	default:
+		value = localizedListEvidenceDynamicText(value)
 		return localizedBackendReasonText(value)
 	}
+}
+
+func localizedListEvidencePrefixes(value string) string {
+	replacements := []struct {
+		old string
+		new string
+	}{
+		{"mise-bump held: ", "mise-bump 保留: "},
+		{"mise-bump deferred: ", "mise-bump 見送り: "},
+		{"mise-bump skipped: ", "mise-bump skipped: "},
+		{"mise-bump updated: ", "mise-bump 更新: "},
+		{"brew held: ", "brew 保留: "},
+		{"brew deferred: ", "brew 見送り: "},
+		{"brew skipped: ", "brew skipped: "},
+		{"brew updated: ", "brew 更新: "},
+	}
+	for _, replacement := range replacements {
+		value = strings.ReplaceAll(value, replacement.old, replacement.new)
+	}
+	return value
+}
+
+func localizedListEvidenceDynamicText(value string) string {
+	value = localizedMiseBumpAppliedEvidenceText(value)
+	replacements := []struct {
+		old string
+		new string
+	}{
+		{"mise bump candidates available; mode=manual requires item review", "mise の更新候補があります。mode=manual のため項目ごとの確認が必要です"},
+		{"mise bump candidates require review; no safe auto candidates", "mise の更新候補は確認が必要です。自動適用できる安全な候補はありません"},
+		{"held (decision: review): ", "保留（判定: 確認）: "},
+		{"held (decision: hold): ", "保留（判定: 保留）: "},
+		{"hold: ", "保留: "},
+		{"allow: ", "許可: "},
+		{"review: ", "確認: "},
+		{"mise backend is unsupported or opaque for updev-owned release-age evidence", "mise のバックエンドから updev がリリース経過日数の根拠を十分に確認できないため、確認が必要です"},
+		{"mise minimum_release_age held candidate before it appeared in normal outdated output", "mise のリリース経過日数ゲートにより、通常の更新候補一覧に出る前の候補を保留しています"},
+		{"mise minimum_release_age held newer candidate ", "mise のリリース経過日数ゲートにより新しい候補 "},
+		{"; normal age-gated candidate is ", " を保留しています。通常の経過日数判定で許可された候補は "},
+		{"mise pinned-version bump candidate passed release-age and provenance checks", "mise の固定バージョン更新候補はリリース経過日数と配布元確認を通過しました"},
+	}
+	for _, replacement := range replacements {
+		value = strings.ReplaceAll(value, replacement.old, replacement.new)
+	}
+	return value
+}
+
+func localizedMiseBumpAppliedEvidenceText(value string) string {
+	const prefix = "mise bump applied "
+	start := strings.Index(value, prefix)
+	if start < 0 {
+		return value
+	}
+	after := value[start+len(prefix):]
+	safeCount, rest, ok := strings.Cut(after, " safe candidates; ")
+	if !ok {
+		return value
+	}
+	reviewCount, suffix, ok := strings.Cut(rest, " candidates require review")
+	if !ok {
+		return value
+	}
+	japanese := fmt.Sprintf("安全な更新候補 %s 件を適用済みです。%s 件は確認が必要です", strings.TrimSpace(safeCount), strings.TrimSpace(reviewCount))
+	return value[:start] + japanese + suffix
+}
+
+func releaseAgeHoldAvailabilityText(finding safetyFinding) string {
+	timing, ok := releaseAgeHoldTiming(finding)
+	if !ok {
+		return ""
+	}
+	if timing.remainingDays > 0 {
+		return fmt.Sprintf("経過 %d日、最小 %d日。リリース日: %s。解除目安は %s（あと約%d日）です", timing.ageDays, finding.MinReleaseAgeDays, timing.releaseDate, timing.availableDate, timing.remainingDays)
+	}
+	return fmt.Sprintf("経過 %d日、最小 %d日。リリース日: %s。%s 以降に解除対象です", timing.ageDays, finding.MinReleaseAgeDays, timing.releaseDate, timing.availableDate)
+}
+
+func releaseAgeHoldDateAvailabilityText(finding safetyFinding) string {
+	timing, ok := releaseAgeHoldTiming(finding)
+	if !ok {
+		return ""
+	}
+	if timing.remainingDays > 0 {
+		return fmt.Sprintf("リリース日: %s。解除目安は %s（あと約%d日）です", timing.releaseDate, timing.availableDate, timing.remainingDays)
+	}
+	return fmt.Sprintf("リリース日: %s。%s 以降に解除対象です", timing.releaseDate, timing.availableDate)
+}
+
+type releaseAgeTiming struct {
+	releaseDate   string
+	availableDate string
+	ageDays       int
+	remainingDays int
+}
+
+func releaseAgeHoldTiming(finding safetyFinding) (releaseAgeTiming, bool) {
+	if defaultLanguage() != "ja" || finding.ReleaseDate == "" || finding.MinReleaseAgeDays <= 0 || !releaseAgeHoldFindingNeedsAvailability(finding) {
+		return releaseAgeTiming{}, false
+	}
+	releasedAt, err := time.Parse(time.RFC3339, finding.ReleaseDate)
+	if err != nil {
+		return releaseAgeTiming{}, false
+	}
+	availableAt := releasedAt.Add(time.Duration(finding.MinReleaseAgeDays) * 24 * time.Hour)
+	now := time.Now()
+	timing := releaseAgeTiming{
+		releaseDate:   releasedAt.Local().Format("2006-01-02"),
+		availableDate: availableAt.Local().Format("2006-01-02"),
+		ageDays:       int(now.Sub(releasedAt).Hours() / 24),
+	}
+	if timing.ageDays < 0 {
+		timing.ageDays = 0
+	}
+	if now.Before(availableAt) {
+		hours := int(availableAt.Sub(now).Hours())
+		days := hours / 24
+		if hours%24 != 0 {
+			days++
+		}
+		if days < 1 {
+			days = 1
+		}
+		timing.remainingDays = days
+	}
+	return timing, true
+}
+
+func releaseAgeHoldFindingNeedsAvailability(finding safetyFinding) bool {
+	decision := strings.ToLower(strings.TrimSpace(finding.Decision))
+	if decision == "hold" || decision == "held" {
+		return true
+	}
+	reason := strings.ToLower(strings.TrimSpace(finding.Reason))
+	return strings.Contains(reason, "minimum_release_age held") || strings.Contains(reason, "release is too new")
 }
 
 func inventoryItemIdentity(item plan.Item) string {
@@ -2273,7 +2479,7 @@ func updateEvidenceActionBadgeForValue(value string) (string, string, bool) {
 		}
 		return "up", "updated", true
 	case strings.Contains(lower, " held:"), strings.Contains(lower, " deferred:"), strings.Contains(lower, " skipped:"):
-		return "hold", "held", true
+		return "upd", "held", true
 	default:
 		return "", "", false
 	}
@@ -2283,7 +2489,7 @@ func securityEvidenceActionBadge(values []string) (string, string) {
 	for _, value := range values {
 		lower := strings.ToLower(strings.TrimSpace(value))
 		if strings.Contains(lower, ": hold") || strings.Contains(lower, ": held") || strings.Contains(lower, " decision: hold") || strings.Contains(lower, " decision: held") {
-			return "hold", "held"
+			return "sec", "held"
 		}
 	}
 	return "sec", ""

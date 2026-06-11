@@ -191,7 +191,7 @@ func manualPlanItemFromRow(section toolSection, row toolRow) manualPlanItem {
 		InstallHint:       manualPlanInstallHint(action, row),
 		CommandPreview:    manualPlanCommandPreview(action, row),
 	}
-	if evidence.Scanner != "" || evidence.Source != "" || evidence.Path != "" || evidence.MASID != "" || evidence.BundleID != "" || evidence.Version != "" {
+	if !manualReviewEvidenceEmpty(evidence) {
 		item.Evidence = []manualReviewEvidence{evidence}
 	}
 	if manualPlanActionNeedsReview(action) {
@@ -303,6 +303,9 @@ func manualPlanRemediationCode(action string) string {
 }
 
 func manualPlanReviewURL(row toolRow) string {
+	if url := manualDetailFirstValue(row.Detail, "review_url", "source_url", "url", "homepage"); url != "" {
+		return strings.TrimRight(url, ".,")
+	}
 	match := manualPlanURLPattern.FindString(row.Detail)
 	return strings.TrimRight(match, ".,")
 }
@@ -560,7 +563,7 @@ func printManualPlanTextDetails(w io.Writer, items []manualPlanItem, color bool)
 		if item.ReviewURL != "" {
 			fmt.Fprintf(w, "    %s %s\n", textui.StyleLabel("url:", color), item.ReviewURL)
 		} else if item.Action == "open-vendor" {
-			fmt.Fprintf(w, "    %s %s\n", textui.StyleLabel("url:", color), textui.StyleDim(tr("missing; fill docs/apps.md or keep as evidence gap", "未設定。docs/apps.md を補完するか evidence gap として残します"), color))
+			fmt.Fprintf(w, "    %s %s\n", textui.StyleLabel("url:", color), textui.StyleDim(tr("missing; add source_url/review_url to a structured manual source or keep as evidence gap", "未設定。structured manual source に source_url/review_url を追加するか evidence gap として残します"), color))
 		}
 		if item.InstallHint != "" {
 			fmt.Fprintf(w, "    %s %s\n", textui.StyleLabel("hint:", color), item.InstallHint)
@@ -674,6 +677,27 @@ func manualPlanEvidenceDetail(evidence manualReviewEvidence) string {
 	if evidence.Path != "" {
 		parts = append(parts, "path="+evidence.Path)
 	}
+	if evidence.ReviewURL != "" {
+		parts = append(parts, "review_url="+evidence.ReviewURL)
+	}
+	if evidence.SourceURL != "" {
+		parts = append(parts, "source_url="+evidence.SourceURL)
+	}
+	if evidence.Owner != "" {
+		parts = append(parts, "owner="+evidence.Owner)
+	}
+	if evidence.ManagedBy != "" {
+		parts = append(parts, "managed_by="+evidence.ManagedBy)
+	}
+	if evidence.UpdateOwner != "" {
+		parts = append(parts, "update_owner="+evidence.UpdateOwner)
+	}
+	if evidence.OwnershipConfidence != "" {
+		parts = append(parts, "ownership_confidence="+evidence.OwnershipConfidence)
+	}
+	if evidence.ProviderMetadata != "" {
+		parts = append(parts, "provider_metadata="+evidence.ProviderMetadata)
+	}
 	if evidence.BundleID != "" {
 		parts = append(parts, "bundle_id="+evidence.BundleID)
 	}
@@ -684,6 +708,22 @@ func manualPlanEvidenceDetail(evidence manualReviewEvidence) string {
 		parts = append(parts, "version="+evidence.Version)
 	}
 	return strings.Join(parts, " ")
+}
+
+func manualReviewEvidenceEmpty(evidence manualReviewEvidence) bool {
+	return evidence.Scanner == "" &&
+		evidence.Source == "" &&
+		evidence.Path == "" &&
+		evidence.ReviewURL == "" &&
+		evidence.SourceURL == "" &&
+		evidence.Owner == "" &&
+		evidence.ManagedBy == "" &&
+		evidence.UpdateOwner == "" &&
+		evidence.OwnershipConfidence == "" &&
+		evidence.ProviderMetadata == "" &&
+		evidence.MASID == "" &&
+		evidence.BundleID == "" &&
+		evidence.Version == ""
 }
 
 func manualPlanDetailActions(item manualPlanItem, root string) []detailBrowserAction {

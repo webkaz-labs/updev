@@ -31,11 +31,12 @@ func TestMain(m *testing.M) {
 }
 
 type fakeCommandRunner struct {
-	mu      sync.Mutex
-	result  runner.Result
-	results map[string]runner.Result
-	paths   map[string]error
-	calls   [][]string
+	mu        sync.Mutex
+	result    runner.Result
+	results   map[string]runner.Result
+	sequences map[string][]runner.Result
+	paths     map[string]error
+	calls     [][]string
 }
 
 func TestConfiguredRootResolvesRelativeToConfigFile(t *testing.T) {
@@ -109,8 +110,16 @@ func (fake *fakeCommandRunner) Run(_ context.Context, name string, args ...strin
 	fake.mu.Lock()
 	defer fake.mu.Unlock()
 	fake.calls = append(fake.calls, call)
+	key := strings.Join(call, "\x00")
+	if fake.sequences != nil {
+		if sequence := fake.sequences[key]; len(sequence) > 0 {
+			result := sequence[0]
+			fake.sequences[key] = sequence[1:]
+			return result
+		}
+	}
 	if fake.results != nil {
-		if result, ok := fake.results[strings.Join(call, "\x00")]; ok {
+		if result, ok := fake.results[key]; ok {
 			return result
 		}
 	}
@@ -119,6 +128,28 @@ func (fake *fakeCommandRunner) Run(_ context.Context, name string, args ...strin
 
 func (fake *fakeCommandRunner) RunStreaming(ctx context.Context, stdout io.Writer, stderr io.Writer, name string, args ...string) runner.Result {
 	result := fake.Run(ctx, name, args...)
+	if stdout != nil && result.Stdout != "" {
+		_, _ = io.WriteString(stdout, result.Stdout)
+	}
+	if stderr != nil && result.Stderr != "" {
+		_, _ = io.WriteString(stderr, result.Stderr)
+	}
+	return result
+}
+
+type envRecordingRunner struct {
+	fakeCommandRunner
+	envCalls [][]string
+}
+
+func (recording *envRecordingRunner) RunWithEnv(ctx context.Context, env []string, name string, args ...string) runner.Result {
+	recording.envCalls = append(recording.envCalls, append([]string(nil), env...))
+	return recording.fakeCommandRunner.Run(ctx, name, args...)
+}
+
+func (recording *envRecordingRunner) RunStreamingWithEnv(ctx context.Context, env []string, stdout io.Writer, stderr io.Writer, name string, args ...string) runner.Result {
+	recording.envCalls = append(recording.envCalls, append([]string(nil), env...))
+	result := recording.fakeCommandRunner.Run(ctx, name, args...)
 	if stdout != nil && result.Stdout != "" {
 		_, _ = io.WriteString(stdout, result.Stdout)
 	}
@@ -192,7 +223,7 @@ func TestBuildVersionReport(t *testing.T) {
 	if report.SchemaVersion != 1 || report.Tool != toolName || report.Version != toolVersion {
 		t.Fatalf("unexpected version report: %#v", report)
 	}
-	if report.Major != 0 || report.Minor != 5 || report.Patch != 8 || report.Contract != "pre_stable" {
+	if report.Major != 0 || report.Minor != 6 || report.Patch != 0 || report.Contract != "pre_stable" {
 		t.Fatalf("unexpected version semantics: %#v", report)
 	}
 }
@@ -235,6 +266,7 @@ func TestUsageErrorsReturn64(t *testing.T) {
 		{name: "global option", run: func() int { return Run([]string{"--config"}) }},
 		{name: "update parse", run: func() int { return Run([]string{"update", "--format", "xml"}) }},
 		{name: "list parse", run: func() int { return Run([]string{"list", "--limit", "-1"}) }},
+		{name: "unknown command", run: func() int { return Run([]string{"listt"}) }},
 		{name: "legacy usage", run: func() int { return Run([]string{"legacy"}) }},
 		{name: "backends usage", run: func() int { return runBackends(nil) }},
 		{name: "backends parse", run: func() int { return runBackends([]string{"plan", "--format", "xml"}) }},
@@ -1398,8 +1430,8 @@ func TestDependencyContractReportChecksRequiredJSONContracts(t *testing.T) {
 			"grype":       fmt.Errorf("missing"),
 		},
 		results: addMiseMinimumReleaseAgeFakeResults(map[string]runner.Result{
-			"brew\x00--version":                 {Stdout: "Homebrew 4.5.0"},
-			"brew\x00outdated\x00--json=v2":     {Stdout: `{"formulae":[],"casks":[]}`},
+			"brew\x00--version": {Stdout: "Homebrew 4.5.0"},
+			"env\x00HOMEBREW_NO_INSTALL_FROM_API=1\x00brew\x00outdated\x00--json=v2": {Stdout: `{"formulae":[],"casks":[]}`},
 			"mise\x00--version":                 {Stdout: "2026.5.18"},
 			"mise\x00ls\x00--current\x00--json": {Stdout: `{}`},
 		}),
@@ -1450,8 +1482,8 @@ func TestDependencyContractReportChecksRequiredJSONContracts(t *testing.T) {
 
 func TestDependencyContractReportAllowsInactiveMiseMinimumReleaseAge(t *testing.T) {
 	results := addMiseMinimumReleaseAgeFakeResults(map[string]runner.Result{
-		"brew\x00--version":                 {Stdout: "Homebrew 4.5.0"},
-		"brew\x00outdated\x00--json=v2":     {Stdout: `{"formulae":[],"casks":[]}`},
+		"brew\x00--version": {Stdout: "Homebrew 4.5.0"},
+		"env\x00HOMEBREW_NO_INSTALL_FROM_API=1\x00brew\x00outdated\x00--json=v2": {Stdout: `{"formulae":[],"casks":[]}`},
 		"mise\x00--version":                 {Stdout: "2026.5.18"},
 		"mise\x00ls\x00--current\x00--json": {Stdout: `{}`},
 	})
@@ -1483,6 +1515,77 @@ func TestDependencyContractReportAllowsInactiveMiseMinimumReleaseAge(t *testing.
 	t.Fatalf("expected mise minimum-release-age check, got %#v", report.Checks)
 }
 
+func TestDependencyContractReportDetectsHomebrewTapTrustDrift(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "Brewfile.tmpl"), []byte(`
+tap "vendor/tap"
+brew "vendor/tap/tool"
+cask "vendor/tap/app"
+tap "homebrew/core"
+`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	results := addMiseMinimumReleaseAgeFakeResults(map[string]runner.Result{
+		"brew\x00--version": {Stdout: "Homebrew 6.0.0"},
+		"env\x00HOMEBREW_NO_INSTALL_FROM_API=1\x00brew\x00outdated\x00--json=v2": {Stdout: `{"formulae":[],"casks":[]}`},
+		"env\x00HOMEBREW_NO_INSTALL_FROM_API=1\x00brew\x00trust\x00--json=v1":    {Stdout: `{"taps":[],"formulae":["vendor/tap/tool"],"casks":[],"commands":[]}`},
+		"mise\x00--version":                                            {Stdout: "2026.5.18"},
+		"mise\x00ls\x00--current\x00--json":                            {Stdout: `{}`},
+		"mise\x00settings\x00ls\x00--json-extended\x00--cd\x00" + root: {Stdout: `{}`},
+	})
+	fake := &fakeCommandRunner{
+		paths: map[string]error{
+			"brew":        nil,
+			"mise":        nil,
+			"osv-scanner": fmt.Errorf("missing"),
+			"gitleaks":    fmt.Errorf("missing"),
+			"zizmor":      fmt.Errorf("missing"),
+			"trivy":       fmt.Errorf("missing"),
+			"grype":       fmt.Errorf("missing"),
+		},
+		results: results,
+	}
+	report := buildDependencyContractReport(context.Background(), dependencyOptions{command: "dependencies", root: root}, fake)
+	if report.Status != plan.StatusDrift {
+		t.Fatalf("expected tap trust drift, got %#v", report)
+	}
+	for _, check := range report.Checks {
+		if check.Tool == "brew" && check.Feature == "tap-trust" {
+			if check.Status != plan.StatusDrift || !strings.Contains(check.Value, "1 trusted, 2 untrusted, 3 targets") {
+				t.Fatalf("expected trust summary drift, got %#v", check)
+			}
+			if !strings.Contains(check.Reason, "cask vendor/tap/app") || !strings.Contains(check.Reason, "tap vendor/tap") {
+				t.Fatalf("expected untrusted targets in reason, got %#v", check)
+			}
+			if !strings.Contains(check.Remediation, "item-scoped brew trust") {
+				t.Fatalf("expected item-scoped remediation, got %#v", check)
+			}
+			return
+		}
+	}
+	t.Fatalf("expected Homebrew tap trust check, got %#v", report.Checks)
+}
+
+func TestHomebrewTrustStateTreatsWholeTapAsTrusted(t *testing.T) {
+	targets, err := parseHomebrewTrustTargets(strings.NewReader(`
+brew "vendor/tap/tool"
+cask "vendor/tap/app"
+`), "Brewfile.tmpl")
+	if err != nil {
+		t.Fatal(err)
+	}
+	targets = applyHomebrewTrustState(targets, homebrewTrustState{Taps: []string{"vendor/tap"}})
+	trusted, untrusted := homebrewTrustTargetCounts(targets)
+	if trusted != 2 || untrusted != 0 {
+		t.Fatalf("expected whole tap trust to cover formula and cask targets, got trusted=%d untrusted=%d targets=%#v", trusted, untrusted, targets)
+	}
+	for _, target := range targets {
+		if target.TrustSource != "tap" {
+			t.Fatalf("expected tap trust source, got %#v", targets)
+		}
+	}
+}
+
 func TestDependencyContractReportLeavesMiseAgePolicyUnknownOnProbeDrift(t *testing.T) {
 	fake := &fakeCommandRunner{
 		paths: map[string]error{
@@ -1495,8 +1598,8 @@ func TestDependencyContractReportLeavesMiseAgePolicyUnknownOnProbeDrift(t *testi
 			"grype":       fmt.Errorf("missing"),
 		},
 		results: map[string]runner.Result{
-			"brew\x00--version":                 {Stdout: "Homebrew 4.5.0"},
-			"brew\x00outdated\x00--json=v2":     {Stdout: `{"formulae":[],"casks":[]}`},
+			"brew\x00--version": {Stdout: "Homebrew 4.5.0"},
+			"env\x00HOMEBREW_NO_INSTALL_FROM_API=1\x00brew\x00outdated\x00--json=v2": {Stdout: `{"formulae":[],"casks":[]}`},
 			"mise\x00--version":                 {Stdout: "2026.5.18"},
 			"mise\x00ls\x00--current\x00--json": {Stdout: `{}`},
 			"mise\x00latest\x00--help":          {Code: 1, Err: fmt.Errorf("boom")},
@@ -1529,8 +1632,8 @@ func TestDependencyContractReportDetectsBrewJSONDrift(t *testing.T) {
 			"grype":       fmt.Errorf("missing"),
 		},
 		results: addMiseMinimumReleaseAgeFakeResults(map[string]runner.Result{
-			"brew\x00--version":                 {Stdout: "Homebrew 4.5.0"},
-			"brew\x00outdated\x00--json=v2":     {Stdout: `{"formulae":[]}`},
+			"brew\x00--version": {Stdout: "Homebrew 4.5.0"},
+			"env\x00HOMEBREW_NO_INSTALL_FROM_API=1\x00brew\x00outdated\x00--json=v2": {Stdout: `{"formulae":[]}`},
 			"mise\x00--version":                 {Stdout: "2026.5.18"},
 			"mise\x00ls\x00--current\x00--json": {Stdout: `{}`},
 		}),
@@ -1565,8 +1668,8 @@ func TestDependencyContractReportDetectsMiseJSONRootDrift(t *testing.T) {
 			"grype":       fmt.Errorf("missing"),
 		},
 		results: addMiseMinimumReleaseAgeFakeResults(map[string]runner.Result{
-			"brew\x00--version":                 {Stdout: "Homebrew 4.5.0"},
-			"brew\x00outdated\x00--json=v2":     {Stdout: `{"formulae":[],"casks":[]}`},
+			"brew\x00--version": {Stdout: "Homebrew 4.5.0"},
+			"env\x00HOMEBREW_NO_INSTALL_FROM_API=1\x00brew\x00outdated\x00--json=v2": {Stdout: `{"formulae":[],"casks":[]}`},
 			"mise\x00--version":                 {Stdout: "2026.5.18"},
 			"mise\x00ls\x00--current\x00--json": {Stdout: `[]`},
 		}),

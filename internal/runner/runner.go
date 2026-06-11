@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"io"
+	"os"
 	"os/exec"
 	"strings"
 )
@@ -31,7 +32,18 @@ func (Local) Run(ctx context.Context, name string, args ...string) Result {
 }
 
 func (Local) RunStreaming(ctx context.Context, stdout io.Writer, stderr io.Writer, name string, args ...string) Result {
+	return (Local{}).RunStreamingWithEnv(ctx, nil, stdout, stderr, name, args...)
+}
+
+func (Local) RunWithEnv(ctx context.Context, env []string, name string, args ...string) Result {
+	return (Local{}).RunStreamingWithEnv(ctx, env, nil, nil, name, args...)
+}
+
+func (Local) RunStreamingWithEnv(ctx context.Context, env []string, stdout io.Writer, stderr io.Writer, name string, args ...string) Result {
 	command := exec.CommandContext(ctx, name, args...)
+	if len(env) > 0 {
+		command.Env = append(os.Environ(), env...)
+	}
 	var outBuffer bytes.Buffer
 	var errBuffer bytes.Buffer
 	if stdout == nil {

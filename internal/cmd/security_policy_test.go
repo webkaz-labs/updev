@@ -170,9 +170,8 @@ func TestCollectUpdateSafetyUsesExplicitPolicy(t *testing.T) {
 	t.Setenv("UPDEV_HOMEBREW_API_URL", server.URL)
 	policyUse := loadSecurityPolicyForReportPath(path)
 	fake := &fakeCommandRunner{results: map[string]runner.Result{
-		strings.Join([]string{"brew", "tap"}, "\x00"):                                                       {Stdout: ""},
-		strings.Join([]string{"env", "HOMEBREW_NO_AUTO_UPDATE=1", "brew", "outdated", "--json=v2"}, "\x00"): {Stdout: `{"casks":[{"name":"firefox","installed_versions":["150.0"],"current_version":"151.0"}]}`},
-		strings.Join([]string{"mise", "outdated", "--json", "--cd", root}, "\x00"):                          {Stdout: `{}`},
+		strings.Join([]string{"env", "HOMEBREW_NO_AUTO_UPDATE=1", "HOMEBREW_NO_INSTALL_FROM_API=1", "brew", "outdated", "--json=v2", "--greedy"}, "\x00"): {Stdout: `{"casks":[{"name":"firefox","installed_versions":["150.0"],"current_version":"151.0"}]}`},
+		strings.Join([]string{"mise", "outdated", "--json", "--cd", root}, "\x00"):                                                                        {Stdout: `{}`},
 	}}
 	gates := collectUpdateSafetyWithPolicy(context.Background(), fake, updateOptions{root: root, security: "strict"}, policyUse.Policy)
 	if len(gates) != 2 || gates[0].Status != plan.StatusOK || gates[1].Status != plan.StatusOK {
@@ -203,6 +202,7 @@ func TestParseUpdevConfigTOMLReadsPolicySurface(t *testing.T) {
 [security.homebrew]
 min_release_age_days = 5 # wait a work week
 min_tap_age_days = 21
+outdated_timeout_seconds = 90
 
 [security.vscode]
 min_install_count = 2500
@@ -256,6 +256,9 @@ path = "docs/apps.md"
 	}
 	if config.Security.Homebrew.MinTapAgeDays == nil || *config.Security.Homebrew.MinTapAgeDays != 21 {
 		t.Fatalf("expected Homebrew tap-age setting, got %#v", config)
+	}
+	if config.Security.Homebrew.OutdatedTimeoutSeconds == nil || *config.Security.Homebrew.OutdatedTimeoutSeconds != 90 {
+		t.Fatalf("expected Homebrew outdated timeout setting, got %#v", config)
 	}
 	if config.Security.VSCode.MinInstallCount == nil || *config.Security.VSCode.MinInstallCount != 2500 {
 		t.Fatalf("expected VS Code install-count setting, got %#v", config)

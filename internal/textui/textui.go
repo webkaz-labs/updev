@@ -6,6 +6,8 @@ import (
 	"os"
 	"strings"
 	"unicode/utf8"
+
+	"github.com/mattn/go-runewidth"
 )
 
 const (
@@ -24,6 +26,14 @@ type Column struct {
 	Header string
 	Min    int
 	Max    int
+}
+
+var displayWidthCondition = fixedDisplayWidthCondition()
+
+func fixedDisplayWidthCondition() *runewidth.Condition {
+	condition := runewidth.NewCondition()
+	condition.EastAsianWidth = false
+	return condition
 }
 
 func PrintTable(w io.Writer, columns []Column, rows [][]string, color bool) {
@@ -175,15 +185,25 @@ func Truncate(value string, width int) string {
 
 func DisplayWidth(value string) int {
 	width := 0
+	segment := strings.Builder{}
+	flush := func() {
+		if segment.Len() == 0 {
+			return
+		}
+		width += displayWidthCondition.StringWidth(segment.String())
+		segment.Reset()
+	}
 	for len(value) > 0 {
 		if n := ansiSequenceLen(value); n > 0 {
+			flush()
 			value = value[n:]
 			continue
 		}
 		r, size := utf8.DecodeRuneInString(value)
-		width += runeWidth(r)
+		segment.WriteRune(r)
 		value = value[size:]
 	}
+	flush()
 	return width
 }
 
@@ -277,10 +297,7 @@ func runeWidth(r rune) int {
 	if r == '…' {
 		return 1
 	}
-	if r >= 0x1100 {
-		return 2
-	}
-	return 1
+	return displayWidthCondition.RuneWidth(r)
 }
 
 func ColumnWidths(columns []Column, rows [][]string) []int {

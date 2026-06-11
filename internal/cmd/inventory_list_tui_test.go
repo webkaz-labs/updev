@@ -277,6 +277,10 @@ bundle_id = "com.apple.motionapp"
 
 [manual.apps.provenance]
 source = "human"
+source_url = "https://apps.apple.com/app/motion/id434290957"
+owner = "Apple"
+update_owner = "mas"
+provider_metadata = "mac app store receipt"
 evidence = ["mac_app_store_receipt", "app_bundle"]
 `), 0o600); err != nil {
 		t.Fatal(err)
@@ -292,7 +296,12 @@ evidence = ["mac_app_store_receipt", "app_bundle"]
 		t.Fatalf("expected one structured manual row, got %#v", report.Sections)
 	}
 	row := report.Sections[0].Rows[0]
-	if row.Name != "Motion" || row.State != "mas" || !strings.Contains(row.Detail, "bundle_id: com.apple.motionapp") || !strings.Contains(row.Detail, "source: human") {
+	for _, want := range []string{"bundle_id: com.apple.motionapp", "source: human", "source_url: https://apps.apple.com/app/motion/id434290957", "owner: Apple", "update_owner: mas", "provider_metadata: mac app store receipt"} {
+		if !strings.Contains(row.Detail, want) {
+			t.Fatalf("expected structured manual row detail to contain %q: %#v", want, row)
+		}
+	}
+	if row.Name != "Motion" || row.State != "mas" {
 		t.Fatalf("unexpected structured manual row: %#v", row)
 	}
 	if _, ok := manualAppMatch(manualAppIndex(root), "com.apple.motionapp"); !ok {
@@ -546,7 +555,7 @@ func TestManualInventoryScansApplicationBundles(t *testing.T) {
 	if row.Name != "Demo Display" || row.Version != "1.2.3" || row.State != "installed" {
 		t.Fatalf("unexpected scanned app row: %#v", row)
 	}
-	for _, want := range []string{"source: app bundle", "path: ", "bundle_id: com.example.demo", "version: 1.2.3"} {
+	for _, want := range []string{"source: app bundle", "path: ", "bundle_id: com.example.demo", "version: 1.2.3", "managed_by: manual", "update_owner: unknown", "ownership_confidence: low", "provider_metadata: Info.plist"} {
 		if !strings.Contains(row.Detail, want) {
 			t.Fatalf("expected scanned app detail to contain %q, got %q", want, row.Detail)
 		}
@@ -558,7 +567,7 @@ func TestManualInventoryScansApplicationBundles(t *testing.T) {
 		t.Fatalf("expected live-only installed app review candidate, got %#v", report.ReviewCandidates)
 	}
 	candidate := report.ReviewCandidates[0]
-	if candidate.Evidence[0].Scanner != "macos_app_bundle" || candidate.Evidence[0].BundleID != "com.example.demo" || candidate.SuggestedOverride.Name != "Demo Display" || candidate.Confidence != "medium" || candidate.RemediationCode != "manual_inventory_override" {
+	if candidate.Evidence[0].Scanner != "macos_app_bundle" || candidate.Evidence[0].BundleID != "com.example.demo" || candidate.Evidence[0].ManagedBy != "manual" || candidate.Evidence[0].UpdateOwner != "unknown" || candidate.Evidence[0].OwnershipConfidence != "low" || candidate.Evidence[0].ProviderMetadata != "Info.plist" || candidate.SuggestedOverride.Name != "Demo Display" || candidate.Confidence != "medium" || candidate.RemediationCode != "manual_inventory_override" {
 		t.Fatalf("unexpected review candidate evidence: %#v", candidate)
 	}
 }
@@ -578,6 +587,11 @@ func TestManualInventoryMarksMacAppStoreReceipts(t *testing.T) {
 		t.Fatalf("expected one MAS receipt app row, got %#v", report.Sections)
 	}
 	row := report.Sections[0].Rows[0]
+	for _, want := range []string{"source: mac app store receipt", "managed_by: mas", "update_owner: mas", "ownership_confidence: high", "provider_metadata: mac app store receipt"} {
+		if !strings.Contains(row.Detail, want) {
+			t.Fatalf("expected MAS receipt detail to contain %q, got %q", want, row.Detail)
+		}
+	}
 	if !strings.Contains(row.Detail, "source: mac app store receipt") {
 		t.Fatalf("expected MAS receipt source in detail, got %q", row.Detail)
 	}
@@ -912,6 +926,10 @@ func TestInventoryReviewBuildsManualOverridePreview(t *testing.T) {
 		`# reason_code = "manual_app_live_only"`,
 		`# remediation_code = "manual_inventory_override"`,
 		`# confidence = "medium"`,
+		`managed_by="manual"`,
+		`update_owner="unknown"`,
+		`ownership_confidence="low"`,
+		`provider_metadata="Info.plist"`,
 		`bundle_id="com.example.demo"`,
 		`version="2.0.0"`,
 	} {
@@ -1288,6 +1306,9 @@ func TestInventoryPlanAddsBrewAndVendorGuidance(t *testing.T) {
 	if brew.Action != "adopt-brew" || brew.SuggestedProvider != "brew" || len(brew.CommandPreview) != 1 || !strings.Contains(brew.CommandPreview[0], "brew info --cask") {
 		t.Fatalf("expected brew adoption guidance, got %#v", brew)
 	}
+	if len(brew.Evidence) != 1 || brew.Evidence[0].ManagedBy != "brew" || brew.Evidence[0].UpdateOwner != "brew" || brew.Evidence[0].OwnershipConfidence != "high" || brew.Evidence[0].ProviderMetadata != "Homebrew cask inventory" {
+		t.Fatalf("expected brew ownership evidence quality fields, got %#v", brew.Evidence)
+	}
 	if brew.SuggestedOverride == nil || brew.SuggestedOverride.ManagedBy != "brew" || !containsString(brew.SuggestedOverride.Aliases, "firefox") {
 		t.Fatalf("expected brew suggested override, got %#v", brew.SuggestedOverride)
 	}
@@ -1305,6 +1326,9 @@ func TestInventoryPlanAddsBrewAndVendorGuidance(t *testing.T) {
 	brewRow := manualPlanDetailRow(brew, "")
 	if len(brewRow.Actions) != 1 || !strings.Contains(brewRow.Actions[0].Value, "review-cask") {
 		t.Fatalf("expected brew plan row to expose review-cask action, got %#v", brewRow.Actions)
+	}
+	if !containsSubstring(brewRow.Metadata, "managed_by=brew") || !containsSubstring(brewRow.Metadata, "ownership_confidence=high") || !containsSubstring(brewRow.Metadata, "provider_metadata=Homebrew cask inventory") {
+		t.Fatalf("expected brew detail metadata to expose ownership evidence, got %#v", brewRow.Metadata)
 	}
 	if action, target, ok := parseManualPlanDetailAction(brewRow.Actions[0].Value); !ok || action != "review-cask" || target != "firefox" {
 		t.Fatalf("unexpected parsed manual plan action: action=%q target=%q ok=%v", action, target, ok)
@@ -1615,8 +1639,32 @@ func TestListEvidenceSummaryShowsZeroCounts(t *testing.T) {
 	if !strings.Contains(text, "review: upd=0 sec=0 bak=0") {
 		t.Fatalf("expected zero evidence counts to be visible:\n%s", text)
 	}
-	if got := listTitleWithEvidenceSummary("updev installed inventory", report.Evidence); !strings.Contains(got, "upd=0 sec=0 bak=0") {
+	if got := listTitleWithEvidenceSummary("updev installed inventory", report); !strings.Contains(got, "upd=0 sec=0 bak=0") {
 		t.Fatalf("expected TUI title evidence counts, got %q", got)
+	}
+}
+
+func TestListTitleEvidenceSummaryCountsOnlyVisibleRowActions(t *testing.T) {
+	evidence := listEvidenceIndex{Updates: map[string][]string{}, Security: map[string][]string{}, Backends: map[string][]string{}}
+	listEvidenceAdd(evidence.Updates, listEvidenceExactKey("brew", "brew", "jq"), "brew updated: jq 1.7 -> 1.8.1")
+	listEvidenceAdd(evidence.Updates, listEvidenceExactKey("brew", "brew", "hidden"), "brew updated: hidden 1.0 -> 1.1")
+	listEvidenceAdd(evidence.Security, listEvidenceExactKey("brew", "cask", "ghost"), "brew/cask ghost: hold")
+	listEvidenceAdd(evidence.Backends, listEvidenceExactKey("brew", "brew", "jq"), "backend evidence: jq")
+	report := listReport{
+		Items: []plan.Item{{
+			Provider: "brew",
+			Kind:     "brew",
+			Name:     "jq",
+			Version:  "1.8.1",
+			Status:   plan.StatusOK,
+			Desired:  true,
+			Live:     true,
+		}},
+		Evidence: evidence,
+	}
+	title := listTitleWithEvidenceSummary("updev installed inventory", report)
+	if !strings.Contains(title, "upd=1 sec=0 bak=1") {
+		t.Fatalf("expected title to count only visible row actions, got %q", title)
 	}
 }
 
@@ -1692,7 +1740,7 @@ func TestListTableShowsHeldBadgeForDeferredUpdateEvidence(t *testing.T) {
 		t.Fatalf("expected one list row, got %#v", sections)
 	}
 	row := reviewui.StyledRow(sections[0].Rows[0], false, false)
-	if len(row) != 5 || row[3] != "▶hold" {
+	if len(row) != 5 || row[3] != "▶upd" {
 		t.Fatalf("expected held update badge, got %#v", row)
 	}
 }
@@ -1725,11 +1773,78 @@ func TestListTableShowsHeldBadgeForBrewSecurityHoldEvidence(t *testing.T) {
 		t.Fatalf("expected one list row, got %#v", sections)
 	}
 	row := reviewui.StyledRow(sections[0].Rows[0], false, false)
-	if len(row) != 5 || row[3] != "▶hold" {
+	if len(row) != 5 || row[3] != "▶sec" {
 		t.Fatalf("expected security hold badge, got %#v", row)
 	}
 	if !toolRowHasRouteAction(sections[0].Rows[0], listHubActionSecurity) {
 		t.Fatalf("expected security route action for held brew finding, got %#v", sections[0].Rows[0].Actions)
+	}
+}
+
+func TestListTableShowsUpdateAndSecurityBadgesTogether(t *testing.T) {
+	t.Setenv("UPDEV_NERD_FONT", "0")
+	evidence := listEvidenceIndex{Updates: map[string][]string{}, Security: map[string][]string{}, Backends: map[string][]string{}}
+	listEvidenceAdd(evidence.Updates, listEvidenceExactKey("mise", "tool", "go"), "mise-bump deferred: candidate available")
+	listEvidenceAdd(evidence.Security, listEvidenceExactKey("mise", "tool", "go"), "mise/tool go: hold")
+	report := listReport{
+		Items: []plan.Item{{
+			Provider: "mise",
+			Kind:     "tool",
+			Name:     "go",
+			Status:   plan.StatusOK,
+			Desired:  true,
+			Live:     true,
+		}},
+		Evidence: evidence,
+	}
+	sections := listTableSections(report)
+	if len(sections) != 1 || len(sections[0].Rows) != 1 {
+		t.Fatalf("expected one list row, got %#v", sections)
+	}
+	row := reviewui.StyledRow(sections[0].Rows[0], false, false)
+	if len(row) != 5 || row[3] != "▶upd ▶sec" {
+		t.Fatalf("expected update and security badges to be visible together, got %#v", row)
+	}
+}
+
+func TestListEvidenceMetadataLocalizesMiseMessages(t *testing.T) {
+	withDefaultLanguageForTest(t, "ja")
+	metadata := (listItemEvidence{
+		Updates:  []string{"mise-bump held: mise bump applied 1 safe candidates; 18 candidates require review"},
+		Security: []string{"mise/tool node: held (decision: review): mise backend is unsupported or opaque for updev-owned release-age evidence"},
+	}).Metadata()
+	text := strings.Join(metadata, "\n")
+	for _, want := range []string{"更新根拠:", "セキュリティ根拠:", "安全な更新候補 1 件を適用済みです", "リリース経過日数の根拠を十分に確認できない"} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("expected localized evidence text to include %q:\n%s", want, text)
+		}
+	}
+	for _, unwanted := range []string{"update evidence:", "security evidence:", "mise bump applied", "unsupported or opaque"} {
+		if strings.Contains(text, unwanted) {
+			t.Fatalf("expected localized evidence text to avoid %q:\n%s", unwanted, text)
+		}
+	}
+}
+
+func TestListSecurityEvidenceShowsReleaseAgeAvailability(t *testing.T) {
+	withDefaultLanguageForTest(t, "ja")
+	releasedAt := time.Now().Add(-24 * time.Hour).UTC().Format(time.RFC3339)
+	detail := listSecurityEvidenceDetail(updateReport{Security: "strict"}, safetyGate{Provider: "mise-bump", Status: plan.StatusHeld}, safetyFinding{
+		Provider:          "mise",
+		Kind:              "npm",
+		Name:              "npm:demo",
+		Decision:          "hold",
+		Reason:            "mise minimum_release_age held candidate before it appeared in normal outdated output",
+		ReleaseDate:       releasedAt,
+		MinReleaseAgeDays: 3,
+	})
+	for _, want := range []string{"リリース日:", "経過", "最小 3日", "解除目安", "あと約"} {
+		if !strings.Contains(detail, want) {
+			t.Fatalf("expected release-age availability detail to include %q:\n%s", want, detail)
+		}
+	}
+	if !strings.Contains(detail, "hold: 経過") {
+		t.Fatalf("expected native release-age hold detail to show days before the long reason:\n%s", detail)
 	}
 }
 
@@ -1981,6 +2096,70 @@ func TestListRowsRouteToCachedUpdateAndSecurityEvidence(t *testing.T) {
 	}
 }
 
+func TestListRowsRouteMiseBumpEvidenceToMiseTool(t *testing.T) {
+	t.Setenv("UPDEV_CONFIG", filepath.Join(t.TempDir(), "missing-config.toml"))
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	root := t.TempDir()
+	lastReport := updateReport{
+		Root: root,
+		Steps: []updateStep{{
+			Name:    miseBumpProvider,
+			Status:  plan.StatusOK,
+			Updated: []string{"github:openai/codex 0.60.0 -> 0.60.1"},
+		}},
+		Safety: []safetyGate{{
+			Provider: miseBumpProvider,
+			Status:   plan.StatusOK,
+			Findings: []safetyFinding{{
+				Provider:          "mise",
+				Kind:              "tool",
+				Name:              "github:openai/codex",
+				InstalledVersions: []string{"0.60.0"},
+				CurrentVersion:    "0.60.1",
+				Decision:          "allow",
+				Reason:            "mise pinned-version bump candidate passed release-age and provenance checks",
+				Source:            miseBumpSource,
+			}},
+		}},
+	}
+	saveLastUpdateReport(lastReport)
+	report := buildListReport(inventoryResult{Report: plan.Report{
+		Root: root,
+		Items: []plan.Item{{
+			Provider: "mise",
+			Kind:     "tool",
+			Name:     "github:openai/codex",
+			Status:   plan.StatusOK,
+			Desired:  true,
+			Live:     true,
+		}},
+	}}, listOptions{root: root})
+	sections := listTableSections(report)
+	if len(sections) != 1 || len(sections[0].Rows) != 1 {
+		t.Fatalf("expected one mise row, got %#v", sections)
+	}
+	row := sections[0].Rows[0]
+	if !toolRowHasRouteAction(row, listHubActionUpdates) || !toolRowHasRouteAction(row, listHubActionSecurity) {
+		t.Fatalf("expected mise bump row to route to update and security evidence, got %#v", row.Actions)
+	}
+	if !strings.Contains(row.Detail, "update evidence:") || !strings.Contains(row.Detail, "security evidence:") {
+		t.Fatalf("expected mise bump evidence in row detail, got %q", row.Detail)
+	}
+	detailRows := updateSecurityDetailRowsForFilter(lastReport, lastReportOptions{section: "security", query: "github:openai/codex"})
+	if len(detailRows) != 1 || !detailRowHasActionPrefix(detailRows[0], miseBumpDetailActionPrefix+"\t") {
+		t.Fatalf("expected query-filtered safe bump detail row with apply action, got %#v", detailRows)
+	}
+}
+
+func detailRowHasActionPrefix(row detailBrowserRow, prefix string) bool {
+	for _, action := range row.Actions {
+		if strings.HasPrefix(action.Value, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
 func TestListRowsShowHoldBadgeForStrictSecurityReviewEvidence(t *testing.T) {
 	t.Setenv("UPDEV_NERD_FONT", "0")
 	t.Setenv("XDG_CACHE_HOME", t.TempDir())
@@ -2018,7 +2197,7 @@ func TestListRowsShowHoldBadgeForStrictSecurityReviewEvidence(t *testing.T) {
 	}
 	row := sections[0].Rows[0]
 	rendered := reviewui.StyledRow(row, false, false)
-	if len(rendered) != 5 || rendered[3] != "▶hold" {
+	if len(rendered) != 5 || rendered[3] != "▶sec" {
 		t.Fatalf("expected strict review evidence to render as held, got %#v", rendered)
 	}
 	if !strings.Contains(row.Detail, "security evidence:") || !strings.Contains(row.Detail, "held (decision: review)") {
@@ -2229,6 +2408,16 @@ func TestDetailBrowserModelTogglesAndRendersExpandedDetail(t *testing.T) {
 			t.Fatalf("expected detail browser view to contain %q:\n%s", want, view.Content)
 		}
 	}
+	updated, _ := model.Update(tea.KeyPressMsg(tea.Key{Text: "j", Code: 'j'}))
+	model = updated.(detailBrowserModel)
+	if !strings.Contains(model.View().Content, "> action 1 [press a or 1]: review") {
+		t.Fatalf("expected down key to focus expanded action:\n%s", model.View().Content)
+	}
+	updated, _ = model.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyEnter}))
+	model = updated.(detailBrowserModel)
+	if model.State.Action != "demo" {
+		t.Fatalf("expected Enter on focused action to select action, got %#v", model.State)
+	}
 	coloredLines := strings.Join(detailBrowserExpandedLinesStyled(detailBrowserRow{
 		Detail:   "second detail",
 		Metadata: []string{"updated: jq; git"},
@@ -2425,6 +2614,76 @@ func TestUpdateHubRouterClearsDashboardActionAfterReturning(t *testing.T) {
 	}
 }
 
+func TestUpdateHubRouterBackPreservesDashboardFocus(t *testing.T) {
+	report := updateReport{Status: plan.StatusOK, Root: "/repo", Steps: []updateStep{{Name: "brew", Status: plan.StatusOK}}}
+	model := newUpdateHubRouterModel(report, inventoryPlanReport{}, false, backendPlanReport{}, false, updateHubActionDashboard, updateHubActionDashboard, false)
+	updated, _ := model.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyDown}))
+	model = updated.(updateHubRouterModel)
+	selected := model.dashboard.State.Selected
+	lineIndex := model.dashboard.selectedLineIndex()
+	if lineIndex < 0 || model.dashboard.Lines[lineIndex].Action == "" || selected == 0 {
+		t.Fatalf("expected dashboard focus to move before opening route, selected=%d line=%d", selected, lineIndex)
+	}
+	updated, _ = model.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyEnter}))
+	model = updated.(updateHubRouterModel)
+	if model.screen == updateHubRouterDashboard {
+		t.Fatalf("expected Enter to open a routed view")
+	}
+	updated, _ = model.Update(tea.KeyPressMsg(tea.Key{Text: "b", Code: 'b'}))
+	model = updated.(updateHubRouterModel)
+	if model.screen != updateHubRouterDashboard || model.dashboard.State.Selected != selected {
+		t.Fatalf("expected Back to preserve dashboard focus selected=%d, got screen=%q selected=%d", selected, model.screen, model.dashboard.State.Selected)
+	}
+}
+
+func TestUpdateHubRouterBackKeepsDashboardTopAnchored(t *testing.T) {
+	report := updateReport{
+		Status:   plan.StatusHeld,
+		Root:     "/repo",
+		Security: "strict",
+		Steps: []updateStep{{
+			Name:   "mise-bump",
+			Status: plan.StatusHeld,
+			SkippedItems: []string{
+				"aqua:modem-dev/hunk 0.14.0 -> 0.14.1",
+				"cloudflared 2026.5.0 -> 2026.5.2",
+				"copilot-cli 1.0.48 -> 1.0.61",
+				"fzf 0.72.0 -> 0.73.1",
+				"go 1.26.3 -> 1.26.4",
+				"lazygit 0.61.1 -> 0.62.2",
+				"node 24.16.0 -> 26.3.0",
+				"rust 1.95.0 -> 1.96.0",
+				"uv 0.11.14 -> 0.11.19",
+			},
+		}},
+	}
+	model := newUpdateHubRouterModel(report, inventoryPlanReport{}, false, backendPlanReport{}, false, updateHubActionDashboard, updateHubActionDashboard, false)
+	model.height = 10
+	model.applyDashboardSize(&model.dashboard)
+	for range 8 {
+		updated, _ := model.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyDown}))
+		model = updated.(updateHubRouterModel)
+	}
+	selected := model.dashboard.State.Selected
+	if model.dashboard.State.Offset == 0 {
+		t.Fatalf("expected low dashboard focus to scroll before opening a route")
+	}
+	updated, _ := model.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyEnter}))
+	model = updated.(updateHubRouterModel)
+	if model.screen == updateHubRouterDashboard {
+		t.Fatalf("expected Enter to open a routed view")
+	}
+	updated, _ = model.Update(tea.KeyPressMsg(tea.Key{Text: "b", Code: 'b'}))
+	model = updated.(updateHubRouterModel)
+	view := model.View().Content
+	if model.screen != updateHubRouterDashboard || model.dashboard.State.Selected != selected {
+		t.Fatalf("expected Back to preserve dashboard focus selected=%d, got screen=%q selected=%d", selected, model.screen, model.dashboard.State.Selected)
+	}
+	if model.dashboard.State.Offset != 0 || !strings.Contains(view, "root: /repo") {
+		t.Fatalf("expected Back to keep dashboard top anchored, offset=%d\n%s", model.dashboard.State.Offset, view)
+	}
+}
+
 func TestUpdateHubRouterOpensFullReportWithoutSubprogram(t *testing.T) {
 	report := updateReport{Status: plan.StatusHeld, Root: "/repo"}
 	model := newUpdateHubRouterModel(report, inventoryPlanReport{}, false, backendPlanReport{}, false, updateHubActionFull, updateHubActionFull, false)
@@ -2470,8 +2729,8 @@ func TestUpdateHubRouterRefreshesReviewPlansAsynchronously(t *testing.T) {
 			t.Fatalf("expected loading review action table to contain %q:\n%s", want, initialView)
 		}
 	}
-	if model.dashboard.selectedLineIndex() < 0 || model.dashboard.Lines[model.dashboard.selectedLineIndex()].Action != updateHubActionManualPlan {
-		t.Fatalf("expected initial loading dashboard focus to keep manual review visible, selected=%d lines=%#v", model.dashboard.selectedLineIndex(), model.dashboard.Lines)
+	if model.dashboard.selectedLineIndex() < 0 || model.dashboard.Lines[model.dashboard.selectedLineIndex()].Action != updateHubActionLogs || model.dashboard.State.Offset != 0 {
+		t.Fatalf("expected initial loading dashboard to stay top-anchored on update details, selected=%d offset=%d lines=%#v", model.dashboard.selectedLineIndex(), model.dashboard.State.Offset, model.dashboard.Lines)
 	}
 	manualPlan := inventoryPlanReport{
 		Status:         plan.StatusDrift,
@@ -2884,6 +3143,43 @@ func TestUpdateHubRouterRouteBackReturnsToSummaryInventory(t *testing.T) {
 	}
 }
 
+func TestUpdateHubRouterSecurityRouteShowsAllowedFindingForQuery(t *testing.T) {
+	report := updateReport{
+		Status:   plan.StatusHeld,
+		Security: "strict",
+		Root:     "/repo",
+		Safety: []safetyGate{{
+			Provider: "mise-bump",
+			Status:   plan.StatusHeld,
+			Summary:  &safetySummary{Allow: 1, Hold: 12},
+			Findings: []safetyFinding{{
+				Provider: "mise",
+				Kind:     "tool",
+				Name:     "github:ogulcancelik/herdr",
+				Version:  "0.6.8 -> 0.6.9",
+				Decision: "allow",
+				Reason:   "accepted from updev detail browser after local review",
+			}, {
+				Provider: "mise",
+				Kind:     "tool",
+				Name:     "cloudflared",
+				Version:  "2026.5.2 -> 2026.6.0",
+				Decision: "hold",
+				Reason:   "candidate is too new",
+			}},
+		}},
+	}
+	model := newUpdateHubRouterModel(report, inventoryPlanReport{}, false, backendPlanReport{}, false, updateHubActionDashboard, updateHubActionDashboard, false)
+	model.showUpdateSummaryRoute(updateSummaryRoute{Base: updateHubActionSecurity, Provider: "mise-bump", Query: "tool/github:ogulcancelik/herdr"})
+	view := model.View().Content
+	if !strings.Contains(view, "github:ogulcancelik/herdr") || !strings.Contains(view, "allow") {
+		t.Fatalf("expected queried allowed security finding in routed detail view:\n%s", view)
+	}
+	if strings.Contains(view, "mise-bump security 12 hold") || strings.Contains(view, "cloudflared") {
+		t.Fatalf("expected route to avoid fallback gate summary and unrelated findings:\n%s", view)
+	}
+}
+
 func TestListHubRouterBackReturnsToSelectorHub(t *testing.T) {
 	report := listReport{Status: plan.StatusOK, Root: "/repo", Items: []plan.Item{{
 		Provider: "mise",
@@ -3118,6 +3414,25 @@ func TestListHubRouterSecurityCustomAllowInputsStayInsideRouter(t *testing.T) {
 	}
 }
 
+func TestListHubRouterSecurityShowsProviderSummaryRows(t *testing.T) {
+	report := listReport{Status: plan.StatusOK, Root: "/repo"}
+	lastUpdate := updateReport{Status: plan.StatusHeld, Root: "/repo", Security: "strict", Safety: []safetyGate{
+		{Provider: "mise", Status: plan.StatusOK},
+		{Provider: "brew", Status: plan.StatusHeld, Findings: []safetyFinding{{Provider: "brew", Kind: "cask", Name: "wezterm@nightly", Decision: "review", Reason: "host mismatch"}}},
+	}}
+	model := newListHubRouterModel(report, backendPlanReport{}, false, lastUpdate, true, listHubActionSecurity, nil, false)
+	view := model.View().Content
+	for _, want := range []string{"updev security review", "mise security", "brew"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("expected list security view to include %q:\n%s", want, view)
+		}
+	}
+	route := listRouteAction{Domain: listHubActionSecurity, Provider: "brew", Kind: "cask", Name: "wezterm@nightly"}
+	if rows := model.routeRows(route); len(rows) == 0 {
+		t.Fatalf("expected list security item route to return rows for %+v", route)
+	}
+}
+
 func TestListHubRouterKeepsBackendRouteLoadingUntilAsyncPlanArrives(t *testing.T) {
 	report := listReport{Status: plan.StatusOK, Root: "/repo", Items: []plan.Item{{
 		Provider: "brew",
@@ -3248,7 +3563,7 @@ func TestInventoryItemDetailLocalizesJapaneseEvidenceAndActions(t *testing.T) {
 	for _, want := range []string{
 		"説明: macOS/system git を使える状態に保つ",
 		"関連 evidence: 1 件の backend evidence",
-		"backend evidence: github:git/git は候補としてのみ確認します",
+		"backend 根拠: github:git/git は候補としてのみ確認します",
 		"次の操作: backend 整理を開く",
 	} {
 		if !strings.Contains(row.Detail, want) {

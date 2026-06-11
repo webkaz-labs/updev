@@ -336,6 +336,13 @@ func (m updateHubRouterModel) handleAction(action string) (tea.Model, tea.Cmd) {
 			m.finalAction = updevActionExit
 			return m, tea.Quit
 		}
+		if m.returnAction == updateHubActionDashboard {
+			m.showDashboard("")
+			m.dashboard.TopAnchor = true
+			m.dashboard.State.Offset = 0
+			m.detailStates[m.stateKey] = m.dashboard.State
+			return m, nil
+		}
 		if strings.HasPrefix(m.stateKey, "filter-result:") && m.returnAction != "" {
 			m.showReturnAction(m.returnAction)
 			return m, nil
@@ -723,13 +730,15 @@ func (m *updateHubRouterModel) refreshPlansAfterWriteAction() {
 
 func (m *updateHubRouterModel) showDashboard(focusAction string) {
 	stateKey := "dashboard"
-	_, hasState := m.detailStates[stateKey]
+	state, hasState := m.detailStates[stateKey]
 	if !hasState && (focusAction == "" || focusAction == updateHubActionDashboard) {
 		focusAction = m.initialDashboardFocusAction()
 	} else if hasState && focusAction == updateHubActionDashboard {
-		focusAction = ""
+		state.Offset = 0
+		state.Action = ""
+		focusAction = m.initialDashboardFocusAction()
 	}
-	model := newUpdateSummaryBrowserModelWithLoading(updateHubTitle(m.report), m.report, m.manualPlan, m.manualLoading, m.backendPlan, m.backendLoading, m.detailStates[stateKey], focusAction, m.color)
+	model := newUpdateSummaryBrowserModelWithLoading(updateHubTitle(m.report), m.report, m.manualPlan, m.manualLoading, m.backendPlan, m.backendLoading, state, focusAction, m.color)
 	m.applyDashboardSize(&model)
 	m.screen = updateHubRouterDashboard
 	m.stateKey = stateKey
@@ -738,12 +747,6 @@ func (m *updateHubRouterModel) showDashboard(focusAction string) {
 }
 
 func (m updateHubRouterModel) initialDashboardFocusAction() string {
-	if m.manualLoading {
-		return updateHubActionManualPlan
-	}
-	if m.backendLoading {
-		return updateHubActionBackends
-	}
 	return updateHubActionLogs
 }
 
@@ -756,7 +759,7 @@ func (m *updateHubRouterModel) showUpdateSummaryRoute(route updateSummaryRoute) 
 	case updateHubActionLogs:
 		m.showDetail("updev update logs"+suffix, updateLogDetailRows(filtered), stateKey, updateHubActionDashboard)
 	case updateHubActionSecurity:
-		m.showDetail("updev security details"+suffix, updateSecurityDetailRows(filtered), stateKey, updateHubActionDashboard)
+		m.showDetail("updev security details"+suffix, updateSecurityDetailRowsForFilter(filtered, opts), stateKey, updateHubActionDashboard)
 	case updateHubActionInventoryAll:
 		inventory := buildListReport(inventoryResult{Report: filtered.Inventory}, listOptions{provider: route.Provider, query: route.Query})
 		inventory.Evidence = addBackendListEvidence(inventory.Evidence, m.backendPlan)
@@ -818,7 +821,7 @@ func (m updateHubRouterModel) listRouteRows(route listRouteAction) []detailBrows
 }
 
 func (m *updateHubRouterModel) showListFiltered(title string, report listReport, stateKey string, returnAction string, nextAction string, previousAction string) {
-	title = listTitleWithEvidenceSummary(title, report.Evidence)
+	title = listTitleWithEvidenceSummary(title, report)
 	sections := listTableSections(report)
 	if toolTableRowCount(sections) > 0 || nextAction != "" || previousAction != "" {
 		actions := tableBrowserActions()
@@ -911,6 +914,10 @@ func (m updateHubRouterModel) currentAction() string {
 func (m updateHubRouterModel) applyDashboardSize(model *updateSummaryBrowserModel) {
 	model.Width = m.width
 	model.Height = m.height
+	if model.TopAnchor {
+		model.State.Offset = 0
+		return
+	}
 	model.ensureSelectedVisible()
 }
 
@@ -984,6 +991,9 @@ func handleUpdateHubExternalAction(report *updateReport, manualPlan *inventoryPl
 	if handleBackendDetailAction(report.Root, action) {
 		*backendPlan = buildBackendPlanForHub(report.Root)
 		return updateHubActionBackends, false
+	}
+	if handleMiseBumpDetailAction(report, action) {
+		return updateHubActionSecurity, false
 	}
 	if handleSecurityDetailAction(report, action) {
 		return updateHubActionSecurity, false

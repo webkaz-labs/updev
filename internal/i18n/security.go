@@ -67,6 +67,7 @@ var securityAgeReasonPatternsJA = []struct {
 	En string
 	JA string
 }{
+	{"mise candidate release is too new: age %d days, minimum %d days", "mise 候補リリースが新しすぎます: 経過 %d日、最小 %d日"},
 	{"candidate release is too new: age %d days, minimum %d days", "候補リリースが新しすぎます: 経過 %d日、最小 %d日"},
 	{"tap repository is newly created: age %d days, minimum %d days", "tap repository が新しすぎます: 経過 %d日、最小 %d日"},
 	{"Marketplace extension is newly published: age %d days, minimum %d days", "Marketplace extension が公開直後です: 経過 %d日、最小 %d日"},
@@ -174,6 +175,7 @@ var securityReasonJA = map[string]string{
 	"OSV vulnerability match":                                                              "OSV vulnerability が一致しました",
 	"missing version for high-confidence ecosystem":                                        "高信頼 ecosystem 判定に必要な version がありません",
 	"unsupported mise backend ecosystem":                                                   "この mise backend ecosystem は自動照合に未対応です",
+	"mise minimum_release_age held candidate before it appeared in normal outdated output": "mise minimum_release_age により、この候補は通常の更新候補に出る前に保留されています",
 	"no direct OSV ecosystem mapping":                                                      "OSV ecosystem への直接 mapping がありません",
 	"vscode extensions require marketplace advisory mapping":                               "VS Code extension は Marketplace advisory mapping が必要です",
 	"homebrew requires curated advisory mapping":                                           "Homebrew は curated advisory mapping が必要です",

@@ -34,25 +34,27 @@ type dependencyContractReport struct {
 }
 
 type dependencyContractCheck struct {
-	Tool                  string      `json:"tool"`
-	Feature               string      `json:"feature"`
-	Required              bool        `json:"required"`
-	Command               []string    `json:"command,omitempty"`
-	Status                plan.Status `json:"status"`
-	Version               string      `json:"version,omitempty"`
-	Value                 string      `json:"value,omitempty"`
-	Source                string      `json:"source,omitempty"`
-	Active                *bool       `json:"active,omitempty"`
-	CommandShapeSupported *bool       `json:"command_shape_supported,omitempty"`
-	Reason                string      `json:"reason,omitempty"`
-	Remediation           string      `json:"remediation,omitempty"`
-	RequiredField         []string    `json:"required_fields,omitempty"`
-	MissingField          []string    `json:"missing_fields,omitempty"`
+	Tool                  string                `json:"tool"`
+	Feature               string                `json:"feature"`
+	Required              bool                  `json:"required"`
+	Command               []string              `json:"command,omitempty"`
+	Status                plan.Status           `json:"status"`
+	Version               string                `json:"version,omitempty"`
+	Value                 string                `json:"value,omitempty"`
+	Source                string                `json:"source,omitempty"`
+	Active                *bool                 `json:"active,omitempty"`
+	CommandShapeSupported *bool                 `json:"command_shape_supported,omitempty"`
+	Reason                string                `json:"reason,omitempty"`
+	Remediation           string                `json:"remediation,omitempty"`
+	RequiredField         []string              `json:"required_fields,omitempty"`
+	MissingField          []string              `json:"missing_fields,omitempty"`
+	TrustTargets          []homebrewTrustTarget `json:"trust_targets,omitempty"`
 }
 
 type dependencyProbe struct {
 	Tool        string
 	Required    bool
+	Env         []string
 	VersionArgs []string
 	Feature     string
 	JSONArgs    []string
@@ -134,6 +136,7 @@ func buildDependencyContractReport(ctx context.Context, opts dependencyOptions, 
 		}
 	}
 	checks = append(checks, dependencyMiseMinimumReleaseAgeCheck(ctx, commandRunner, opts.root))
+	checks = append(checks, homebrewTapTrustDependencyCheck(ctx, commandRunner, opts.root))
 	checks = append(checks, dependencyCodexTranslationCheck(commandRunner))
 	sort.SliceStable(checks, func(i, j int) bool {
 		if checks[i].Required != checks[j].Required {
@@ -205,7 +208,7 @@ func dependencyMiseMinimumReleaseAgeCheck(ctx context.Context, commandRunner run
 
 func dependencyProbes() []dependencyProbe {
 	return []dependencyProbe{
-		{Tool: "brew", Required: true, VersionArgs: []string{"--version"}, Feature: "outdated-json-v2", JSONArgs: []string{"outdated", "--json=v2"}, JSONFields: []string{"formulae", "casks"}, JSONRootObj: true},
+		{Tool: "brew", Required: true, Env: []string{"HOMEBREW_NO_INSTALL_FROM_API=1"}, VersionArgs: []string{"--version"}, Feature: "outdated-json-v2", JSONArgs: []string{"outdated", "--json=v2"}, JSONFields: []string{"formulae", "casks"}, JSONRootObj: true},
 		{Tool: "mise", Required: true, VersionArgs: []string{"--version"}, Feature: "current-json", JSONArgs: []string{"ls", "--current", "--json"}, JSONRootObj: true},
 		{Tool: "osv-scanner", VersionArgs: []string{"--version"}},
 		{Tool: "gitleaks", VersionArgs: []string{"version"}},
@@ -250,17 +253,24 @@ func dependencyJSONContractCheck(ctx context.Context, commandRunner runner.Runne
 		Tool:          probe.Tool,
 		Feature:       probe.Feature,
 		Required:      probe.Required,
-		Command:       append([]string{probe.Tool}, probe.JSONArgs...),
 		Status:        plan.StatusOK,
 		RequiredField: append([]string{}, probe.JSONFields...),
 	}
+	commandName := probe.Tool
+	commandArgs := append([]string{}, probe.JSONArgs...)
+	if len(probe.Env) > 0 {
+		commandName = "env"
+		commandArgs = append(append([]string{}, probe.Env...), probe.Tool)
+		commandArgs = append(commandArgs, probe.JSONArgs...)
+	}
+	check.Command = append([]string{commandName}, commandArgs...)
 	if _, err := commandRunner.LookPath(probe.Tool); err != nil {
 		check.Status = plan.StatusUnavailable
 		check.Reason = "executable not found on PATH"
 		check.Remediation = dependencyRemediation(probe.Tool, probe.Required)
 		return check
 	}
-	result := runDependencyCommand(ctx, commandRunner, probe.Tool, probe.JSONArgs...)
+	result := runDependencyCommand(ctx, commandRunner, commandName, commandArgs...)
 	if result.Err != nil {
 		check.Status = plan.StatusError
 		check.Reason = dependencyCommandError(result)

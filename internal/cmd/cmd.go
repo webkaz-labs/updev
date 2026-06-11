@@ -31,7 +31,7 @@ type options struct {
 const (
 	usageExitCode = 64
 	toolName      = "updev"
-	toolVersion   = "v0.5.8"
+	toolVersion   = "v0.6.0"
 )
 
 type versionReport struct {
@@ -200,7 +200,9 @@ func Run(args []string) int {
 		printUsage()
 		return 0
 	default:
-		return runLegacy(append([]string{command}, args...))
+		fmt.Fprintf(os.Stderr, "updev: unknown command %q\n", command)
+		printUsage()
+		return usageExitCode
 	}
 }
 
@@ -545,13 +547,7 @@ func printReadOnlyText(w io.Writer, command string, result inventoryResult) {
 }
 
 func truncate(text string, width int) string {
-	if len(text) <= width {
-		return text
-	}
-	if width <= 1 {
-		return text[:width]
-	}
-	return text[:width-1] + "…"
+	return textui.Truncate(text, width)
 }
 
 func printUsage() {
@@ -604,7 +600,6 @@ Commands:
   updev version [--format text|json]
   updev --version | -v
   updev brewfile [--root path] <add|remove|has|check|sync> ...
-  updev legacy <command> ...    # explicit escape hatch for Python legacy commands
 
 Notes:
   TTY text output may open an interactive dashboard/browser unless --plain or --no-interactive is set.
@@ -613,8 +608,7 @@ Notes:
   Configuration is optional; defaults are used when no updev.toml exists.
   Exit codes: 0 ok, 1 error, 2 drift.
 
-Use "updev legacy <command>" only for explicitly named legacy comparison or
-compatibility paths.`)
+Unknown commands fail fast and show this help.`)
 }
 
 func runLegacy(args []string) int {

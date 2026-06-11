@@ -50,6 +50,7 @@ type detailBrowserModel struct {
 	MouseMode           browserMouseMode
 	pendingMouseRelease int
 	PrimaryEnterAction  bool
+	actionFocus         int
 }
 
 type detailBrowserMouseMsg struct {
@@ -99,7 +100,7 @@ func newDetailBrowserModel(title string, rows []detailBrowserRow, state detailBr
 	} else if state.Selected >= len(rows) {
 		state.Selected = len(rows) - 1
 	}
-	model := detailBrowserModel{Title: title, Rows: rows, State: state, Color: color, FilterInput: state.Query, MouseMode: browserMouseOff, pendingMouseRelease: -1}
+	model := detailBrowserModel{Title: title, Rows: rows, State: state, Color: color, FilterInput: state.Query, MouseMode: browserMouseOff, pendingMouseRelease: -1, actionFocus: -1}
 	model.refreshFilteredRows()
 	model.clampSelection()
 	return model
@@ -151,22 +152,27 @@ func (m detailBrowserModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.State.Action = updevActionHome
 			return m, tea.Quit
 		case "up", "k":
-			m.move(-1)
+			m.moveFocus(-1)
 		case "down", "j":
-			m.move(1)
+			m.moveFocus(1)
 		case "pgup":
 			m.move(-10)
 		case "pgdown":
 			m.move(m.visibleRowCapacity())
 		case "home":
 			m.State.Selected = 0
+			m.actionFocus = -1
 			m.ensureSelectedVisible()
 		case "end":
 			if count := m.filteredRowCount(); count > 0 {
 				m.State.Selected = count - 1
+				m.actionFocus = -1
 				m.ensureSelectedVisible()
 			}
 		case "enter":
+			if m.selectFocusedAction() {
+				return m, tea.Quit
+			}
 			if m.PrimaryEnterAction && m.selectRowAction(0) {
 				return m, tea.Quit
 			}
@@ -210,6 +216,7 @@ func (m detailBrowserModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			m.State.Selected = msg.Index
+			m.actionFocus = -1
 			m.ensureSelectedVisible()
 			m.pendingMouseRelease = msg.Index
 		}
@@ -263,12 +270,14 @@ func (m *detailBrowserModel) applyFilterInput() {
 	m.State.Query = strings.TrimSpace(m.FilterInput)
 	m.State.Selected = 0
 	m.State.Offset = 0
+	m.actionFocus = -1
 	m.refreshFilteredRows()
 	m.clampSelection()
 }
 
 func (m *detailBrowserModel) handleMouseToggle(index int) {
 	m.State.Selected = index
+	m.actionFocus = -1
 	m.toggleSelected()
 }
 
@@ -279,6 +288,7 @@ func (m *detailBrowserModel) move(delta int) {
 		return
 	}
 	m.State.Selected += delta
+	m.actionFocus = -1
 	if m.State.Selected < 0 {
 		m.State.Selected = 0
 	}
@@ -286,6 +296,38 @@ func (m *detailBrowserModel) move(delta int) {
 		m.State.Selected = count - 1
 	}
 	m.ensureSelectedVisible()
+}
+
+func (m *detailBrowserModel) moveFocus(delta int) {
+	if delta == 0 {
+		return
+	}
+	rows := m.filteredRows()
+	if m.State.Selected >= 0 && m.State.Selected < len(rows) && m.State.Expanded[m.State.Selected] {
+		actionCount := len(rows[m.State.Selected].Actions)
+		if actionCount > 0 {
+			if m.actionFocus < 0 && delta < 0 {
+				m.move(delta)
+				return
+			}
+			next := m.actionFocus + delta
+			if m.actionFocus < 0 && delta > 0 {
+				next = 0
+			}
+			if next >= 0 && next < actionCount {
+				m.actionFocus = next
+				m.ensureSelectedVisible()
+				return
+			}
+			if next < 0 {
+				m.actionFocus = -1
+				m.ensureSelectedVisible()
+				return
+			}
+			m.actionFocus = -1
+		}
+	}
+	m.move(delta)
 }
 
 func (m *detailBrowserModel) scroll(delta int) {
@@ -312,6 +354,7 @@ func (m *detailBrowserModel) toggleSelected() {
 		m.State.Expanded = map[int]bool{}
 	}
 	m.State.Expanded[m.State.Selected] = !m.State.Expanded[m.State.Selected]
+	m.actionFocus = -1
 	m.ensureSelectedVisible()
 }
 
@@ -326,6 +369,14 @@ func (m *detailBrowserModel) selectRowAction(index int) bool {
 	}
 	m.State.Action = row.Actions[index].Value
 	return true
+}
+
+func (m *detailBrowserModel) selectFocusedAction() bool {
+	rows := m.filteredRows()
+	if m.State.Selected < 0 || m.State.Selected >= len(rows) || !m.State.Expanded[m.State.Selected] || m.actionFocus < 0 {
+		return false
+	}
+	return m.selectRowAction(m.actionFocus)
 }
 
 func (m detailBrowserModel) View() tea.View {
@@ -392,7 +443,11 @@ func (m detailBrowserModel) View() tea.View {
 		line++
 		renderedLines++
 		if m.State.Expanded[index] {
-			expandedLines := detailBrowserExpandedLinesStyled(row, m.expandedDetailWidth(), m.Color)
+			actionFocus := -1
+			if index == m.State.Selected {
+				actionFocus = m.actionFocus
+			}
+			expandedLines := detailBrowserExpandedLinesStyledFocus(row, m.expandedDetailWidth(), m.Color, actionFocus)
 			for _, expandedLine := range expandedLines {
 				if renderedLines >= maxBodyLines {
 					break
@@ -701,6 +756,10 @@ func detailBrowserExpandedLinesWithWidth(row detailBrowserRow, width int) []stri
 }
 
 func detailBrowserExpandedLinesStyled(row detailBrowserRow, width int, color bool) []string {
+	return detailBrowserExpandedLinesStyledFocus(row, width, color, -1)
+}
+
+func detailBrowserExpandedLinesStyledFocus(row detailBrowserRow, width int, color bool, actionFocus int) []string {
 	lines := []string{}
 	if strings.TrimSpace(row.Detail) != "" {
 		lines = append(lines, browserSectionHeadingText(tr("details", "詳細"), color))
@@ -732,7 +791,7 @@ func detailBrowserExpandedLinesStyled(row detailBrowserRow, width int, color boo
 			lines = append(lines, browserSectionHeadingText(tr("actions", "操作"), color))
 			actionsStarted = true
 		}
-		lines = append(lines, wrapDetail(detailBrowserActionLine(index, action, color), width)...)
+		lines = append(lines, wrapDetail(detailBrowserActionLine(index, action, color, index == actionFocus), width)...)
 	}
 	if len(lines) == 0 {
 		lines = append(lines, textui.StyleDim(tr("no additional detail", "追加の詳細はありません"), color))
@@ -810,13 +869,17 @@ func keyLooksLikeURLSchemePrefix(key string, value string) bool {
 	return false
 }
 
-func detailBrowserActionLine(index int, action detailBrowserAction, color bool) string {
+func detailBrowserActionLine(index int, action detailBrowserAction, color bool, focused bool) string {
 	key := fmt.Sprintf("action %d [press %d]:", index+1, index+1)
 	if index == 0 {
 		key = fmt.Sprintf("action %d [press a or 1]:", index+1)
 	}
 	label := textui.StyleAction(strings.TrimSpace(action.Label), color)
-	line := textui.StyleKey(key, color) + " " + label
+	prefix := "  "
+	if focused {
+		prefix = textui.StyleRequested("> ", color)
+	}
+	line := prefix + textui.StyleKey(key, color) + " " + label
 	if strings.TrimSpace(action.Description) != "" {
 		line += textui.StyleDim(" - "+localizedListEvidenceText(action.Description), color)
 	}

@@ -27,6 +27,7 @@ type safetyGate struct {
 	Summary  *safetySummary  `json:"summary,omitempty"`
 	Error    string          `json:"error,omitempty"`
 	Warnings []string        `json:"warnings,omitempty"`
+	Evidence []string        `json:"evidence,omitempty"`
 	Findings []safetyFinding `json:"findings,omitempty"`
 }
 
@@ -92,6 +93,10 @@ func collectUpdateSafetyWithPolicy(ctx context.Context, commandRunner commandRun
 	if includeVSCode {
 		gateCount++
 	}
+	includeMiseBump := opts.miseBumpMode != "" && opts.miseBumpMode != "off"
+	if includeMiseBump {
+		gateCount++
+	}
 	gates := make([]safetyGate, gateCount)
 	var wg sync.WaitGroup
 	wg.Add(gateCount)
@@ -107,6 +112,13 @@ func collectUpdateSafetyWithPolicy(ctx context.Context, commandRunner commandRun
 		go func() {
 			defer wg.Done()
 			gates[2] = collectVSCodeUpdateSafetyWithPolicy(ctx, commandRunner, opts.root, policy)
+		}()
+	}
+	if includeMiseBump {
+		index := gateCount - 1
+		go func() {
+			defer wg.Done()
+			gates[index] = collectMiseBumpSafetyWithPolicy(ctx, commandRunner, opts.root, policy)
 		}()
 	}
 	wg.Wait()
@@ -132,12 +144,27 @@ func collectBrewSafety(ctx context.Context, commandRunner commandRunner, root st
 
 func collectMiseUpdateSafetyWithPolicy(ctx context.Context, commandRunner commandRunner, root string, policy securityPolicy) safetyGate {
 	gate := safetyGate{Provider: "mise", Status: plan.StatusOK}
+	gate.Evidence = append(gate.Evidence, miseMinimumReleaseAgeGateEvidence(ctx, commandRunner, root)...)
 	findings, warnings, err := parseMiseOutdatedResult(runMiseOutdatedJSON(ctx, commandRunner, root))
 	gate.Warnings = append(gate.Warnings, warnings...)
 	if err != nil {
 		gate.Status = plan.StatusError
 		gate.Error = err.Error()
 		return gate
+	}
+	nativeHeld, nativeWarnings := miseNativeReleaseAgeHoldFindings(ctx, commandRunner, root, findings)
+	gate.Warnings = append(gate.Warnings, nativeWarnings...)
+	findings = append(findings, nativeHeld...)
+	if len(findings) > 0 {
+		minReleaseAge := minMiseReleaseAge()
+		cacheKey := updateSafetyMiseCacheKey(root, findings, minReleaseAge)
+		if cached, ok := loadUpdateSafetyCache("mise", cacheKey, updateSafetyMiseMetadataAge); ok {
+			gate.Warnings = append(gate.Warnings, cached.Warnings...)
+			findings = updateSafetyCacheEvidence(cached.Findings, "mise", cached.CreatedAt)
+		} else {
+			findings = enrichMiseSafetyFindings(ctx, commandRunner, http.DefaultClient, findings, minReleaseAge)
+			saveUpdateSafetyCache("mise", cacheKey, findings, nil)
+		}
 	}
 	findings = applySecurityPolicyToSafetyFindings(policy, findings)
 	gate.Findings = findings
@@ -185,6 +212,54 @@ func collectBrewUpdateSafetyWithPolicy(ctx context.Context, commandRunner comman
 		}
 		saveUpdateSafetyCache("brew", outdatedErrorCacheKey, findings, gate.Warnings)
 	}
+	if len(findings) == 0 {
+		return gate
+	}
+	minReleaseAge := minHomebrewReleaseAge()
+	cacheKey := updateSafetyBrewCacheKey(root, findings, minReleaseAge)
+	if cached, ok := loadUpdateSafetyCache("brew", cacheKey, updateSafetyHomebrewMetadataAge); ok {
+		gate.Warnings = append(gate.Warnings, cached.Warnings...)
+		findings = updateSafetyCacheEvidence(cached.Findings, "brew", cached.CreatedAt)
+	} else if cached, ok := loadUpdateSafetyCache("brew", updateSafetyBrewAdvisoryErrorCacheKey(cacheKey), updateSafetyUnavailableMaxAge); ok && cached.Error != "" {
+		findings = applyUpdateSafetyUnavailableCache(&gate, cached, "cached Homebrew advisory query failed", "brew advisory unavailable")
+	} else {
+		findings = enrichBrewSafetyFindings(ctx, http.DefaultClient, homebrewAPIURL(), findings, minReleaseAge)
+		var advisoryErr error
+		findings, advisoryErr = enrichBrewSafetyAdvisories(ctx, http.DefaultClient, osvAPIURL(), findings)
+		if advisoryErr != nil {
+			gate.Warnings = append(gate.Warnings, "Homebrew advisory query failed: "+advisoryErr.Error())
+			saveUpdateSafetyUnavailableCache("brew", updateSafetyBrewAdvisoryErrorCacheKey(cacheKey), advisoryErr.Error(), findings, nil)
+		} else {
+			saveUpdateSafetyCache("brew", cacheKey, findings, nil)
+		}
+	}
+	findings = applySecurityPolicyToSafetyFindings(policy, findings)
+	gate.Findings = findings
+	gate.Summary = safetySummaryFromFindings(findings)
+	for _, finding := range findings {
+		if finding.Decision != "allow" {
+			gate.Status = plan.StatusHeld
+			break
+		}
+	}
+	return gate
+}
+
+func collectBrewUpdateSafetyFreshWithPolicy(ctx context.Context, commandRunner commandRunner, root string, policy securityPolicy) safetyGate {
+	gate := safetyGate{Provider: "brew", Status: plan.StatusOK}
+	manifest, manifestErr := loadBrewSafetyManifest(root)
+	if manifestErr != nil {
+		gate.Warnings = append(gate.Warnings, "Homebrew manifest unavailable; provenance checks may be incomplete: "+manifestErr.Error())
+	}
+	result := runBrewOutdatedJSON(ctx, commandRunner)
+	findings, warnings, err := parseBrewOutdatedResult(result, manifest)
+	gate.Warnings = append(gate.Warnings, warnings...)
+	if err != nil {
+		gate.Status = plan.StatusError
+		gate.Error = err.Error()
+		return gate
+	}
+	saveUpdateSafetyCache("brew", updateSafetyBrewOutdatedErrorCacheKey(root), findings, gate.Warnings)
 	if len(findings) == 0 {
 		return gate
 	}
@@ -273,42 +348,53 @@ func collectBrewSafetyWithPolicy(ctx context.Context, commandRunner commandRunne
 }
 
 func runBrewOutdatedJSON(ctx context.Context, commandRunner commandRunner) runner.Result {
-	requestCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	timeout := brewOutdatedTimeout()
+	requestCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	args := []string{"HOMEBREW_NO_AUTO_UPDATE=1"}
-	if brewTapInstalled(requestCtx, commandRunner, "homebrew/core") {
-		args = append(args, "HOMEBREW_NO_INSTALL_FROM_API=1")
-	}
-	args = append(args, "brew", "outdated", "--json=v2")
+	args := []string{"HOMEBREW_NO_AUTO_UPDATE=1", "HOMEBREW_NO_INSTALL_FROM_API=1"}
+	args = append(args, "brew", "outdated", "--json=v2", "--greedy")
 	result := commandRunner.Run(requestCtx, "env", args...)
 	if requestCtx.Err() == context.DeadlineExceeded && result.Stdout == "" && result.Stderr == "" {
-		result.Stderr = "brew outdated --json=v2 timed out after 15s"
+		result.Stderr = fmt.Sprintf("brew outdated --json=v2 --greedy timed out after %s", timeout)
 	}
 	return result
+}
+
+func brewOutdatedTimeout() time.Duration {
+	config := loadUpdevConfig()
+	seconds := 60
+	if config.Security.Homebrew.OutdatedTimeoutSeconds != nil {
+		seconds = *config.Security.Homebrew.OutdatedTimeoutSeconds
+	}
+	if value := strings.TrimSpace(os.Getenv("UPDEV_BREW_OUTDATED_TIMEOUT_SECONDS")); value != "" {
+		if parsed, err := strconv.Atoi(value); err == nil && parsed >= 0 {
+			seconds = parsed
+		}
+	}
+	if seconds <= 0 {
+		seconds = 60
+	}
+	return time.Duration(seconds) * time.Second
 }
 
 func runMiseOutdatedJSON(ctx context.Context, commandRunner commandRunner, root string) runner.Result {
 	requestCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
-	result := commandRunner.Run(requestCtx, "mise", "outdated", "--json", "--cd", root)
+	result := runMiseCommand(requestCtx, commandRunner, nil, nil, "mise", "outdated", "--json", "--cd", root)
 	if requestCtx.Err() == context.DeadlineExceeded && result.Stdout == "" && result.Stderr == "" {
 		result.Stderr = "mise outdated --json timed out after 20s"
 	}
 	return result
 }
 
-func brewTapInstalled(ctx context.Context, commandRunner commandRunner, tap string) bool {
-	result := commandRunner.Run(ctx, "brew", "tap")
-	if result.Err != nil || result.Code != 0 {
-		return false
+func runMiseOutdatedJSONAgeDisabled(ctx context.Context, commandRunner commandRunner, root string) runner.Result {
+	requestCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	defer cancel()
+	result := runMiseCommand(requestCtx, commandRunner, nil, nil, "env", "MISE_MINIMUM_RELEASE_AGE=0d", "mise", "outdated", "--json", "--cd", root)
+	if requestCtx.Err() == context.DeadlineExceeded && result.Stdout == "" && result.Stderr == "" {
+		result.Stderr = "MISE_MINIMUM_RELEASE_AGE=0d mise outdated --json timed out after 20s"
 	}
-	for _, line := range strings.Split(result.Stdout, "\n") {
-		line = strings.TrimSpace(line)
-		if strings.EqualFold(line, tap) {
-			return true
-		}
-	}
-	return false
+	return result
 }
 
 type brewSafetyManifest struct {
@@ -336,9 +422,10 @@ type brewOutdatedItem struct {
 }
 
 type miseOutdatedItem struct {
-	Requested string `json:"requested"`
-	Current   string `json:"current"`
-	Latest    string `json:"latest"`
+	Requested string  `json:"requested"`
+	Current   string  `json:"current"`
+	Latest    string  `json:"latest"`
+	Bump      *string `json:"bump"`
 }
 
 type flexStringSlice []string
@@ -372,7 +459,7 @@ func parseBrewOutdated(raw string, manifest brewSafetyManifest) ([]safetyFinding
 	}
 	var report brewOutdatedReport
 	if err := json.Unmarshal([]byte(payload), &report); err != nil {
-		return nil, fmt.Errorf("brew outdated --json=v2 returned invalid JSON: %w", err)
+		return nil, fmt.Errorf("brew outdated --json=v2 --greedy returned invalid JSON: %w", err)
 	}
 	findings := make([]safetyFinding, 0, len(report.Formulae)+len(report.Casks))
 	for _, item := range report.Formulae {
@@ -387,12 +474,12 @@ func parseBrewOutdated(raw string, manifest brewSafetyManifest) ([]safetyFinding
 func parseBrewOutdatedResult(result runner.Result, manifest brewSafetyManifest) ([]safetyFinding, []string, error) {
 	warnings := []string{}
 	if strings.TrimSpace(result.Stdout) == "" && (result.Code != 0 || result.Err != nil) {
-		return nil, nil, fmt.Errorf("%s", brewOutdatedResultDetail(result, "brew outdated --json=v2 returned no output"))
+		return nil, nil, fmt.Errorf("%s", brewOutdatedResultDetail(result, "brew outdated --json=v2 --greedy returned no output"))
 	}
 	findings, parseErr := parseBrewOutdated(result.Stdout, manifest)
 	if parseErr == nil {
 		if result.Code != 0 || result.Err != nil {
-			warning := "brew outdated --json=v2 returned non-zero but JSON output was parsed"
+			warning := "brew outdated --json=v2 --greedy returned non-zero but JSON output was parsed"
 			if detail := brewOutdatedResultDetail(result, ""); detail != "" {
 				warning += ": " + detail
 			}
@@ -502,7 +589,7 @@ func brewOutdatedJSONPayload(raw string) (string, error) {
 	start := strings.Index(raw, "{")
 	end := strings.LastIndex(raw, "}")
 	if start < 0 || end < start {
-		return "", fmt.Errorf("brew outdated --json=v2 returned no JSON object")
+		return "", fmt.Errorf("brew outdated --json=v2 --greedy returned no JSON object")
 	}
 	return raw[start : end+1], nil
 }
@@ -535,7 +622,7 @@ func brewSafetyFinding(kind string, item brewOutdatedItem, manifest brewSafetyMa
 		Decision:          decision,
 		Reason:            reason,
 		Remediation:       remediation,
-		Evidence:          []string{"brew outdated --json=v2"},
+		Evidence:          []string{"brew outdated --json=v2 --greedy"},
 		Source:            entry.Source,
 		Tap:               entry.Tap,
 		Confidence:        confidence,

@@ -7,7 +7,7 @@ import (
 	"strings"
 
 	"charm.land/huh/v2"
-	"github.com/mattn/go-runewidth"
+	"github.com/webkaz-labs/updev/internal/textui"
 )
 
 type updevChoice struct {
@@ -137,7 +137,7 @@ func updevChoiceLabelWidth(choices []updevChoice) int {
 		if choice.Description == "" {
 			continue
 		}
-		if candidate := runewidth.StringWidth(choice.Label); candidate > width {
+		if candidate := textui.DisplayWidth(choice.Label); candidate > width {
 			width = candidate
 		}
 	}
@@ -176,32 +176,11 @@ func updevSelectHeight(optionCount int, minHeight int, maxHeight int) int {
 }
 
 func textPadRight(value string, width int) string {
-	padding := width - runewidth.StringWidth(value)
-	if padding <= 0 {
-		return value
-	}
-	return value + fmt.Sprintf("%*s", padding, "")
+	return textui.PadRight(value, width)
 }
 
 func textTruncate(value string, width int) string {
-	if width <= 0 || runewidth.StringWidth(value) <= width {
-		return value
-	}
-	if width <= 1 {
-		return "…"
-	}
-	out := strings.Builder{}
-	current := 0
-	for _, r := range value {
-		rw := runewidth.RuneWidth(r)
-		if current+rw > width-1 {
-			break
-		}
-		out.WriteRune(r)
-		current += rw
-	}
-	out.WriteString("…")
-	return out.String()
+	return textui.Truncate(value, width)
 }
 
 func runPostSectionNavigation() (string, error) {

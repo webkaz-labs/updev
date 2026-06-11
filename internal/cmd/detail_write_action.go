@@ -91,7 +91,7 @@ func applyRoutedDetailWriteAction(root string, report *updateReport, value strin
 		if !securityDetailActionRequiresCustomInput(action) {
 			_, reason, expires, _ = defaultSecurityDetailActionInputs(action)
 		}
-		return applyConfirmedSecurityDetailAction(report, action, provider, kind, name, strings.TrimSpace(reason), strings.TrimSpace(expires))
+		return applyConfirmedSecurityDetailActionSilently(report, action, provider, kind, name, strings.TrimSpace(reason), strings.TrimSpace(expires))
 	}
 	return false
 }

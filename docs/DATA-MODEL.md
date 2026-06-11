@@ -98,6 +98,9 @@ include_vscode = true
 [update]
 security = "strict"
 
+[update.mise_bump]
+mode = "manual" # off | manual | safe | auto
+
 [ui]
 language = "ja"
 description_translation = "manual"
@@ -185,16 +188,17 @@ editing. Migration-only cache readers must stay clearly labeled and should not
 become part of the stable public contract.
 
 Update safety evidence uses `update-safety-v1` cache entries. Homebrew
-`brew outdated --json=v2` success output is cached for a short TTL to keep
+`brew outdated --json=v2 --greedy` success output is cached for a short TTL to keep
 repeated `updev --dry-run` / `updev update` review paths responsive, while
 unavailable evidence is cached separately with an error status and shown as
 stale/unavailable evidence instead of silently freezing. Security metadata and
 scanner/API failures use longer TTLs only when the candidate set is unchanged.
-Homebrew safety probes avoid mutating tap state: if `homebrew/core` is already
-tapped, the probe can use `HOMEBREW_NO_INSTALL_FROM_API=1`; otherwise it leaves
-Homebrew's API path enabled. Cached provider-log failures such as auto-update or
-tap-clone output are discarded instead of being reused as stable unavailable
-evidence.
+Homebrew safety probes avoid mutating tap state and always set
+`HOMEBREW_NO_INSTALL_FROM_API=1` for `brew outdated --json=v2 --greedy`, so
+Homebrew 6 discovery uses local tap metadata instead of relying on internal
+package JSON endpoints that may be unavailable for the current platform.
+Cached provider-log failures such as auto-update or tap-clone output are
+discarded instead of being reused as stable unavailable evidence.
 
 ## Reports
 
@@ -282,6 +286,10 @@ bundle_id = "com.apple.motionapp"
 
 [manual.apps.provenance]
 source = "human"
+source_url = "https://apps.apple.com/app/motion/id434290957"
+owner = "Apple"
+update_owner = "mas"
+provider_metadata = "mac app store receipt"
 evidence = ["mac_app_store_receipt", "app_bundle"]
 reviewed_at = "2026-06-08"
 ```
@@ -306,6 +314,12 @@ ambiguous app rows. Candidates carry `provider`, `kind`, `name`, stable
 `suggested_override` fields. For example, a macOS `.app` bundle that is
 installed but not reconciled with docs, overrides, or cask evidence uses
 `reason_code=manual_app_live_only`.
+Evidence should preserve source quality fields when available:
+`review_url`, `source_url`, `owner`, `managed_by`, `update_owner`,
+`ownership_confidence`, and `provider_metadata`. macOS bundle scans populate
+low-confidence `Info.plist` ownership evidence by default, MAS receipts and
+`mas list` populate high-confidence `mas` ownership evidence, and Homebrew cask
+evidence populates high-confidence `brew` ownership evidence.
 Manual inventory plan items add action-oriented fields such as
 `suggested_provider`, `review_url`, `install_hint`, and `command_preview` so
 agents can show next steps without turning scan evidence into desired state or
@@ -374,5 +388,5 @@ shape:
 |-------|----------|------|
 | Provider | `manual`, `mas`, `flatpak`, `winget`, `vendor` | Installation/update owner or distribution channel. Keep this separate from OS-specific scanner names. |
 | Identity | display name, normalized name, app id, bundle id, MAS id, desktop id, package id | Use the strongest stable id available; names are fallback and matching hints. |
-| Evidence | source path, scanner name, confidence, version, owner/update provider | Preserve where the fact came from so generated reports and review candidates are explainable. |
+| Evidence | source path, scanner name, review/source URL, confidence, version, owner/update provider, provider-native metadata | Preserve where the fact came from so generated reports and review candidates are explainable. |
 | Review | `reason_code`, `remediation_code`, confidence, params, suggested override fields | Ambiguous or unsafe rows become review candidates instead of silent desired state. |
