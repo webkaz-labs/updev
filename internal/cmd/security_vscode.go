@@ -19,6 +19,7 @@ import (
 
 	"github.com/webkaz-labs/updev/internal/plan"
 	"github.com/webkaz-labs/updev/internal/runner"
+	"github.com/webkaz-labs/updev/internal/updevpath"
 )
 
 const defaultVSCodeMarketplaceURL = "https://marketplace.visualstudio.com/_apis/public/gallery/extensionquery?api-version=7.2-preview.1"
@@ -296,7 +297,7 @@ func parseVSCodeInstalledVersions(raw string) map[string]string {
 }
 
 func vscodeItemsFromBrewfile(root string) ([]plan.Item, error) {
-	home, _ := os.UserHomeDir()
+	home := updevpath.HomeDir()
 	path := filepath.Join(home, "Brewfile")
 	if _, err := os.Stat(path); err != nil {
 		path = filepath.Join(root, "Brewfile.tmpl")

@@ -34,8 +34,6 @@ second long-form copy.
 | Security gates, policy decisions, scanners, trust boundaries | `SECURITY.md` | README and agent docs may describe safe defaults and link here for detail. |
 | Current release target and release criteria | `RELEASE.md` | ROADMAP keeps ordering only; release notes describe one shipped tag only. |
 | Tag-specific release notes | `docs/release-notes/<tag>.md` | GitHub Release bodies are generated from these files by the release workflow. |
-| Public publishing/export process | `PUBLISHING.md` | Public repo should not carry this dotfiles-canonical process document. |
-| Validation commands and dogfood smoke lists | `VALIDATION.md` | README development section stays short and points to mise tasks. |
 | Agent usage, skills, and agent-assisted updev development | `docs/agent/` | `updev skill`, `updev help agent`, and README discovery text should embed or link to this tree. |
 
 Apply these rules when changing docs or CLI behavior:

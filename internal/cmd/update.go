@@ -2479,6 +2479,12 @@ const (
 const securityDetailActionPrefix = "security-policy"
 const miseBumpDetailActionPrefix = "mise-bump"
 
+const (
+	securityActionBrewTrustFormula = "brew-trust-formula"
+	securityActionBrewTrustCask    = "brew-trust-cask"
+	securityActionBrewTrustTap     = "brew-trust-tap"
+)
+
 func runUpdateHub(report updateReport) {
 	runUpdateHubWithDefault(report, "")
 }
@@ -2845,6 +2851,12 @@ func handleSecurityDetailAction(report *updateReport, value string) bool {
 	if !ok || report == nil {
 		return false
 	}
+	if isHomebrewTrustSecurityAction(action) {
+		if !confirmHomebrewTrustAction(action, kind, name) {
+			return true
+		}
+		return applyConfirmedHomebrewTrustDetailAction(report, action, kind, name, true)
+	}
 	decision := ""
 	reason := ""
 	expires := ""
@@ -3036,7 +3048,8 @@ func refreshMiseBumpGate(report *updateReport) {
 
 func securityDetailActionRequiresConfirmation(action string) bool {
 	switch action {
-	case "allow-7d", "allow-7d-rerun", "allow-custom", "allow-custom-rerun", "hold":
+	case "allow-7d", "allow-7d-rerun", "allow-custom", "allow-custom-rerun", "hold",
+		securityActionBrewTrustFormula, securityActionBrewTrustCask, securityActionBrewTrustTap:
 		return true
 	default:
 		return false
@@ -3074,6 +3087,9 @@ func applyConfirmedSecurityDetailActionSilently(report *updateReport, action str
 func applyConfirmedSecurityDetailActionWithOutput(report *updateReport, action string, provider string, kind string, name string, reason string, expires string, printResult bool, streamRerun bool) bool {
 	if report == nil {
 		return false
+	}
+	if isHomebrewTrustSecurityAction(action) {
+		return applyConfirmedHomebrewTrustDetailAction(report, action, kind, name, printResult)
 	}
 	decision := ""
 	switch action {
@@ -3333,6 +3349,9 @@ func securityDetailActions(gate safetyGate, finding safetyFinding) []detailBrows
 		return nil
 	}
 	actions := []detailBrowserAction{}
+	if trustAction, ok := homebrewTrustDetailAction(gate, finding); ok {
+		actions = append(actions, trustAction)
+	}
 	if _, ok := updateStepForProvider(provider); ok && gate.Provider != miseBumpProvider {
 		actions = append(actions, detailBrowserAction{
 			Value:       securityDetailActionValue("allow-7d-rerun", provider, kind, finding.Name),
@@ -4012,6 +4031,9 @@ func safetyFindingDetailRow(gate safetyGate, finding safetyFinding) detailBrowse
 	metadata = appendDetailMeta(metadata, "support", finding.SupportURL)
 	metadata = appendDetailMeta(metadata, "homepage", finding.Homepage)
 	metadata = appendDetailMeta(metadata, "url", finding.URL)
+	metadata = appendDetailMeta(metadata, "trust", finding.TrustStatus)
+	metadata = appendDetailMeta(metadata, "trust target", finding.TrustTarget)
+	metadata = appendDetailMeta(metadata, "trust command", finding.TrustCommand)
 	metadata = appendDetailMeta(metadata, "release", finding.ReleaseDate)
 	if versions := versionText(finding); versions != "" {
 		metadata = appendDetailMeta(metadata, "version", versions)

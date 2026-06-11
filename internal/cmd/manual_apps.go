@@ -14,6 +14,7 @@ import (
 	"github.com/webkaz-labs/updev/internal/plan"
 	"github.com/webkaz-labs/updev/internal/reviewui"
 	"github.com/webkaz-labs/updev/internal/runner"
+	"github.com/webkaz-labs/updev/internal/updevpath"
 )
 
 const manualProviderName = "manual"
@@ -1153,15 +1154,7 @@ func inventoryOverridesPath(root string) string {
 }
 
 func defaultInventoryOverridesPath() string {
-	base := os.Getenv("XDG_CONFIG_HOME")
-	if base == "" {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return ""
-		}
-		base = filepath.Join(home, ".config")
-	}
-	return filepath.Join(base, "updev", "inventory-overrides.toml")
+	return updevpath.InventoryOverridesFile()
 }
 
 func parseManualAppOverrides(content string) []manualAppOverride {

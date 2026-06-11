@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/webkaz-labs/updev/internal/plan"
+	"github.com/webkaz-labs/updev/internal/updevpath"
 )
 
 type securityPolicy struct {
@@ -689,18 +690,7 @@ func securityPolicyRuleLineNumbers(data []byte) []int {
 }
 
 func securityPolicyPath() string {
-	if value := strings.TrimSpace(os.Getenv("UPDEV_SECURITY_POLICY")); value != "" {
-		return value
-	}
-	base := os.Getenv("XDG_CONFIG_HOME")
-	if base == "" {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return ""
-		}
-		base = filepath.Join(home, ".config")
-	}
-	return filepath.Join(base, "updev", "security-policy.json")
+	return updevpath.SecurityPolicyFile()
 }
 
 func applySecurityPolicyToSafetyFindings(policy securityPolicy, findings []safetyFinding) []safetyFinding {

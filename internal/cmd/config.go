@@ -3,9 +3,10 @@ package cmd
 import (
 	"bufio"
 	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
+
+	"github.com/webkaz-labs/updev/internal/updevpath"
 )
 
 type updevConfig struct {
@@ -114,18 +115,7 @@ func loadUpdevConfig() updevConfig {
 }
 
 func updevConfigPath() string {
-	if value := strings.TrimSpace(os.Getenv("UPDEV_CONFIG")); value != "" {
-		return value
-	}
-	base := os.Getenv("XDG_CONFIG_HOME")
-	if base == "" {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return ""
-		}
-		base = filepath.Join(home, ".config")
-	}
-	return filepath.Join(base, "updev", "config.toml")
+	return updevpath.ConfigFile()
 }
 
 func parseUpdevConfigTOML(data string) updevConfig {
