@@ -49,12 +49,12 @@ func TestPlanActionClassifiesManualRows(t *testing.T) {
 }
 
 func TestPlanSuggestedOverride(t *testing.T) {
-	row := ReviewRow{Name: "Demo", Detail: "path: /Applications/Demo.app; bundle_id: com.example.demo; cask: demo"}
+	row := ReviewRow{Name: "Demo", Detail: "path: /Applications/Demo.app; bundle_id: com.example.demo; cask: demo; package_id: org.example.Demo"}
 	override := PlanSuggestedOverride("adopt-brew", row)
 	if override.Name != "Demo" || override.ManagedBy != "brew" || override.Detail == "" {
 		t.Fatalf("unexpected override: %#v", override)
 	}
-	for _, want := range []string{"Demo.app", "com.example.demo", "demo"} {
+	for _, want := range []string{"Demo.app", "com.example.demo", "demo", "org.example.Demo"} {
 		if !containsString(override.Aliases, want) {
 			t.Fatalf("expected alias %q in %#v", want, override.Aliases)
 		}
@@ -66,10 +66,13 @@ func TestEvidenceFromRow(t *testing.T) {
 		Name:    "Motion",
 		State:   "installed",
 		Version: "6.2",
-		Detail:  "source: mac app store receipt; path: /Applications/Motion.app; bundle_id: com.apple.motionapp; owner: Apple",
+		Detail:  "source: mac app store receipt; path: /Applications/Motion.app; bundle_id: com.apple.motionapp; owner: Apple; package_id: org.example.Motion",
 	})
 	if evidence.Scanner != "macos_app_bundle" || evidence.Source != "mac app store receipt" || evidence.Path != "/Applications/Motion.app" || evidence.BundleID != "com.apple.motionapp" || evidence.Version != "6.2" {
 		t.Fatalf("unexpected evidence: %#v", evidence)
+	}
+	if evidence.Identifiers["package_id"] != "org.example.Motion" {
+		t.Fatalf("expected portable identifier evidence, got %#v", evidence)
 	}
 	if evidence.ManagedBy != "mas" || evidence.OwnershipConfidence != "high" || evidence.ProviderMetadata != "mac app store receipt" {
 		t.Fatalf("unexpected ownership evidence: %#v", evidence)

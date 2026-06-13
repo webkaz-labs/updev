@@ -24,14 +24,16 @@ type dependencyOptions struct {
 	command string
 	format  string
 	root    string
+	ledger  string
 }
 
 type dependencyContractReport struct {
-	SchemaVersion int                       `json:"schema_version"`
-	Status        plan.Status               `json:"status"`
-	Command       string                    `json:"command"`
-	Root          string                    `json:"root"`
-	Checks        []dependencyContractCheck `json:"checks"`
+	SchemaVersion       int                           `json:"schema_version"`
+	Status              plan.Status                   `json:"status"`
+	Command             string                        `json:"command"`
+	Root                string                        `json:"root"`
+	Checks              []dependencyContractCheck     `json:"checks"`
+	CompatibilityLedger dependencyCompatibilityLedger `json:"compatibility_ledger"`
 }
 
 type dependencyContractCheck struct {
@@ -50,6 +52,25 @@ type dependencyContractCheck struct {
 	RequiredField         []string              `json:"required_fields,omitempty"`
 	MissingField          []string              `json:"missing_fields,omitempty"`
 	TrustTargets          []homebrewTrustTarget `json:"trust_targets,omitempty"`
+}
+
+type dependencyCompatibilityLedger struct {
+	SchemaVersion int                            `json:"schema_version"`
+	GeneratedAt   string                         `json:"generated_at"`
+	Root          string                         `json:"root"`
+	Entries       []dependencyCompatibilityEntry `json:"entries"`
+}
+
+type dependencyCompatibilityEntry struct {
+	Tool        string      `json:"tool"`
+	Feature     string      `json:"feature"`
+	Required    bool        `json:"required"`
+	Version     string      `json:"version,omitempty"`
+	Status      plan.Status `json:"status"`
+	Supported   bool        `json:"supported"`
+	Evidence    string      `json:"evidence,omitempty"`
+	Remediation string      `json:"remediation,omitempty"`
+	Command     []string    `json:"command,omitempty"`
 }
 
 type dependencyProbe struct {
@@ -97,6 +118,12 @@ func parseDependencyOptions(command string, args []string) (dependencyOptions, e
 			}
 			opts.root = args[i+1]
 			i++
+		case "--ledger":
+			if i+1 >= len(args) {
+				return opts, fmt.Errorf("--ledger requires a value")
+			}
+			opts.ledger = args[i+1]
+			i++
 		case "--help", "-h":
 			printUsage()
 			os.Exit(0)
@@ -112,6 +139,12 @@ func parseDependencyOptions(command string, args []string) (dependencyOptions, e
 
 func runDependencyCheck(opts dependencyOptions, commandRunner runner.Runner) int {
 	report := buildDependencyContractReport(context.Background(), opts, commandRunner)
+	if opts.ledger != "" {
+		if err := writeDependencyCompatibilityLedger(opts.ledger, report.CompatibilityLedger); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			return 1
+		}
+	}
 	if opts.format == "json" {
 		if code := encodeJSON(report); code != 0 {
 			return code
@@ -149,12 +182,56 @@ func buildDependencyContractReport(ctx context.Context, opts dependencyOptions, 
 		return checks[i].Feature < checks[j].Feature
 	})
 	return dependencyContractReport{
-		SchemaVersion: dependencyContractReportSchemaVersion,
-		Status:        dependencyContractStatus(checks),
-		Command:       opts.command,
-		Root:          opts.root,
-		Checks:        checks,
+		SchemaVersion:       dependencyContractReportSchemaVersion,
+		Status:              dependencyContractStatus(checks),
+		Command:             opts.command,
+		Root:                opts.root,
+		Checks:              checks,
+		CompatibilityLedger: buildDependencyCompatibilityLedger(opts.root, checks, time.Now().UTC()),
 	}
+}
+
+func buildDependencyCompatibilityLedger(root string, checks []dependencyContractCheck, now time.Time) dependencyCompatibilityLedger {
+	entries := make([]dependencyCompatibilityEntry, 0, len(checks))
+	for _, check := range checks {
+		supported := check.Status == plan.StatusOK || (!check.Required && check.Status == plan.StatusUnavailable)
+		evidence := check.Version
+		if evidence == "" {
+			evidence = check.Value
+		}
+		if evidence == "" {
+			evidence = check.Reason
+		}
+		entries = append(entries, dependencyCompatibilityEntry{
+			Tool:        check.Tool,
+			Feature:     check.Feature,
+			Required:    check.Required,
+			Version:     check.Version,
+			Status:      check.Status,
+			Supported:   supported,
+			Evidence:    evidence,
+			Remediation: check.Remediation,
+			Command:     append([]string{}, check.Command...),
+		})
+	}
+	return dependencyCompatibilityLedger{
+		SchemaVersion: 1,
+		GeneratedAt:   now.Format(time.RFC3339),
+		Root:          root,
+		Entries:       entries,
+	}
+}
+
+func writeDependencyCompatibilityLedger(path string, ledger dependencyCompatibilityLedger) error {
+	data, err := json.MarshalIndent(ledger, "", "  ")
+	if err != nil {
+		return err
+	}
+	data = append(data, '\n')
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		return fmt.Errorf("write compatibility ledger: %w", err)
+	}
+	return nil
 }
 
 func dependencyCodexTranslationCheck(commandRunner runner.Runner) dependencyContractCheck {

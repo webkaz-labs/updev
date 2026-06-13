@@ -36,10 +36,22 @@ func ApplicationScanners() []Scanner {
 		func(root string, defaultRoot string) []App {
 			return ScanMacApplications(root, defaultRoot)
 		},
+		func(root string, defaultRoot string) []App {
+			return ScanLinuxApplications(root, defaultRoot)
+		},
+		func(root string, defaultRoot string) []App {
+			return ScanWindowsApplications(root, defaultRoot)
+		},
 	}
 }
 
 func AppKey(app App) string {
+	if app.IdentifierKey != "" && app.Identifier != "" {
+		if app.IdentifierKey == "bundle_id" {
+			return "bundle:" + strings.ToLower(app.Identifier)
+		}
+		return strings.ToLower(app.IdentifierKey) + ":" + strings.ToLower(app.Identifier)
+	}
 	if app.BundleID != "" {
 		return "bundle:" + strings.ToLower(app.BundleID)
 	}

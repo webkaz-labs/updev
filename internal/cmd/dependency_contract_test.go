@@ -2,11 +2,13 @@ package cmd
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/webkaz-labs/updev/internal/plan"
 	"github.com/webkaz-labs/updev/internal/runner"
@@ -45,6 +47,9 @@ func TestDependencyContractReportChecksRequiredJSONContracts(t *testing.T) {
 	if report.SchemaVersion != dependencyContractReportSchemaVersion || report.Status != plan.StatusOK {
 		t.Fatalf("expected ok dependency contract report, got %#v", report)
 	}
+	if report.CompatibilityLedger.SchemaVersion != 1 || report.CompatibilityLedger.Root != "/repo" || len(report.CompatibilityLedger.Entries) == 0 {
+		t.Fatalf("expected compatibility ledger entries, got %#v", report.CompatibilityLedger)
+	}
 	if len(report.Checks) == 0 {
 		t.Fatal("expected dependency checks")
 	}
@@ -82,6 +87,42 @@ func TestDependencyContractReportChecksRequiredJSONContracts(t *testing.T) {
 	}
 	if !foundCodex {
 		t.Fatalf("expected codex translation check, got %#v", report.Checks)
+	}
+}
+
+func TestDependencyCompatibilityLedgerMarksRequiredDriftUnsupported(t *testing.T) {
+	now := time.Date(2026, 6, 14, 1, 2, 3, 0, time.UTC)
+	ledger := buildDependencyCompatibilityLedger("/repo", []dependencyContractCheck{
+		{Tool: "brew", Feature: "outdated-json-v2", Required: true, Status: plan.StatusDrift, Version: "Homebrew 6.0.0", Command: []string{"brew", "outdated", "--json=v2"}, Remediation: "update parser"},
+		{Tool: "osv-scanner", Feature: "cli-version", Required: false, Status: plan.StatusUnavailable, Reason: "missing"},
+	}, now)
+	if ledger.GeneratedAt != "2026-06-14T01:02:03Z" || len(ledger.Entries) != 2 {
+		t.Fatalf("unexpected ledger: %#v", ledger)
+	}
+	if ledger.Entries[0].Supported || !strings.Contains(ledger.Entries[0].Evidence, "Homebrew 6.0.0") {
+		t.Fatalf("expected required drift to be unsupported with evidence, got %#v", ledger.Entries[0])
+	}
+	if !ledger.Entries[1].Supported {
+		t.Fatalf("expected optional unavailable scanner to stay supported, got %#v", ledger.Entries[1])
+	}
+}
+
+func TestWriteDependencyCompatibilityLedger(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "compatibility-ledger.json")
+	ledger := dependencyCompatibilityLedger{SchemaVersion: 1, GeneratedAt: "2026-06-14T01:02:03Z", Root: "/repo", Entries: []dependencyCompatibilityEntry{{Tool: "mise", Feature: "current-json", Status: plan.StatusOK, Supported: true}}}
+	if err := writeDependencyCompatibilityLedger(path, ledger); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got dependencyCompatibilityLedger
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Root != "/repo" || len(got.Entries) != 1 || got.Entries[0].Tool != "mise" {
+		t.Fatalf("unexpected written ledger: %#v", got)
 	}
 }
 

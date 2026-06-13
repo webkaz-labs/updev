@@ -155,13 +155,15 @@ The short version:
 - external commands go through `internal/runner` unless listed in the direct
   subprocess exceptions above.
 
-### v0.6.4 Architecture Focus
+### v0.6.5 Architecture Focus
 
-`v0.6.4` should keep the runtime contract stable and improve maintainability
-around boundaries that are already visible in the product. Do not start broad
-provider expansion until these boundaries are easier to test:
+`v0.6.5` keeps the runtime contract stable while finishing the remaining v0.6
+groundwork around boundaries that are already visible in the product. Broad
+provider promotion still waits for real-machine evidence, but fixture-backed
+portable inventory and compatibility ledgers are now part of the preview
+contract:
 
-| Boundary | Owner | v0.6.4 rule |
+| Boundary | Owner | v0.6.5 rule |
 |----------|-------|-------------|
 | Provider command contracts | provider packages such as `brew`, `mise`, `vscode`, `manualinventory` | argv/env construction, structured parsing, and provider-specific error normalization stay with the provider owner. |
 | Security/update decisions | `securitygate`, `securityreason`, `updatereason`, provider safety packages | decisions are represented as stable codes/args first; localized prose is render-time output. |
@@ -169,6 +171,8 @@ provider expansion until these boundaries are easier to test:
 | Tables, widths, badges, and color | `textui` | ANSI-safe width calculations and compact badges are not reimplemented in command files. |
 | Root/config/cache/policy paths | `updevpath` | commands and providers do not guess repository-local defaults; compatibility fallbacks are explicit. |
 | Inventory annotations | `inventoryannotate`, `plan`, provider packages | report enrichment should be data-backed and available to cached report views, not TUI-only. |
+| Portable manual inventory evidence | `manualinventory` | macOS, Linux fixture-backed, and Windows fixture-backed scanners normalize into the same review/evidence model and remain explicitly experimental outside macOS. |
+| Agent guidance | root embed plus `cmd` read-only commands | `updev skill`, `updev skill --full`, and `updev help agent` embed the canonical `docs/agent/` files instead of duplicating command reference in Go strings. |
 
 Extraction is justified when it moves an entire domain contract with tests.
 Moving only a helper to reduce file count is not enough. If a cleanup would

@@ -131,7 +131,7 @@ func StructuredAppMatchesQuery(app StructuredApp, query string) bool {
 	query = strings.ToLower(strings.TrimSpace(query))
 	parts := []string{app.Name, app.Category, app.Detail, app.ManagedBy, app.Lifecycle, app.Confidence, app.ReviewStatus}
 	parts = append(parts, app.Aliases...)
-	for _, key := range []string{"bundle_id", "mas_id", "cask", "path"} {
+	for _, key := range []string{"bundle_id", "mas_id", "cask", "path", "desktop_id", "package_id", "app_id"} {
 		parts = append(parts, app.Identifiers[key])
 	}
 	for _, value := range app.Provenance {
@@ -311,7 +311,7 @@ func RenderStructuredAppBlock(app StructuredApp) string {
 	builder.WriteString("\n")
 	if len(app.Identifiers) > 0 {
 		builder.WriteString("\n[manual.apps.identifiers]\n")
-		for _, key := range []string{"bundle_id", "mas_id", "cask", "path"} {
+		for _, key := range []string{"bundle_id", "mas_id", "cask", "path", "desktop_id", "package_id", "app_id"} {
 			if value := app.Identifiers[key]; value != "" {
 				builder.WriteString(key)
 				builder.WriteString(" = ")

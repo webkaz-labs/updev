@@ -355,6 +355,11 @@ func manualRowIdentityKeys(row toolRow) []string {
 	if masID := manualinventory.DetailValue(row.Detail, "mas_id"); masID != "" {
 		keys = append(keys, "mas:"+strings.ToLower(masID))
 	}
+	for _, idKey := range []string{"desktop_id", "package_id", "app_id"} {
+		if value := manualinventory.DetailValue(row.Detail, idKey); value != "" {
+			keys = append(keys, idKey+":"+strings.ToLower(value))
+		}
+	}
 	if path := manualinventory.DetailValue(row.Detail, "path"); path != "" {
 		for _, key := range manualAppPathKeys(path) {
 			if key != "" {
@@ -476,7 +481,9 @@ func manualScannedAppSections(root string) []toolSection {
 		if app.Source != "" {
 			details[0] = "source: " + app.Source
 		}
-		if app.BundleID != "" {
+		if app.IdentifierKey != "" && app.Identifier != "" {
+			details = append(details, app.IdentifierKey+": "+app.Identifier)
+		} else if app.BundleID != "" {
 			details = append(details, "bundle_id: "+app.BundleID)
 		}
 		if app.Version != "" {
@@ -518,6 +525,41 @@ func manualScannedAppOwnershipDetails(app manualScannedApp) []string {
 			"update_owner: mas",
 			"ownership_confidence: high",
 			"provider_metadata: mac app store receipt",
+		}
+	case "flatpak desktop entry", "flatpak metadata":
+		return []string{
+			"managed_by: flatpak",
+			"update_owner: flatpak",
+			"ownership_confidence: medium",
+			"provider_metadata: linux experimental flatpak evidence",
+		}
+	case "snap desktop entry", "snap package":
+		return []string{
+			"managed_by: snap",
+			"update_owner: snap",
+			"ownership_confidence: medium",
+			"provider_metadata: linux experimental snap evidence",
+		}
+	case "desktop entry":
+		return []string{
+			"managed_by: manual",
+			"update_owner: unknown",
+			"ownership_confidence: low",
+			"provider_metadata: linux experimental desktop entry",
+		}
+	case "appimage file":
+		return []string{
+			"managed_by: vendor",
+			"update_owner: vendor",
+			"ownership_confidence: low",
+			"provider_metadata: linux experimental AppImage evidence",
+		}
+	case "winget export":
+		return []string{
+			"managed_by: winget",
+			"update_owner: winget",
+			"ownership_confidence: low",
+			"provider_metadata: windows experimental winget export evidence",
 		}
 	default:
 		return []string{
@@ -1018,7 +1060,7 @@ func manualStructuredAppRow(app manualStructuredApp) toolRow {
 	if app.ReviewStatus != "" {
 		details = append(details, "review_status: "+app.ReviewStatus)
 	}
-	for _, key := range []string{"bundle_id", "mas_id", "cask", "path"} {
+	for _, key := range []string{"bundle_id", "mas_id", "cask", "path", "desktop_id", "package_id", "app_id"} {
 		if value := strings.TrimSpace(app.Identifiers[key]); value != "" {
 			details = append(details, key+": "+value)
 		}

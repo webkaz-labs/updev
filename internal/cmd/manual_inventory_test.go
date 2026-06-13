@@ -77,6 +77,44 @@ func TestManualInventoryScansApplicationBundles(t *testing.T) {
 	}
 }
 
+func TestManualInventoryScansLinuxPortableEvidence(t *testing.T) {
+	root := t.TempDir()
+	desktopPath := filepath.Join(root, "usr", "share", "applications", "org.example.Demo.desktop")
+	if err := os.MkdirAll(filepath.Dir(desktopPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(desktopPath, []byte("[Desktop Entry]\nName=Linux Demo\nX-Flatpak=org.example.Demo\nX-Version=1.2.3\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	report := buildListReport(inventoryResult{Report: plan.Report{Status: plan.StatusOK, Root: root}}, listOptions{root: root, provider: "manual", status: "installed", query: "Linux Demo"})
+	if len(report.Sections) != 1 || report.Sections[0].Name != "manual/installed-apps" {
+		t.Fatalf("expected installed app section, got %#v", report.Sections)
+	}
+	row := report.Sections[0].Rows[0]
+	for _, want := range []string{"source: flatpak desktop entry", "package_id: org.example.Demo", "version: 1.2.3", "managed_by: flatpak", "provider_metadata: linux experimental flatpak evidence"} {
+		if !strings.Contains(row.Detail, want) {
+			t.Fatalf("expected Linux scanned app detail to contain %q, got %q", want, row.Detail)
+		}
+	}
+}
+
+func TestManualInventoryScansWindowsWingetFixtureEvidence(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "winget-export.json"), []byte(`{"Sources":[{"Packages":[{"PackageIdentifier":"Microsoft.VisualStudioCode","Version":"1.100.0"}]}]}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	report := buildListReport(inventoryResult{Report: plan.Report{Status: plan.StatusOK, Root: root}}, listOptions{root: root, provider: "manual", status: "installed", query: "VisualStudioCode"})
+	if len(report.Sections) != 1 || report.Sections[0].Name != "manual/installed-apps" {
+		t.Fatalf("expected installed app section, got %#v", report.Sections)
+	}
+	row := report.Sections[0].Rows[0]
+	for _, want := range []string{"source: winget export", "package_id: Microsoft.VisualStudioCode", "managed_by: winget", "provider_metadata: windows experimental winget export evidence"} {
+		if !strings.Contains(row.Detail, want) {
+			t.Fatalf("expected Windows scanned app detail to contain %q, got %q", want, row.Detail)
+		}
+	}
+}
+
 func TestManualInventoryMarksMacAppStoreReceipts(t *testing.T) {
 	root := t.TempDir()
 	appPath := filepath.Join(root, "Applications", "StoreDemo.app")

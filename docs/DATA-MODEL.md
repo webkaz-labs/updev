@@ -242,6 +242,9 @@ evidence:
   optional `version`, `value`, `source`, `active`,
   `command_shape_supported`, `reason`, `remediation`, and JSON
   `required_fields` / `missing_fields`;
+- `compatibility_ledger` with generated time, root, and entries for each check:
+  `tool`, `feature`, `required`, `version`, `status`, `supported`, command
+  evidence, and remediation;
 - required Homebrew/mise contract drift changes the report status to `drift`;
 - missing optional scanners stay `unavailable` at the check level without
   failing the whole report.
@@ -389,10 +392,12 @@ should stay OS-neutral, but scanners are per platform:
 
 - macOS scanner evidence comes from `.app` bundles, bundle `Info.plist`, Mac App
   Store receipts / `mas list`, and Homebrew cask metadata.
-- Linux scanners should be added separately from `.desktop` files, Flatpak,
-  Snap, AppImage, and distro package metadata.
-- Windows scanners should be added separately from installed-app registry
-  entries, Start Menu shortcuts, MSIX/Appx metadata, winget, scoop, or choco.
+- Linux experimental scanner evidence comes from `.desktop` files, Flatpak
+  metadata, Snap directories, and AppImage files. Distro package metadata is
+  still future provider work.
+- Windows experimental scanner evidence currently comes from `winget export`
+  JSON fixtures. Installed-app registry entries, Start Menu shortcuts,
+  MSIX/Appx metadata, scoop, and choco remain future provider work.
 
 All platform scanners should normalize into the same identity/evidence/review
 shape:
