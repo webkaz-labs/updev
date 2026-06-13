@@ -20,7 +20,7 @@ Current largest non-`cmd` packages:
 
 | Package | Current Go files | Status |
 |---------|------------------|--------|
-| `internal/manualinventory` | 16 | ok |
+| `internal/manualinventory` | 20 | at ceiling |
 | `internal/brew` | 14 | ok |
 | `internal/mise` | 13 | ok |
 | `internal/reviewui` | 12 | ok |
@@ -209,8 +209,18 @@ Completed P1 foundation slices:
   `updev check --dependencies` and `updev doctor dependencies`; required
   Homebrew/mise contract drift is reported as `drift`, while optional scanner
   integrations can be unavailable without failing the report.
+- `updev doctor dependencies` includes a provider compatibility ledger in JSON
+  output and can write the ledger with `--ledger <file>`, so local/CI drift
+  evidence has a portable artifact without posting public issues by default.
+- Linux `.desktop` / Flatpak / Snap / AppImage scanner evidence and Windows
+  `winget export` fixture evidence live in `internal/manualinventory`, keeping
+  portable manual inventory source parsing and live scanner evidence under the
+  same owner.
+- `updev skill`, `updev skill --full`, and `updev help agent` embed canonical
+  root `docs/agent/` files through `main.go`; `cmd` only renders the injected
+  docs and keeps fallback text for tests.
 
-Current v0.6.4 guardrails:
+Current v0.6.5 guardrails:
 
 - Keep contract drift checks wired into local/CI validation while provider
   packages own their command contracts.
@@ -220,14 +230,14 @@ Current v0.6.4 guardrails:
   focused actions, grouped rows, and item-visible safety/update evidence should
   be tested or manually accepted before another UX refactor lands.
 
-Next extraction candidates for v0.6.4:
+Next extraction candidates after v0.6.5:
 
 | Area | Current pressure | Preferred destination | Done when |
 |------|------------------|-----------------------|-----------|
 | Update/security report assembly | `cmd` still owns much of the stitching between provider findings, update steps, and TTY routes. | Keep final report mutation in `cmd`, but move provider-neutral decision grouping or reason derivation into `securitygate`, `updatereason`, or `securityreason` when it can be tested without TUI imports. | JSON/report fields stay stable, localized text still renders at the boundary, and update dashboard tests keep passing. |
 | List/detail evidence badges | Inventory, manual, backend, and security views must keep consistent compact markers. | `textui` for badge rendering and width behavior; `plan` or provider packages for evidence classification. | A new badge or evidence class is not implemented separately in multiple command files. |
 | Routed TTY return behavior | `updev`, `last`, and `list` share route-stack expectations but still have command-specific adapters. | `reviewui` for state stack, action consumption, confirmation state, and focus/scroll restoration; `cmd` only maps routes to domain views. | Returning from child views restores the expected parent row/filter without clearing focused actions. |
-| Portable manual inventory sources | Manual/source parsing is mostly in `manualinventory`, but future Linux/Windows evidence can tempt command-local scanners. | `manualinventory` scanner/source registries with fixtures and explicit experimental labels. | No repository-local app prose or machine-local path assumption is required by default. |
+| Portable manual inventory sources | `manualinventory` is at its temporary ceiling after adding Linux/Windows fixture-backed scanners. | Split platform scanners into subpackages or a scanner registry package before adding distro package, registry, Start Menu, scoop, or choco evidence. | No repository-local app prose or machine-local path assumption is required by default, and package count stays within budget. |
 | Provider metadata resolvers | vfox/asdf-style backend evidence must scale beyond one tool. | Provider-owned data registries and bounded resolver contracts, especially under `mise`, `githubrepo`, and `registryaudit`. | Adding a known resolver path is data-backed and tested, not a tool-name branch in `cmd`. |
 
 Do not add new tool-name-only fixes, direct provider command calls, implicit

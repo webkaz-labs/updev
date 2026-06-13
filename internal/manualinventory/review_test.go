@@ -64,12 +64,13 @@ func TestReviewCandidateIdentityKeys(t *testing.T) {
 			Aliases: []string{"Alias.app"},
 		},
 		Evidence: []ReviewEvidence{{
-			BundleID: "com.example.child",
-			MASID:    "123",
-			Path:     "/Applications/Child.app",
+			BundleID:    "com.example.child",
+			MASID:       "123",
+			Path:        "/Applications/Child.app",
+			Identifiers: map[string]string{"package_id": "org.example.Child"},
 		}},
 	})
-	for _, want := range []string{"name:parentchild", "name:parent", "name:child", "name:aliasapp", "bundle:com.example.child", "mas:123"} {
+	for _, want := range []string{"name:parentchild", "name:parent", "name:child", "name:aliasapp", "bundle:com.example.child", "mas:123", "package_id:org.example.child"} {
 		if !containsString(keys, want) {
 			t.Fatalf("expected key %q in %#v", want, keys)
 		}

@@ -52,6 +52,12 @@ func EvidenceFromRow(row ReviewRow) ReviewEvidence {
 	if path == "" && masID != "" {
 		scanner = "mas_list"
 	}
+	identifiers := map[string]string{}
+	for _, key := range []string{"desktop_id", "package_id", "app_id"} {
+		if value := DetailValue(row.Detail, key); value != "" {
+			identifiers[key] = value
+		}
+	}
 	return ReviewEvidence{
 		Scanner:             scanner,
 		Source:              DetailValue(row.Detail, "source"),
@@ -66,6 +72,7 @@ func EvidenceFromRow(row ReviewRow) ReviewEvidence {
 		MASID:               masID,
 		BundleID:            DetailValue(row.Detail, "bundle_id"),
 		Version:             version,
+		Identifiers:         identifiers,
 	}
 }
 
@@ -137,6 +144,11 @@ func SuggestedAliases(row ReviewRow) []string {
 	}
 	if bundleID := DetailValue(row.Detail, "bundle_id"); bundleID != "" {
 		aliases = append(aliases, bundleID)
+	}
+	for _, key := range []string{"desktop_id", "package_id", "app_id"} {
+		if value := DetailValue(row.Detail, key); value != "" {
+			aliases = append(aliases, value)
+		}
 	}
 	return aliases
 }

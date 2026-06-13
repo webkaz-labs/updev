@@ -44,7 +44,7 @@ func TestBuildVersionReport(t *testing.T) {
 	if report.SchemaVersion != 1 || report.Tool != toolName || report.Version != toolVersion {
 		t.Fatalf("unexpected version report: %#v", report)
 	}
-	if report.Major != 0 || report.Minor != 6 || report.Patch != 4 || report.Contract != "pre_stable" {
+	if report.Major != 0 || report.Minor != 6 || report.Patch != 5 || report.Contract != "pre_stable" {
 		t.Fatalf("unexpected version semantics: %#v", report)
 	}
 }
@@ -79,6 +79,28 @@ func TestCommandAliases(t *testing.T) {
 	}
 }
 
+func TestAgentDocsRenderFromInjectedCanonicalDocs(t *testing.T) {
+	previousSkill := embeddedAgentSkillDoc
+	previousUsage := embeddedAgentUsageDoc
+	defer func() {
+		embeddedAgentSkillDoc = previousSkill
+		embeddedAgentUsageDoc = previousUsage
+	}()
+	SetAgentDocs("# Skill\n\nUse this.", "# Usage\n\nRead-only first.")
+	if got := renderAgentSkillDoc(false); !strings.Contains(got, "# Skill") || strings.Contains(got, "# Usage") {
+		t.Fatalf("expected short skill doc only, got %q", got)
+	}
+	if got := renderAgentSkillDoc(true); !strings.Contains(got, "# Skill") || !strings.Contains(got, "# Usage") || !strings.Contains(got, "---") {
+		t.Fatalf("expected full skill doc with usage, got %q", got)
+	}
+	if got := renderAgentUsageDoc(); !strings.Contains(got, "Read-only first.") {
+		t.Fatalf("expected usage doc, got %q", got)
+	}
+	if got := runAgentSkill([]string{"--unknown"}); got != usageExitCode {
+		t.Fatalf("expected usage exit for unknown skill option, got %d", got)
+	}
+}
+
 func TestUsageErrorsReturn64(t *testing.T) {
 	tests := []struct {
 		name string
@@ -89,6 +111,8 @@ func TestUsageErrorsReturn64(t *testing.T) {
 		{name: "list parse", run: func() int { return Run([]string{"list", "--limit", "-1"}) }},
 		{name: "unknown command", run: func() int { return Run([]string{"listt"}) }},
 		{name: "legacy usage", run: func() int { return Run([]string{"legacy"}) }},
+		{name: "skill parse", run: func() int { return runAgentSkill([]string{"--bad"}) }},
+		{name: "help agent parse", run: func() int { return runAgentHelp([]string{"--bad"}) }},
 		{name: "backends usage", run: func() int { return runBackends(nil) }},
 		{name: "backends parse", run: func() int { return runBackends([]string{"plan", "--format", "xml"}) }},
 		{name: "doctor usage", run: func() int { return runDoctor(nil) }},

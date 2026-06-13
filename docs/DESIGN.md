@@ -140,9 +140,10 @@ make every other surface reference or embed it:
 - `docs/agent/SKILL.md` is the installable skill artifact. It stays
   short and procedural, and points to `updev help`, `updev help agent`, and
   `docs/agent/USAGE.md` instead of duplicating full command reference.
-- Future `updev skill` should print the embedded `docs/agent/SKILL.md`;
-  `updev skill --full` should include the deeper usage guide. The CLI must
-  embed these files directly rather than carrying a second copy in Go strings.
+- `updev skill` prints the embedded `docs/agent/SKILL.md`; `updev skill
+  --full` includes the deeper usage guide, and `updev help agent` prints
+  `docs/agent/USAGE.md`. The CLI embeds these files directly from the canonical
+  docs tree rather than carrying a second copy in Go strings.
 - README should only advertise that agent guidance exists and show the minimal
   discovery commands. It should not duplicate the workflow recipes.
 - CLI flag and command details remain owned by live command help and
@@ -151,9 +152,8 @@ make every other surface reference or embed it:
 
 When command behavior, JSON shape, exit-code semantics, security-gate decisions,
 or mutation boundaries change, the release checklist must explicitly include
-the agent guidance tree. If a future generated check is added, it should verify
-that embedded skill output and repository files match so release artifacts do
-not drift from docs.
+the agent guidance tree. Release validation should verify that embedded skill
+output and repository files match so release artifacts do not drift from docs.
 
 ## Stable Release Readiness
 

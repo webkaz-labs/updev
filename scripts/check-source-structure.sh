@@ -47,7 +47,11 @@ else
       fail "$package has ${count} Go files; package budget is 20"
     fi
     if (( count >= 5 )); then
-      require_pattern "\| \`${package}\` \| ${count} \| ok \|"
+      status="ok"
+      if (( count == 20 )); then
+        status="at ceiling"
+      fi
+      require_pattern "\| \`${package}\` \| ${count} \| ${status} \|"
     fi
   done < <(find "$root/internal" -mindepth 1 -maxdepth 1 -type d | sort)
 

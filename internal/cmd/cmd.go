@@ -34,10 +34,13 @@ type options struct {
 const (
 	usageExitCode = 64
 	toolName      = "updev"
-	toolVersion   = "v0.6.4"
+	toolVersion   = "v0.6.5"
 )
 
 var filterSummaryKeys = []string{"provider", "kind", "category", "status", "query", "limit", "include_vscode"}
+
+var embeddedAgentSkillDoc = fallbackAgentSkillDoc
+var embeddedAgentUsageDoc = fallbackAgentUsageDoc
 
 type versionReport struct {
 	SchemaVersion int    `json:"schema_version"`
@@ -253,7 +256,12 @@ func Run(args []string) int {
 		return runLegacy(args)
 	case "version":
 		return runVersion(args)
+	case "skill":
+		return runAgentSkill(args)
 	case "help":
+		if len(args) > 0 && args[0] == "agent" {
+			return runAgentHelp(args[1:])
+		}
 		printUsage()
 		return 0
 	default:
@@ -328,6 +336,68 @@ func buildVersionReport() versionReport {
 		Contract:      contract,
 	}
 }
+
+func SetAgentDocs(skill string, usage string) {
+	skill = strings.TrimSpace(skill)
+	usage = strings.TrimSpace(usage)
+	if skill != "" {
+		embeddedAgentSkillDoc = skill
+	}
+	if usage != "" {
+		embeddedAgentUsageDoc = usage
+	}
+}
+
+func runAgentSkill(args []string) int {
+	full := false
+	for _, arg := range args {
+		switch arg {
+		case "--full":
+			full = true
+		case "--help", "-h":
+			fmt.Fprintln(os.Stdout, "usage: updev skill [--full]")
+			return 0
+		default:
+			fmt.Fprintf(os.Stderr, "unknown option: %s\n", arg)
+			fmt.Fprintln(os.Stderr, "usage: updev skill [--full]")
+			return usageExitCode
+		}
+	}
+	fmt.Fprintln(os.Stdout, renderAgentSkillDoc(full))
+	return 0
+}
+
+func runAgentHelp(args []string) int {
+	if len(args) > 0 {
+		fmt.Fprintf(os.Stderr, "unknown option: %s\n", args[0])
+		fmt.Fprintln(os.Stderr, "usage: updev help agent")
+		return usageExitCode
+	}
+	fmt.Fprintln(os.Stdout, renderAgentUsageDoc())
+	return 0
+}
+
+func renderAgentSkillDoc(full bool) string {
+	if !full {
+		return embeddedAgentSkillDoc
+	}
+	return embeddedAgentSkillDoc + "\n\n---\n\n" + embeddedAgentUsageDoc
+}
+
+func renderAgentUsageDoc() string {
+	return embeddedAgentUsageDoc
+}
+
+const fallbackAgentSkillDoc = `# updev
+
+Use updev to inspect and maintain developer-machine package/tool state,
+inventory, and security review queues. Run "updev help agent" for the detailed
+agent workflow guide.`
+
+const fallbackAgentUsageDoc = `# updev agent usage
+
+Start with read-only commands, use --format json for machine decisions, and do
+not run mutation commands unless the user explicitly asks.`
 
 func parseToolVersion(version string) (int, int, int) {
 	version = strings.TrimPrefix(strings.TrimSpace(version), "v")
@@ -626,7 +696,7 @@ Commands:
   updev rollback [--token token] [--format text|json]
   updev fix mise [--dry-run|--apply] [--format text|json]
   updev backends <doctor|plan> [--format text|json]
-  updev doctor dependencies [--format text|json]
+  updev doctor dependencies [--ledger file] [--format text|json]
   updev last [--section summary|updates|security|inventory|logs|full] [--details] [--interactive|--no-interactive|--plain] [--format text|json]
   updev hub [inventory/list options]  # full menu selector for list views
   updev inventory [--refresh] [--include-vscode] [--provider name] [--kind kind] [--status status] [--query text] [--limit n] [--details] [--interactive|--no-interactive|--plain] [--format text|json]
@@ -649,6 +719,8 @@ Commands:
   updev plan [--refresh] [--include-vscode] [--format text|json]
   updev version [--format text|json]
   updev --version | -v
+  updev skill [--full]
+  updev help agent
   updev brewfile [--root path] <add|remove|has|check|sync> ...
 
 Notes:
@@ -656,6 +728,7 @@ Notes:
   Use --plain for stable human-readable logs and --format json for machine-readable output.
   Global options: --config file, --no-color, --lang en|ja.
   Configuration is optional; defaults are used when no updev.toml exists.
+  Agent guidance is available from updev skill and updev help agent.
   Exit codes: 0 ok, 1 error, 2 drift.
 
 Unknown commands fail fast and show this help.`)
