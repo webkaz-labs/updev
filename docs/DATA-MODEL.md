@@ -243,11 +243,26 @@ evidence:
   `command_shape_supported`, `reason`, `remediation`, and JSON
   `required_fields` / `missing_fields`;
 - `compatibility_ledger` with generated time, root, and entries for each check:
-  `tool`, `feature`, `required`, `version`, `status`, `supported`, command
-  evidence, and remediation;
+  `tool`, `feature`, `required`, `version`, `status`, `supported`,
+  `support_label`, command evidence, and remediation;
 - required Homebrew/mise contract drift changes the report status to `drift`;
 - missing optional scanners stay `unavailable` at the check level without
   failing the whole report.
+
+`supportReport` is the read-only catalog returned by `updev support` and
+`updev doctor support`. It has `schema_version`, `status`, `tool`, `version`,
+`summary`, and `entries[]`. Each entry records:
+
+- `surface`: `provider`, `command`, `report`, or `inventory_source`;
+- `name`;
+- `label`: `supported_preview`, `experimental`, `compatibility`, or
+  `deferred`;
+- `summary`;
+- optional `scope`, `evidence`, `limitations`, and `next`.
+
+The support catalog is release-owned static metadata. It is not user policy and
+does not change runtime decisions by itself; it makes public preview boundaries
+visible to humans, agents, and CI.
 
 `backendPlanReport` findings include read-only migration evidence. In addition
 to current and target provider names, findings record whether a row is a direct

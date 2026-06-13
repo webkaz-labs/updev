@@ -11,16 +11,15 @@ stays an integer schema contract. `v0.x` releases are public preview releases;
 
 ## Current Release
 
-The current implemented release is `updev v0.6.5`. `updev version`,
+The current implemented release is `updev v0.7.0`. `updev version`,
 `updev --version`, and `updev -v` report this command contract.
 
-`updev v0.6.5` is the full-scope `v0.6.x` consolidation release for the
-macOS/Homebrew/mise public preview path. It keeps the `v0.6.0` provider-gate
-contract, the `v0.6.2` scalability/export cleanup, the `v0.6.3`
-provider-boundary maintenance slice, and the `v0.6.4` shared text UI badge
-ownership, then adds the remaining `v0.6` groundwork for embedded agent
-guidance, provider compatibility ledgers, and experimental portable inventory
-evidence.
+`updev v0.7.0` is a public-preview hardening release. It keeps the supported
+macOS/Homebrew/mise preview path from `v0.6.x`, adds machine-readable support
+labels for providers, commands, report families, and inventory sources, and
+uses those labels to clarify which surfaces are supported preview,
+experimental, compatibility-only, or deferred before any `v1.0.0` contract is
+considered.
 
 Current support promise:
 
@@ -36,6 +35,8 @@ Current support promise:
 
 Released patch notes:
 
+- [v0.7.0](release-notes/v0.7.0.md): public-preview hardening with support
+  labels and compatibility-ledger support labels.
 - [v0.6.5](release-notes/v0.6.5.md): full-scope v0.6.x consolidation release.
 - [v0.6.4](release-notes/v0.6.4.md): text UI badge-boundary maintenance patch.
 - [v0.6.3](release-notes/v0.6.3.md): provider-boundary maintenance patch.
@@ -44,175 +45,174 @@ Released patch notes:
 - [v0.6.0](release-notes/v0.6.0.md): first updev-owned Homebrew/mise provider
   gate release.
 
-## Current v0.6.5 Scope
+## v0.6.5 Baseline
 
-`v0.6.5` includes the full remaining `v0.6` scope before the project narrows
-toward `v1.0.0`. The stable preview runtime contract remains
-macOS/Homebrew/mise-first.
+`v0.6.5` shipped the broad preview foundations: candidate-scoped Homebrew/mise
+gates, grouped TTY dashboards and detail browsers, manual/vendor app inventory
+review, backend convergence suggestions, policy override review flows, embedded
+agent guidance, provider compatibility ledgers, and experimental portable
+inventory evidence. Tag-specific detail stays in
+[v0.6.5 release notes](release-notes/v0.6.5.md).
 
-### Scope
+## Current v0.7.0 Scope
 
-1. **Provider-boundary cleanup P2**
+`v0.7.0` turns the broad `v0.6.x` foundations into a sharper public preview by
+dogfooding the real flows, labeling support levels, and closing visible
+correctness and UX gaps before any stable-contract work begins.
+
+### What v0.6.5 Already Proved
+
+- macOS/Homebrew/mise is a usable supported preview path with updev-owned
+  update gates, candidate-scoped allow/hold/review decisions, and visible
+  brew/mise logs outside the alternate-screen TUI.
+- The grouped TTY surfaces for `updev`, `updev last`, and `updev list` are the
+  right primary human workflow: high-information summaries, drill-down details,
+  action badges, Back/Home restoration, and cached-report parity.
+- Manual/vendor app inventory, backend convergence suggestions, and policy
+  override review flows are implemented enough to dogfood, but still need
+  stricter public labels and fewer environment-specific assumptions.
+- Agent guidance, optional agent/manual enrichment boundaries, docs drift
+  checks, release notes, public export, and binary releases are now part of the
+  release discipline.
+- Linux and Windows evidence is fixture-backed and experimental. It is useful
+  groundwork, not a support promise.
+
+### v0.7.0 Policy Decisions
+
+These decisions are fixed for the `v0.7.0` release unless a later dogfood
+finding proves them wrong:
+
+- **Release shape**: `v0.7.0` is public-preview hardening, not a broad feature
+  expansion and not a stable `v1.0.0` contract.
+- **Support labels**: macOS/Homebrew/mise and the core update workflow are
+  supported preview; Linux scanners, Windows `winget export` evidence, and
+  agent/manual enrichment remain experimental; `brewfile` low-level commands
+  remain compatibility surfaces; external/vendor installer execution, dynamic
+  provider plugins, and stable Linux/Windows update providers remain deferred.
+- **Linux/Windows**: Linux can advance through fixture plus container/VM dogfood
+  but does not become supported preview in `v0.7.0`. Windows stays fixture/spike
+  unless a real runner or machine validates the assumptions.
+- **Agent enrichment**: agent/manual enrichment stays default-off. It may be
+  callable from manual-app TUI flows, but output must remain schema-validated,
+  draft-only, and explicitly user-reviewed before it affects desired state.
+- **Provider strictness**: reduce avoidable review noise, but do not allow weak
+  evidence. Item-scoped allow/hold/review is mandatory where the provider can
+  apply candidates individually.
+- **UX scope**: focus on `updev`, `updev list`, `updev last`, manual inventory,
+  backend convergence, security details, policy review, and doctor/dependency
+  diagnostics. Do not replace the TUI architecture wholesale.
+- **Architecture scope**: continue thinning `internal/cmd` and splitting
+  packages at file-count pressure points, but avoid abstraction-only rewrites
+  that do not directly support the release criteria.
+- **v1 timing**: do not freeze CLI/config/JSON as stable in `v0.7.0`; instead
+  document which surfaces look freeze-ready and which remain experimental.
+
+### v0.7.0 Scope
+
+1. **Support-level labeling**
+   - Label every provider, command group, report field family, and inventory
+     source as supported preview, experimental, compatibility, or deferred.
+   - Surface those labels in docs and, where useful, in CLI/TUI diagnostics.
+   - Keep `v1.0.0` language out of user-facing promises until the labels have
+     been dogfooded.
+
+2. **Daily workflow hardening**
+   - Dogfood `updev`, `updev list`, `updev last`, `inventory`, `security`,
+     `doctor dependencies`, `policy`, and `skill/help agent` as the public
+     preview workflow.
+   - Fix navigation, focus restoration, route filtering, badge accuracy,
+     Japanese text, and summary/detail consistency regressions found during
+     real TTY use.
+   - Preserve provider log streaming: provider commands may run before or after
+     TUI review, but brew/mise logs must not disappear behind an alternate
+     screen.
+
+3. **Provider evidence correctness**
+   - Reduce noisy `review` decisions where updev can reliably prove release-age,
+     advisory, ownership, and backend metadata.
+   - Keep unresolved or opaque evidence visible with actionable reason codes
+     instead of broad provider-wide blocks.
+   - Continue item-scoped safety: one held cask/tool must not block unrelated
+     safe candidates when the provider supports scoped application.
+
+4. **Portable inventory dogfood**
+   - Run Linux read-only inventory scanners against at least fixture and
+     container/VM evidence before promoting any Linux path beyond experimental.
+   - Keep Windows at fixture/spike level unless a real runner or machine proves
+     the assumptions.
+   - Remove or gate any machine-local prose, hardcoded app knowledge, or
+     repository-specific default that would make the public tool behave like one
+     person's Mac.
+
+5. **Policy and compatibility ergonomics**
+   - Make policy add/edit/list, shadowed-rule diagnostics, and compatibility
+     ledger output easier to interpret from both human CLI/TUI flows and agent
+     JSON flows.
+   - Keep public issue creation opt-in. Local/CI drift detection can produce
+     artifacts, but it must not post without explicit repository and credential
+     policy.
+
+6. **Architecture cleanup for maintainability**
    - Continue shrinking `internal/cmd` only where the target package can own the
-     full domain behavior without importing TUI/report types.
-   - Prefer provider packages for provider command contracts, parsing, safety
-     evidence, and metadata resolvers.
-   - Keep command handlers focused on CLI parsing, report mutation, rendering,
-     and route/action wiring.
+     behavior without importing command/TUI report types.
+   - Split packages that hit their file-count ceiling before adding broad new
+     provider surfaces.
+   - Prefer shared text/rendering and reason-code helpers over one-off prose in
+     command handlers.
 
-2. **Security/update evidence model hardening**
-   - Keep the common gate model, update-safety cache, and report vocabulary in
-     `internal/securitygate` and stable reason-code packages.
-   - Do not add provider-specific ad hoc prose or one-off tool branches in
-     command code.
-   - Preserve candidate-scoped strict updates: safe candidates can proceed while
-     held/review candidates remain item-visible.
+7. **Public docs and release discipline**
+   - Keep README focused on the public problem/strengths/install/workflow, not
+     dotfiles-specific history.
+   - Keep `RELEASE.md` current-state focused and move tag details to
+     `docs/release-notes/<tag>.md`.
+   - Keep docs-check coverage for embedded agent docs, release notes, source
+     structure, and public export assumptions.
 
-3. **TTY/report UX regression guardrails**
-   - Preserve the accepted `updev`, `updev last`, and `updev list` navigation
-     contract: dashboard rows route to filtered details, Back/Home restore the
-     previous view, and focused actions stay stable.
-   - Keep grouped high-information lists for inventory/manual/backend/security
-     views, with compact badges and expanded evidence/actions.
-   - Avoid TUI-only behavior that cannot be reached from cached report data.
+### v0.7.0 Non-Goals
 
-4. **Portable inventory groundwork**
-   - Includes read-only Linux/manual inventory fixtures and scanner groundwork
-     only where it is data-backed and clearly labeled experimental.
-   - Keep repository-local or machine-local assumptions behind explicit config,
-     fixture, or compatibility flags.
-   - Do not claim Linux/Windows provider support as stable in this release.
-
-5. **Agent/manual enrichment safety**
-   - Keep optional agent-assisted manual inventory enrichment as structured
-     draft metadata only.
-   - Batch enrichment may be supported, but agent output must be
-     schema-validated, reviewable from CLI/TUI, and safe when Codex or another
-     configured agent is unavailable.
-   - Avoid scattering generated guidance: canonical agent-facing docs are
-     embedded by README/help/skill surfaces instead of duplicated in command
-     reference prose.
-
-6. **Docs and public export hygiene**
-   - Keep `RELEASE.md` current-state focused. Older release detail belongs in
-     `docs/release-notes/<tag>.md` and git log.
-   - Keep public export docs free of dotfiles-only assumptions.
-   - Extend drift checks only where they protect real maintenance risks:
-     release-note presence, README links, command/help snapshots, validation
-     parity, and generated/embedded docs matching canonical sources.
-
-7. **Provider-general inventory and cross-platform evidence**
-   - Includes provider-general inventory foundations after the mise/Homebrew gate
-     contract is stable: cross-platform fixtures, Linux read-only scanners, and
-     provider promotion suggestions.
-   - Start Linux with data-backed read-only evidence for package/tool/app
-     sources such as apt/dpkg, Flatpak, Snap, AppImage, and desktop entries.
-   - Keep Windows at fixture/spike level unless a real runner or machine is
-     available; do not make Windows support a release promise.
-
-8. **Provider evidence, release-age, and advisory coverage**
-   - Broaden Homebrew and mise release-age/advisory confidence beyond GitHub and
-     first registry paths.
-   - Broaden Homebrew release-age and advisory confidence beyond GitHub
-     release/tag/ref URL paths.
-   - Uses provider-native audit paths only where package identity is reliable.
-
-9. **Scanner and native-audit hardening**
-   - Continue scanner hardening after OSV-Scanner, gitleaks, zizmor, Trivy, and
-     Grype.
-   - Keep Syft and Prowler explicit future commands until their runtime cost,
-     provider mapping, and false-positive handling are proven.
-   - Keep scanner output mapped to the same security decision vocabulary used
-     by provider gates.
-
-10. **Provider contract drift and compatibility tracking**
-    - Provides local/CI detection for provider command/API contract drift.
-    - Maintains a provider-version compatibility ledger that can record supported
-      versions, failing versions, evidence dates, and remediation notes.
-    - Public issue creation is opt-in only and requires documented repository
-      ownership, credentials, and posting policy.
-
-11. **Common pending-update gates for future providers**
-    - Apply the updev-owned gate model to VS Code and future providers as their
-      update flows move into Go.
-    - Keep provider-native safety settings as evidence, not as the only source
-      of user-visible decisions.
-    - Preserve item-scoped allow/hold/review behavior so one risky candidate
-      does not unnecessarily block unrelated safe candidates.
-
-12. **Policy ergonomics**
-    - Provides guided add/edit/list helpers for policy rules and overrides.
-    - Shows diagnostic indexes and shadowed-rule references where policy
-      decisions are ambiguous.
-    - Keep policy changes reviewable from both CLI and TUI flows.
-
-13. **v1 readiness narrowing**
-    - At the end of this release, mark which provider surfaces are stable,
-      preview, experimental, or explicitly deferred.
-    - Update release notes, public docs, and the v1 readiness checklist so the
-      next phase can narrow the stable contract instead of carrying all
-      experimental surfaces forward by implication.
-
-### Non-Goals
-
-- automatic external/vendor installer execution;
-- stable broad Linux/Windows provider support;
-- a stable `v1.0.0` contract;
+- stable `v1.0.0` command/config/JSON promises;
+- stable broad Linux or Windows provider support;
+- default execution of agent/manual enrichment;
 - dynamic provider plugins;
-- default agent execution for manual inventory enrichment;
-- unscoped provider-wide writes when item-scoped evidence is required.
+- external/vendor installer execution by default;
+- provider-wide writes when item-scoped evidence is required;
+- moving the canonical source out of this dotfiles repository.
 
-### v0.6.5 Release Criteria
+### v0.7.0 Release Criteria
 
-- [x] The release note exists under `docs/release-notes/` and represents the
-  full remaining `v0.6` consolidation scope, not a narrow cleanup-only patch.
-- [x] `updev version`, `docs/CLI.md`, README install/help text, and public
-  export metadata agree on `updev v0.6.5`.
-- [x] Provider-boundary cleanup keeps command handlers focused on CLI parsing,
-  report mutation, rendering, and route/action wiring.
-- [x] TTY/report regression coverage protects `updev`, `updev last`, and
-  `updev list` dashboard/list/detail navigation, filtered drill-down, focus
-  restoration, and stable focused actions.
-- [x] Provider-general inventory groundwork has data-backed fixtures or scanners
-  for the included non-macOS surfaces and labels them experimental.
-- [x] Homebrew/mise release-age and advisory evidence is broader than the
-  current GitHub-first paths, or any remaining provider gaps are explicitly
-  represented as review decisions with actionable reason codes.
-- [x] Scanner/native-audit results map into the shared security decision
-  vocabulary and do not introduce separate ad hoc report prose.
-- [x] Provider contract drift checks and compatibility ledger updates are
-  documented and runnable locally/CI without public posting by default.
-- [x] VS Code/future-provider pending-update gate design is reflected in docs
-  and any implemented paths use item-scoped decisions.
-- [x] Policy rule/override UX is reviewable from CLI and TUI and includes
-  diagnostics for shadowed or ambiguous rules.
-- [x] Agent/manual enrichment remains optional, schema-validated, and safe when
-  no agent command is installed.
+- [x] `RELEASE.md`, `ROADMAP.md`, README, and public export docs describe
+  `v0.7.0` as preview hardening, not v1 readiness.
+- [x] Every provider and major command surface has an explicit support label:
+  supported preview, experimental, compatibility, or deferred.
+- [x] Real TTY dogfood covers `updev`, `updev list`, `updev last`, manual
+  inventory, backend convergence, security details, policy review, and doctor
+  dependencies.
+- [x] TTY/navigation fixes are backed by package tests or stable e2e/fixture
+  checks where practical.
+- [x] Provider evidence review noise is reduced where reliable metadata is
+  available; remaining opaque paths produce actionable reason codes.
+- [x] Candidate-scoped allow/hold/review remains verified for Homebrew and mise
+  bump flows.
+- [x] Linux inventory remains experimental unless fixture plus container/VM
+  dogfood proves the scanner assumptions.
+- [x] Windows inventory remains fixture/spike unless real runner or real-machine
+  validation is available.
+- [x] Machine-local app prose and repository-specific public defaults are either
+  removed, gated, or marked local-only.
+- [x] Policy UX and compatibility ledger output are documented and readable from
+  CLI/TUI/JSON flows.
 - [x] Canonical validation passes before export: `mise run check`,
   `mise run docs-check`, `git diff --check`, and `chezmoi apply --dry-run`.
 - [x] Public export to `webkaz-labs/updev` passes `scripts/check-docs.sh`,
-  `go test ./...`, `go vet ./...`, and `go mod verify` before tagging.
-
-## Next Release: v1 Readiness Narrowing
-
-The next release after `v0.6.5` should stop expanding preview breadth by
-default and instead narrow the public contract:
-
-1. label every provider surface as stable, preview, experimental, or deferred;
-2. decide which Linux/Windows fixture-backed paths remain experimental and which
-   need real-machine dogfood before further promotion;
-3. freeze or rename any command/config/report fields that should become stable
-   in `v1.0.0`;
-4. keep macOS/Homebrew/mise as the supported preview path unless release
-   evidence proves another provider path is ready.
+  `go test ./...`, `go vet ./...`, `go mod verify`, and `go build ./...`.
 
 ## Later Ordering
 
-Longer-term priorities live in [ROADMAP.md](ROADMAP.md). After `v0.6.5`, later
+Longer-term priorities live in [ROADMAP.md](ROADMAP.md). After `v0.7.0`, later
 work should focus on narrowing and hardening:
 
-1. Decide the stable `v1.0.0` macOS/Homebrew/mise contract and explicitly label
-   every other provider surface as preview, experimental, or deferred.
+1. Decide the stable `v1.0.0` macOS/Homebrew/mise contract only after `v0.7`
+   dogfood proves which preview surfaces are stable enough to freeze.
 2. Promote Linux providers only after fixture coverage and real
    container/VM/machine dogfood prove the read-only scanner and update-gate
    contracts.
