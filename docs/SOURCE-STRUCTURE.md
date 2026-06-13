@@ -1,9 +1,9 @@
 # updev source structure
 
 This document tracks package-size budgets, current source counts, and the
-refactor ledger for `tools/updev/internal/`. Architecture boundaries live in
-[ARCHITECTURE.md](ARCHITECTURE.md); this file is the operational checklist used
-to keep package folders searchable as updev grows.
+refactor ledger for this module's `internal/` packages. Architecture boundaries
+live in [ARCHITECTURE.md](ARCHITECTURE.md); this file is the operational
+checklist used to keep package folders searchable as updev grows.
 
 ## Folder Budgets
 
@@ -31,6 +31,7 @@ Current largest non-`cmd` packages:
 | `internal/nativeaudit` | 6 | ok |
 | `internal/securityadvisory` | 6 | ok |
 | `internal/backend` | 5 | ok |
+| `internal/textui` | 4 | ok |
 
 ## Placement Rules
 
@@ -152,6 +153,10 @@ Completed P1 foundation slices:
 - Shared text display helpers such as compact age formatting and ordered filter
   summaries live in `internal/textui`; command code should not keep duplicate
   display utilities.
+- Action badge rendering, stable badge priority, status-aware badge coloring,
+  width truncation, and Nerd Font marker detection live in `internal/textui`;
+  `reviewui` adapts row actions into badge inputs but does not own badge
+  presentation rules.
 - Shared action-summary browser behavior for selectable dashboard/summary rows
   lives in `internal/reviewui`; cmd code owns only update-specific line
   construction and route encoding.
@@ -205,12 +210,25 @@ Completed P1 foundation slices:
   Homebrew/mise contract drift is reported as `drift`, while optional scanner
   integrations can be unavailable without failing the report.
 
-Current P1 guardrails:
+Current v0.6.4 guardrails:
 
 - Keep contract drift checks wired into local/CI validation while provider
   packages own their command contracts.
 - Continue shrinking command-local adapters only when the target package can
   own the full domain behavior without importing TUI/report types.
+- Treat TTY/report regression behavior as part of the contract: route state,
+  focused actions, grouped rows, and item-visible safety/update evidence should
+  be tested or manually accepted before another UX refactor lands.
+
+Next extraction candidates for v0.6.4:
+
+| Area | Current pressure | Preferred destination | Done when |
+|------|------------------|-----------------------|-----------|
+| Update/security report assembly | `cmd` still owns much of the stitching between provider findings, update steps, and TTY routes. | Keep final report mutation in `cmd`, but move provider-neutral decision grouping or reason derivation into `securitygate`, `updatereason`, or `securityreason` when it can be tested without TUI imports. | JSON/report fields stay stable, localized text still renders at the boundary, and update dashboard tests keep passing. |
+| List/detail evidence badges | Inventory, manual, backend, and security views must keep consistent compact markers. | `textui` for badge rendering and width behavior; `plan` or provider packages for evidence classification. | A new badge or evidence class is not implemented separately in multiple command files. |
+| Routed TTY return behavior | `updev`, `last`, and `list` share route-stack expectations but still have command-specific adapters. | `reviewui` for state stack, action consumption, confirmation state, and focus/scroll restoration; `cmd` only maps routes to domain views. | Returning from child views restores the expected parent row/filter without clearing focused actions. |
+| Portable manual inventory sources | Manual/source parsing is mostly in `manualinventory`, but future Linux/Windows evidence can tempt command-local scanners. | `manualinventory` scanner/source registries with fixtures and explicit experimental labels. | No repository-local app prose or machine-local path assumption is required by default. |
+| Provider metadata resolvers | vfox/asdf-style backend evidence must scale beyond one tool. | Provider-owned data registries and bounded resolver contracts, especially under `mise`, `githubrepo`, and `registryaudit`. | Adding a known resolver path is data-backed and tested, not a tool-name branch in `cmd`. |
 
 Do not add new tool-name-only fixes, direct provider command calls, implicit
 repository-local defaults, or TUI-only behavior that is missing from the report
