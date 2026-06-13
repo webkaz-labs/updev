@@ -34,7 +34,7 @@ type options struct {
 const (
 	usageExitCode = 64
 	toolName      = "updev"
-	toolVersion   = "v0.7.0"
+	toolVersion   = "v0.7.1"
 )
 
 var filterSummaryKeys = []string{"provider", "kind", "category", "status", "query", "limit", "include_vscode"}
