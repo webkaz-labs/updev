@@ -117,6 +117,9 @@ func TestWriteDependencyCompatibilityLedger(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if !strings.Contains(string(data), `"support_label"`) {
+		t.Fatalf("expected support_label to be part of the JSON contract, got %s", data)
+	}
 	var got dependencyCompatibilityLedger
 	if err := json.Unmarshal(data, &got); err != nil {
 		t.Fatal(err)
