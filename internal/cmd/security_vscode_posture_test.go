@@ -14,6 +14,7 @@ import (
 	"github.com/webkaz-labs/updev/internal/plan"
 	"github.com/webkaz-labs/updev/internal/runner"
 	"github.com/webkaz-labs/updev/internal/securityreason"
+	"github.com/webkaz-labs/updev/internal/vscode"
 )
 
 func TestVSCodePosturesFromItemsReportsMarketplaceRisks(t *testing.T) {
@@ -448,7 +449,7 @@ func TestBuildSecurityGateReportAllExcludesVSCodeByDefault(t *testing.T) {
 }
 
 func TestVSCodeInstalledVersionsErrorUsesExitStatus(t *testing.T) {
-	got := vscodeInstalledVersionsError(runner.Result{Code: 127})
+	got := vscode.InstalledVersionsError(runner.Result{Code: 127})
 	if got != "code exited with status 127" {
 		t.Fatalf("expected exit status detail, got %q", got)
 	}

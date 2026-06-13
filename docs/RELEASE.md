@@ -10,14 +10,18 @@ stays an integer schema contract. `v0.x` releases are public preview releases;
 
 ## Current Release
 
-The current implemented release is `updev v0.6.2`. `updev version`,
+The current implemented release is `updev v0.6.3`. `updev version`,
 `updev --version`, and `updev -v` report this command contract.
 
-`updev v0.6.2` is the follow-up patch on the `v0.6.0`/`v0.6.1`
-provider-gate line. The public `v0.6.1` tag remains the initial patch release;
-`v0.6.2` keeps the same macOS/Homebrew/mise scope, then finishes the first
-architecture cleanup slice and closes the release/export gaps found after that
-tag.
+`updev v0.6.3` is a small architecture-maintenance patch before the next
+provider expansion. It keeps the `v0.6.2` macOS/Homebrew/mise public preview
+contract unchanged, then makes command handlers thinner by moving more
+provider-owned command and evidence boundaries into their owner packages.
+
+`updev v0.6.2` was the follow-up patch on the `v0.6.0`/`v0.6.1`
+provider-gate line. It kept the same macOS/Homebrew/mise scope, finished the
+first architecture cleanup slice, and closed the release/export gaps found
+after the `v0.6.1` tag.
 
 `updev v0.6.0` completed the first updev-owned provider gate model for the
 macOS/Homebrew/mise preview. It keeps the accepted routed TTY UX from
@@ -30,6 +34,25 @@ brew/mise logs stay visible. Post-provider review domains may refresh inside the
 dashboard only when canceled or partial results cannot be mistaken for completed
 cached reports. Keep detailed implementation history in git log and tag-specific
 notes in [release-notes](release-notes/).
+
+### v0.6.3 Patch Scope
+
+- Keep the `v0.6.2` macOS/Homebrew/mise public preview contract unchanged.
+- Move Homebrew and mise update command argv builders into their provider
+  packages. `cmd` keeps findings-to-target selection, report mutation, and TTY
+  routing, but does not rebuild provider command chains inline.
+- Move Homebrew trust command argv builders, including local-metadata
+  `brew trust --json=v1`, into `internal/brew`.
+- Move VS Code installed-extension command, parsing, and error normalization
+  into `internal/vscode`.
+- Move manual inventory live cask and MAS provider probes into
+  `internal/manualinventory`; `cmd` only turns scanned app records into report
+  rows and actions.
+- Keep `SOURCE-STRUCTURE.md` as the refactor ledger and guardrail for package
+  counts, direct subprocess exceptions, and command-boundary ownership.
+- Keep `ROADMAP.md` and `docs/tooling-roadmap.md` current-state focused:
+  implementation history belongs in git log, and future work belongs in this
+  release plan or the long-term roadmap.
 
 ### v0.6.2 Patch Scope
 
@@ -241,6 +264,23 @@ tagging or mirroring the release.
 - [x] `mise -C tools/updev run check`, `mise -C tools/updev run docs-check`,
   `git diff --check`, and `chezmoi apply --dry-run` pass before release.
 
+### v0.6.3 Release Criteria
+
+- [x] `main` includes the command-boundary cleanup commits:
+  Homebrew/mise update command builders, Homebrew trust commands, VS Code
+  installed evidence, and manual provider scans.
+- [x] `tools/updev/docs/RELEASE.md` lists `v0.6.3` as the current release before
+  tagging, and `tools/updev/docs/release-notes/v0.6.3.md` exists.
+- [x] `tools/updev/docs/CLI.md` current-version text matches `updev v0.6.3`.
+- [x] `updev version`, `updev --version`, and `updev -v` report
+  `updev v0.6.3`.
+- [x] `mise -C tools/updev run check`, `mise -C tools/updev run docs-check`,
+  `git diff --check`, and `chezmoi apply --dry-run` pass on `main`.
+- [ ] Public export to `webkaz-labs/updev` passes `scripts/check-docs.sh`,
+  `go test ./...`, `go vet ./...`, and `go mod verify`.
+- [x] Release notes describe this as a provider-boundary maintenance patch, not
+  a new provider-support release.
+
 ### v0.6.2 Release Criteria
 
 - [x] `updev version`, `updev --version`, and `updev -v` report `updev v0.6.2`.
@@ -271,15 +311,9 @@ tagging or mirroring the release.
 
 ## Next Patch: v0.6.x
 
-The next patch line should stay incremental and should not broaden the stable
-preview support promise without explicit dogfood. After the `v0.6.2` P1
-foundation, preserve the new backend/path/securitygate boundaries, continue
-shrinking command handlers, and choose one narrow provider/inventory/agent
-surface at a time:
+The next feature patch should choose one narrow provider/inventory/agent surface
+at a time:
 
-- keep the backend recommendation engine in `internal/backend` and continue
-  shrinking command handlers so provider evidence, preference policy, action
-  planning, and rendering evolve without command-local branches;
 - keep curated backend rewrite seeds in registry entries with source evidence
   surfaced in JSON/detail views, then move broader ecosystems toward
   provider-metadata resolvers. New tool-specific mappings should not be added
@@ -288,9 +322,6 @@ surface at a time:
   list`, `updev last`, installed inventory detail, manual inventory detail, and
   backend review should continue to show compact badges, expanded evidence,
   item-scoped actions, and correct Back/Home return paths;
-- keep direct subprocess usage checked by `scripts/check-direct-subprocesses.sh`
-  against [ARCHITECTURE.md](ARCHITECTURE.md), and continue routing
-  non-exception provider/action commands through `internal/runner`;
 - keep the common security gate report model and update-safety cache store in
   `internal/securitygate` so provider-specific gate engines can move out of
   `cmd` without changing JSON/cache contracts;
@@ -322,7 +353,7 @@ surface at a time:
 
 Longer-term priorities live in [ROADMAP.md](ROADMAP.md). The short version:
 
-1. Continue provider-general inventory after the `v0.6.2` P1 cleanup with
+1. Continue provider-general inventory after the `v0.6.3` boundary cleanup with
    deeper read-only Linux/Windows scanners.
 2. Broaden Homebrew and mise release-age/advisory confidence beyond GitHub and
    first registry paths.
