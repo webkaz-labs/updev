@@ -31,7 +31,7 @@ history in git log, and keep the current/next release target in
 - Documentation source-of-truth guidance, canonical `docs/agent/` usage/skill
   files, tag-specific release notes, and focused `docs-check` drift coverage are
   implemented.
-- `updev v0.7.0` is the current preview contract: it keeps the `v0.6.x`
+- `updev v0.7.1` is the current preview contract: it keeps the `v0.6.x`
   Homebrew/mise provider gate, scalability, text UI, agent guidance,
   compatibility ledger, and portable inventory groundwork, then adds explicit
   support-level labels through `updev support` / `updev doctor support` and
@@ -41,7 +41,7 @@ history in git log, and keep the current/next release target in
 
 ## Near-Term Order
 
-1. Dogfood `updev v0.7.0` on the macOS/Homebrew/mise preview path. The current
+1. Dogfood `updev v0.7.1` on the macOS/Homebrew/mise preview path. The current
    policy is fixed: keep macOS/Homebrew/mise as supported preview, Linux/Windows
    and agent enrichment experimental, `brewfile` compatibility oriented, and
    external installer execution / dynamic plugins / stable Linux-Windows update
@@ -85,7 +85,7 @@ history in git log, and keep the current/next release target in
 13. Keep Go CLI standard checks as part of future release reviews; direct
    subprocess exceptions, JSON encoding, and verbosity policy are documented for
    the current tool surface.
-14. Keep release notes and public docs focused on `v0.7.0` preview hardening.
+14. Keep release notes and public docs focused on `v0.7.x` preview hardening.
     Do not turn support-level labels into `v1.0.0` promises until the dogfood
     evidence is strong enough to freeze them.
 15. Maintain the macOS/Homebrew/mise public preview with installation docs,

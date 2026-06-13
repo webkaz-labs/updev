@@ -69,7 +69,7 @@ type dependencyCompatibilityEntry struct {
 	Version      string      `json:"version,omitempty"`
 	Status       plan.Status `json:"status"`
 	Supported    bool        `json:"supported"`
-	SupportLabel string      `json:"support_label,omitempty"`
+	SupportLabel string      `json:"support_label"`
 	Evidence     string      `json:"evidence,omitempty"`
 	Remediation  string      `json:"remediation,omitempty"`
 	Command      []string    `json:"command,omitempty"`
