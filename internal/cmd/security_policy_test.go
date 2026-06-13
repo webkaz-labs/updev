@@ -13,6 +13,7 @@ import (
 
 	"github.com/webkaz-labs/updev/internal/plan"
 	"github.com/webkaz-labs/updev/internal/runner"
+	"github.com/webkaz-labs/updev/internal/securityreason"
 )
 
 func TestParseSecurityOptionsAcceptsPolicyPath(t *testing.T) {
@@ -426,9 +427,12 @@ func TestSecurityPolicyOverridesScanPostures(t *testing.T) {
 		{Provider: "github-repo", Name: "owner/tool", Decision: "allow", Reason: "trusted archived upstream"},
 		{Provider: "brew", Kind: "cask", Name: "firefox", Decision: "allow", Reason: "trusted vendor cask"},
 		{Provider: "brew", Kind: "vscode", Name: "github.copilot", Decision: "block", Reason: "disabled locally"},
+		{Provider: "npm", Name: "pnpm", Decision: "allow", Reason: "trusted npm package"},
+		{Provider: "cargo", Name: "fd-find", Decision: "review", Reason: "reviewed crate"},
+		{Provider: "pypi", Name: "frogmouth", Decision: "block", Reason: "blocked pypi package"},
 	}}
 	githubPostures := applySecurityPolicyToGitHubPostures(policy, []githubPosture{
-		{Provider: "mise", Name: "github:owner/tool", Repository: "owner/tool", Decision: "review", Reason: "repository is archived"},
+		{Provider: "mise", Name: "github:owner/tool", Repository: "owner/tool", Decision: "review", Reason: "repository is archived", ReasonCode: securityreason.GitHubRepositoryArchived},
 	})
 	homebrewPostures := applySecurityPolicyToHomebrewPostures(policy, []homebrewPosture{
 		{Provider: "brew", Kind: "cask", Name: "firefox", Decision: "review", Reason: "needs provenance review"},
@@ -436,8 +440,20 @@ func TestSecurityPolicyOverridesScanPostures(t *testing.T) {
 	vscodePostures := applySecurityPolicyToVSCodePostures(policy, []vscodePosture{
 		{Provider: "brew", Kind: "vscode", Name: "github.copilot", Decision: "allow", Reason: "ok"},
 	})
+	npmPostures := applySecurityPolicyToNPMPostures(policy, []npmPosture{
+		{Provider: "mise", Kind: "npm", Name: "npm:pnpm", Package: "pnpm", Decision: "review", Reason: "npm package has no maintainers in registry metadata", ReasonCode: securityreason.RegistryNoMaintainers},
+	})
+	cargoPostures := applySecurityPolicyToCargoPostures(policy, []cargoPosture{
+		{Provider: "mise", Kind: "cargo", Name: "cargo:fd-find", Crate: "fd-find", Decision: "review", Reason: "installed crate version is yanked", ReasonCode: securityreason.RegistryVersionYanked},
+	})
+	pypiPostures := applySecurityPolicyToPyPIPostures(policy, []pypiPosture{
+		{Provider: "mise", Kind: "pipx", Name: "pipx:frogmouth", Package: "frogmouth", Decision: "review", Reason: "installed PyPI version is yanked", ReasonCode: securityreason.RegistryVersionYanked},
+	})
 	if githubPostures[0].Decision != "allow" || githubPostures[0].Confidence != "policy" || githubPostures[0].Remediation != "" {
 		t.Fatalf("expected github posture policy override, got %#v", githubPostures[0])
+	}
+	if githubPostures[0].ReasonCode != securityreason.SecurityPolicyOverride || githubPostures[0].ReasonArgs["decision"] != "allow" {
+		t.Fatalf("expected github posture policy reason override, got %#v", githubPostures[0])
 	}
 	if homebrewPostures[0].Decision != "allow" || homebrewPostures[0].Remediation != "" || !containsString(homebrewPostures[0].Evidence, "security-policy") {
 		t.Fatalf("expected homebrew posture policy override, got %#v", homebrewPostures[0])
@@ -445,7 +461,16 @@ func TestSecurityPolicyOverridesScanPostures(t *testing.T) {
 	if vscodePostures[0].Decision != "block" || vscodePostures[0].Reason != "disabled locally" || !strings.Contains(vscodePostures[0].Remediation, "local security policy") {
 		t.Fatalf("expected vscode posture policy override, got %#v", vscodePostures[0])
 	}
-	if got := securityPostureStatus(plan.StatusOK, githubPostures, homebrewPostures, vscodePostures, nil, nil, nil); got != plan.StatusBlocked {
+	if npmPostures[0].Decision != "allow" || npmPostures[0].ReasonCode != securityreason.SecurityPolicyOverride || npmPostures[0].ReasonArgs["decision"] != "allow" {
+		t.Fatalf("expected npm posture policy reason override, got %#v", npmPostures[0])
+	}
+	if cargoPostures[0].Decision != "review" || cargoPostures[0].ReasonCode != securityreason.SecurityPolicyOverride || cargoPostures[0].ReasonArgs["decision"] != "review" {
+		t.Fatalf("expected cargo posture policy reason override, got %#v", cargoPostures[0])
+	}
+	if pypiPostures[0].Decision != "block" || pypiPostures[0].ReasonCode != securityreason.SecurityPolicyOverride || pypiPostures[0].ReasonArgs["decision"] != "block" {
+		t.Fatalf("expected pypi posture policy reason override, got %#v", pypiPostures[0])
+	}
+	if got := securityPostureStatus(plan.StatusOK, githubPostures, homebrewPostures, vscodePostures, npmPostures, cargoPostures, pypiPostures); got != plan.StatusBlocked {
 		t.Fatalf("expected blocked posture status, got %s", got)
 	}
 }
@@ -512,11 +537,13 @@ func TestApplySecurityPolicyToScannersAllowsSpecificFinding(t *testing.T) {
 		Decision: "hold",
 		Reason:   "gitleaks reported possible secrets",
 		Findings: []scannerFinding{{
-			Kind:     "secret",
-			RuleID:   "generic-api-key",
-			File:     ".env.example",
-			Decision: "hold",
-			Reason:   "gitleaks reported possible secret",
+			Kind:       "secret",
+			RuleID:     "generic-api-key",
+			File:       ".env.example",
+			Decision:   "hold",
+			Reason:     "gitleaks reported possible secret",
+			ReasonCode: securityreason.ScannerSecret,
+			ReasonArgs: map[string]string{"tool": "gitleaks"},
 		}},
 	}}
 	policy := securityPolicy{Rules: []securityPolicyRule{{
@@ -533,6 +560,9 @@ func TestApplySecurityPolicyToScannersAllowsSpecificFinding(t *testing.T) {
 	}
 	if got[0].Findings[0].Decision != "allow" || got[0].Findings[0].Confidence != "policy" || got[0].Findings[0].Remediation != "" || !containsString(got[0].Findings[0].Evidence, "security-policy") {
 		t.Fatalf("expected finding policy metadata, got %#v", got[0].Findings[0])
+	}
+	if got[0].Findings[0].ReasonCode != securityreason.SecurityPolicyOverride || got[0].Findings[0].ReasonArgs["decision"] != "allow" {
+		t.Fatalf("expected scanner policy reason override, got %#v", got[0].Findings[0])
 	}
 	if hasScannerFindings(got) {
 		t.Fatalf("expected allowed scanner finding not to require attention, got %#v", got)

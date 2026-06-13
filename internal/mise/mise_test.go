@@ -197,6 +197,33 @@ python = "lts"
 	}
 }
 
+func TestRegistryIndexFromJSONIncludesAliases(t *testing.T) {
+	registry := RegistryIndexFromJSON(`[{"short":"gcloud","aliases":["google-cloud-sdk"],"backends":["vfox:mise-plugins/vfox-gcloud"]}]`)
+	for _, key := range []string{"gcloud", "google-cloud-sdk"} {
+		entry, ok := registry[key]
+		if !ok || entry.Short != "gcloud" {
+			t.Fatalf("expected registry key %q to resolve gcloud, got %#v ok=%v", key, entry, ok)
+		}
+	}
+}
+
+func TestRegistryGitHubBackendUsesAquaRepository(t *testing.T) {
+	backend, repo, ok := RegistryGitHubBackend(RegistryEntry{Backends: []string{"vfox:demo/tool", "aqua:astral-sh/uv"}})
+	if !ok || backend != "aqua:astral-sh/uv" || repo != "astral-sh/uv" {
+		t.Fatalf("expected aqua GitHub backend, got backend=%q repo=%q ok=%v", backend, repo, ok)
+	}
+}
+
+func TestRegistryProviderMetadataBackendMatchesProviderIdentity(t *testing.T) {
+	backend, metadata, ok := RegistryProviderMetadataBackend(
+		RegistryEntry{Backends: []string{"vfox:mise-plugins/vfox-gcloud"}},
+		ProviderMetadataRegistry(),
+	)
+	if !ok || backend != "vfox:mise-plugins/vfox-gcloud" || metadata.ID != "google-cloud-cli" {
+		t.Fatalf("expected Google Cloud metadata entry, got backend=%q metadata=%#v ok=%v", backend, metadata, ok)
+	}
+}
+
 func TestManifestIssuesIncludesProjectLocalMiseFiles(t *testing.T) {
 	root := t.TempDir()
 	globalDir := filepath.Join(root, "dot_config", "mise")

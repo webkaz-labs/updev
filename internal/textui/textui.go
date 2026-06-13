@@ -5,6 +5,7 @@ import (
 	"io"
 	"os"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/mattn/go-runewidth"
@@ -122,6 +123,36 @@ func StyleBool(value bool, color bool) string {
 		return Style("yes", ansiGreen, color)
 	}
 	return Style("-", ansiDim, color)
+}
+
+func FriendlyAge(age time.Duration) string {
+	if age < time.Second {
+		return "0s"
+	}
+	if age < time.Minute {
+		return fmt.Sprintf("%ds", int(age.Seconds()))
+	}
+	if age < time.Hour {
+		return fmt.Sprintf("%dm", int(age.Minutes()))
+	}
+	return fmt.Sprintf("%dh", int(age.Hours()))
+}
+
+func FilterSummary(filters map[string]string, keys ...string) string {
+	return FilterSummaryWithSeparator(filters, " ", keys...)
+}
+
+func FilterSummaryWithSeparator(filters map[string]string, separator string, keys ...string) string {
+	if separator == "" {
+		separator = " "
+	}
+	parts := []string{}
+	for _, key := range keys {
+		if value := filters[key]; value != "" {
+			parts = append(parts, key+"="+value)
+		}
+	}
+	return strings.Join(parts, separator)
 }
 
 func Style(value string, code string, color bool) string {

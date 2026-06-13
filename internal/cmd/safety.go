@@ -1,34 +1,160 @@
 package cmd
 
 import (
-	"bufio"
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	neturl "net/url"
 	"os"
-	"path/filepath"
-	"regexp"
-	"sort"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/webkaz-labs/updev/internal/brew"
+	"github.com/webkaz-labs/updev/internal/githubrepo"
+	"github.com/webkaz-labs/updev/internal/mise"
 	"github.com/webkaz-labs/updev/internal/plan"
 	"github.com/webkaz-labs/updev/internal/runner"
 	"github.com/webkaz-labs/updev/internal/securitygate"
+	"github.com/webkaz-labs/updev/internal/securityreason"
+	"github.com/webkaz-labs/updev/internal/textui"
 	"github.com/webkaz-labs/updev/internal/updevpath"
 )
 
 type safetyGate = securitygate.Gate
 type safetySummary = securitygate.Summary
 type safetyFinding = securitygate.Finding
+type brewSafetyEntry = brew.ManifestEntry
+
+type brewSafetyManifest struct {
+	brew.Manifest
+}
 
 func safetySummaryFromFindings(findings []safetyFinding) *safetySummary {
 	return securitygate.SummaryFromFindings(findings)
+}
+
+func applySafetyFindings(gate safetyGate, findings []safetyFinding) safetyGate {
+	return securitygate.ApplyFindings(gate, findings)
+}
+
+var (
+	updateSafetyMarketplaceMaxAge   = 6 * time.Hour
+	updateSafetyUnavailableMaxAge   = 45 * time.Minute
+	updateSafetyHomebrewMetadataAge = 12 * time.Hour
+	updateSafetyMiseMetadataAge     = 12 * time.Hour
+	updateSafetyBrewOutdatedMaxAge  = 5 * time.Minute
+)
+
+type updateSafetyCacheEntry = securitygate.CacheEntry
+
+func loadUpdateSafetyCache(provider string, key string, maxAge time.Duration) (updateSafetyCacheEntry, bool) {
+	return securitygate.LoadCache(provider, key, maxAge)
+}
+
+func saveUpdateSafetyCache(provider string, key string, findings []safetyFinding, warnings []string) {
+	securitygate.SaveCache(provider, key, findings, warnings)
+}
+
+func saveUpdateSafetyErrorCache(provider string, key string, status plan.Status, message string, warnings []string) {
+	securitygate.SaveErrorCache(provider, key, status, message, warnings)
+}
+
+func saveUpdateSafetyUnavailableCache(provider string, key string, message string, findings []safetyFinding, warnings []string) {
+	securitygate.SaveUnavailableCache(provider, key, message, findings, warnings)
+}
+
+func updateSafetyCachePath(provider string, key string) string {
+	return securitygate.CachePath(provider, key)
+}
+
+func updateSafetyCacheKey(parts ...string) string {
+	return securitygate.CacheKey(parts...)
+}
+
+func updateSafetyBrewCacheKey(root string, findings []safetyFinding, minReleaseAge time.Duration) string {
+	return securitygate.BrewCandidateCacheKey(root, findings, minReleaseAge)
+}
+
+func updateSafetyBrewOutdatedErrorCacheKey(root string) string {
+	return updateSafetyCacheKey("brew", root, "outdated-json-v2")
+}
+
+func updateSafetyMiseCacheKey(root string, findings []safetyFinding, minReleaseAge time.Duration) string {
+	return securitygate.MiseCandidateCacheKey(root, findings, minReleaseAge)
+}
+
+func updateSafetyBrewAdvisoryErrorCacheKey(candidateKey string) string {
+	return updateSafetyCacheKey("brew", candidateKey, "advisory-unavailable")
+}
+
+func updateSafetyVSCodeCacheKey(root string, items []securitygate.ItemIdentity, installed map[string]string) string {
+	return securitygate.VSCodeCandidateCacheKey(root, items, installed)
+}
+
+func updateSafetyVSCodeMarketplaceErrorCacheKey(candidateKey string) string {
+	return updateSafetyCacheKey("vscode", candidateKey, "marketplace-unavailable")
+}
+
+func updateSafetyVSCodeAdvisoryErrorCacheKey(candidateKey string) string {
+	return updateSafetyCacheKey("vscode", candidateKey, "advisory-unavailable")
+}
+
+func planItemIdentities(items []plan.Item) []securitygate.ItemIdentity {
+	return securitygate.ItemIdentitiesFromPlanItems(items)
+}
+
+func updateSafetyCacheEvidence(findings []safetyFinding, provider string, createdAt time.Time) []safetyFinding {
+	if createdAt.IsZero() {
+		return findings
+	}
+	age := textui.FriendlyAge(time.Since(createdAt))
+	out := make([]safetyFinding, 0, len(findings))
+	for _, finding := range findings {
+		finding.Evidence = appendEvidence(finding.Evidence, "updev update safety cache: "+provider+" "+age+" old")
+		out = append(out, finding)
+	}
+	return out
+}
+
+func applyUpdateSafetyUnavailableCache(gate *safetyGate, cached updateSafetyCacheEntry, warning string, evidenceProvider string) []safetyFinding {
+	if cached.Error != "" {
+		gate.Warnings = append(gate.Warnings, warning+": "+cached.Error)
+	}
+	gate.Warnings = append(gate.Warnings, cached.Warnings...)
+	return updateSafetyCacheEvidence(cached.Findings, evidenceProvider, cached.CreatedAt)
+}
+
+func setSafetyFindingReason(finding *safetyFinding, reason securityreason.Reason) {
+	if finding == nil {
+		return
+	}
+	finding.Reason = reason.Text
+	finding.ReasonCode = reason.Code
+	finding.ReasonArgs = reason.Args
+}
+
+func setSafetyFindingReasonText(finding *safetyFinding, reason string) {
+	setSafetyFindingReason(finding, securityreason.Infer(reason))
+}
+
+func localizedSafetyFindingReason(finding safetyFinding) string {
+	reason := securityreason.Reason{
+		Code: finding.ReasonCode,
+		Text: finding.Reason,
+		Args: finding.ReasonArgs,
+	}
+	if reason.Code == "" {
+		reason = securityreason.Infer(finding.Reason)
+	}
+	if defaultLanguage() == "ja" && reason.Code != "" {
+		localized := securityreason.LocalizeJapanese(reason)
+		if strings.TrimSpace(localized) != "" {
+			return localized
+		}
+	}
+	return localizedSafetyReason(finding.Reason)
 }
 
 func collectUpdateSafety(ctx context.Context, commandRunner commandRunner, opts updateOptions) []safetyGate {
@@ -39,37 +165,46 @@ func collectUpdateSafetyWithPolicy(ctx context.Context, commandRunner commandRun
 	if opts.security == "off" {
 		return nil
 	}
-	gateCount := 2
-	includeVSCode := updateShouldCheckVSCodeSafety(opts)
-	if includeVSCode {
-		gateCount++
+	tasks := []updateSafetyTask{
+		{provider: "brew", collect: func() safetyGate {
+			return collectBrewUpdateSafetyWithPolicy(ctx, commandRunner, opts.root, policy)
+		}},
+		{provider: "mise", collect: func() safetyGate {
+			return collectMiseUpdateSafetyWithPolicy(ctx, commandRunner, opts.root, policy)
+		}},
 	}
-	includeMiseBump := opts.miseBumpMode != "" && opts.miseBumpMode != "off"
-	if includeMiseBump {
-		gateCount++
+	if updateShouldCheckVSCodeSafety(opts) {
+		tasks = append(tasks, updateSafetyTask{provider: "vscode", collect: func() safetyGate {
+			return collectVSCodeUpdateSafetyWithPolicy(ctx, commandRunner, opts.root, policy)
+		}})
 	}
-	gates := make([]safetyGate, gateCount)
+	if opts.miseBumpMode != "" && opts.miseBumpMode != "off" {
+		tasks = append(tasks, updateSafetyTask{provider: "mise-bump", collect: func() safetyGate {
+			return collectMiseBumpSafetyWithPolicy(ctx, commandRunner, opts.root, policy)
+		}})
+	}
+	return collectUpdateSafetyTasks(tasks)
+}
+
+type updateSafetyTask struct {
+	provider string
+	collect  func() safetyGate
+}
+
+func collectUpdateSafetyTasks(tasks []updateSafetyTask) []safetyGate {
+	gates := make([]safetyGate, len(tasks))
 	var wg sync.WaitGroup
-	wg.Add(gateCount)
-	go func() {
-		defer wg.Done()
-		gates[0] = collectBrewUpdateSafetyWithPolicy(ctx, commandRunner, opts.root, policy)
-	}()
-	go func() {
-		defer wg.Done()
-		gates[1] = collectMiseUpdateSafetyWithPolicy(ctx, commandRunner, opts.root, policy)
-	}()
-	if includeVSCode {
+	wg.Add(len(tasks))
+	for index, task := range tasks {
+		index := index
+		task := task
 		go func() {
 			defer wg.Done()
-			gates[2] = collectVSCodeUpdateSafetyWithPolicy(ctx, commandRunner, opts.root, policy)
-		}()
-	}
-	if includeMiseBump {
-		index := gateCount - 1
-		go func() {
-			defer wg.Done()
-			gates[index] = collectMiseBumpSafetyWithPolicy(ctx, commandRunner, opts.root, policy)
+			gate := task.collect()
+			if gate.Provider == "" {
+				gate.Provider = task.provider
+			}
+			gates[index] = gate
 		}()
 	}
 	wg.Wait()
@@ -118,15 +253,7 @@ func collectMiseUpdateSafetyWithPolicy(ctx context.Context, commandRunner comman
 		}
 	}
 	findings = applySecurityPolicyToSafetyFindings(policy, findings)
-	gate.Findings = findings
-	gate.Summary = safetySummaryFromFindings(findings)
-	for _, finding := range findings {
-		if finding.Decision != "allow" {
-			gate.Status = plan.StatusHeld
-			break
-		}
-	}
-	return gate
+	return applySafetyFindings(gate, findings)
 }
 
 func collectBrewUpdateSafetyWithPolicy(ctx context.Context, commandRunner commandRunner, root string, policy securityPolicy) safetyGate {
@@ -185,15 +312,7 @@ func collectBrewUpdateSafetyWithPolicy(ctx context.Context, commandRunner comman
 		}
 	}
 	findings = applySecurityPolicyToSafetyFindings(policy, findings)
-	gate.Findings = findings
-	gate.Summary = safetySummaryFromFindings(findings)
-	for _, finding := range findings {
-		if finding.Decision != "allow" {
-			gate.Status = plan.StatusHeld
-			break
-		}
-	}
-	return gate
+	return applySafetyFindings(gate, findings)
 }
 
 func collectBrewUpdateSafetyFreshWithPolicy(ctx context.Context, commandRunner commandRunner, root string, policy securityPolicy) safetyGate {
@@ -233,15 +352,7 @@ func collectBrewUpdateSafetyFreshWithPolicy(ctx context.Context, commandRunner c
 		}
 	}
 	findings = applySecurityPolicyToSafetyFindings(policy, findings)
-	gate.Findings = findings
-	gate.Summary = safetySummaryFromFindings(findings)
-	for _, finding := range findings {
-		if finding.Decision != "allow" {
-			gate.Status = plan.StatusHeld
-			break
-		}
-	}
-	return gate
+	return applySafetyFindings(gate, findings)
 }
 
 func brewOutdatedCachedErrorIsReusable(message string) bool {
@@ -287,15 +398,7 @@ func collectBrewSafetyWithPolicy(ctx context.Context, commandRunner commandRunne
 		findings = append(findings, manifestWarnings(manifest)...)
 	}
 	findings = applySecurityPolicyToSafetyFindings(policy, findings)
-	gate.Findings = findings
-	gate.Summary = safetySummaryFromFindings(findings)
-	for _, finding := range findings {
-		if finding.Decision != "allow" {
-			gate.Status = plan.StatusHeld
-			break
-		}
-	}
-	return gate
+	return applySafetyFindings(gate, findings)
 }
 
 func runBrewOutdatedJSON(ctx context.Context, commandRunner commandRunner) runner.Result {
@@ -313,15 +416,7 @@ func runBrewOutdatedJSON(ctx context.Context, commandRunner commandRunner) runne
 
 func brewOutdatedTimeout() time.Duration {
 	config := loadUpdevConfig()
-	seconds := 60
-	if config.Security.Homebrew.OutdatedTimeoutSeconds != nil {
-		seconds = *config.Security.Homebrew.OutdatedTimeoutSeconds
-	}
-	if value := strings.TrimSpace(os.Getenv("UPDEV_BREW_OUTDATED_TIMEOUT_SECONDS")); value != "" {
-		if parsed, err := strconv.Atoi(value); err == nil && parsed >= 0 {
-			seconds = parsed
-		}
-	}
+	seconds := configuredNonNegativeInt(60, config.Security.Homebrew.OutdatedTimeoutSeconds, "UPDEV_BREW_OUTDATED_TIMEOUT_SECONDS")
 	if seconds <= 0 {
 		seconds = 60
 	}
@@ -348,78 +443,16 @@ func runMiseOutdatedJSONAgeDisabled(ctx context.Context, commandRunner commandRu
 	return result
 }
 
-type brewSafetyManifest struct {
-	entries map[string]brewSafetyEntry
-}
-
-type brewSafetyEntry struct {
-	Kind     string
-	Name     string
-	RawName  string
-	Source   string
-	Tap      string
-	URLBased bool
-}
-
-type brewOutdatedReport struct {
-	Formulae []brewOutdatedItem `json:"formulae"`
-	Casks    []brewOutdatedItem `json:"casks"`
-}
-
-type brewOutdatedItem struct {
-	Name              string          `json:"name"`
-	InstalledVersions flexStringSlice `json:"installed_versions"`
-	CurrentVersion    string          `json:"current_version"`
-}
-
-type miseOutdatedItem struct {
-	Requested string  `json:"requested"`
-	Current   string  `json:"current"`
-	Latest    string  `json:"latest"`
-	Bump      *string `json:"bump"`
-}
-
-type flexStringSlice []string
-
-func (values *flexStringSlice) UnmarshalJSON(data []byte) error {
-	var many []string
-	if err := json.Unmarshal(data, &many); err == nil {
-		*values = many
-		return nil
-	}
-	var one string
-	if err := json.Unmarshal(data, &one); err == nil {
-		if one == "" {
-			*values = nil
-		} else {
-			*values = []string{one}
-		}
-		return nil
-	}
-	return fmt.Errorf("expected string or []string")
-}
-
 func parseBrewOutdated(raw string, manifest brewSafetyManifest) ([]safetyFinding, error) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
 		return nil, nil
 	}
-	payload, err := brewOutdatedJSONPayload(raw)
+	report, err := brew.ParseOutdatedReport(raw)
 	if err != nil {
 		return nil, err
 	}
-	var report brewOutdatedReport
-	if err := json.Unmarshal([]byte(payload), &report); err != nil {
-		return nil, fmt.Errorf("brew outdated --json=v2 --greedy returned invalid JSON: %w", err)
-	}
-	findings := make([]safetyFinding, 0, len(report.Formulae)+len(report.Casks))
-	for _, item := range report.Formulae {
-		findings = append(findings, brewSafetyFinding("brew", item, manifest))
-	}
-	for _, item := range report.Casks {
-		findings = append(findings, brewSafetyFinding("cask", item, manifest))
-	}
-	return findings, nil
+	return brew.SafetyFindingsFromOutdated(report, manifest.Manifest), nil
 }
 
 func parseBrewOutdatedResult(result runner.Result, manifest brewSafetyManifest) ([]safetyFinding, []string, error) {
@@ -445,28 +478,7 @@ func parseBrewOutdatedResult(result runner.Result, manifest brewSafetyManifest) 
 }
 
 func parseMiseOutdated(raw string) ([]safetyFinding, error) {
-	raw = strings.TrimSpace(raw)
-	if raw == "" {
-		return nil, nil
-	}
-	var report map[string]miseOutdatedItem
-	if err := json.Unmarshal([]byte(raw), &report); err != nil {
-		return nil, fmt.Errorf("mise outdated --json returned invalid JSON: %w", err)
-	}
-	names := make([]string, 0, len(report))
-	for name := range report {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-	findings := make([]safetyFinding, 0, len(names))
-	for _, name := range names {
-		item := report[name]
-		if strings.TrimSpace(item.Latest) == "" && strings.TrimSpace(item.Current) == "" {
-			continue
-		}
-		findings = append(findings, miseSafetyFinding(name, item))
-	}
-	return findings, nil
+	return mise.SafetyFindingsFromOutdatedJSON(raw)
 }
 
 func parseMiseOutdatedResult(result runner.Result) ([]safetyFinding, []string, error) {
@@ -492,108 +504,11 @@ func parseMiseOutdatedResult(result runner.Result) ([]safetyFinding, []string, e
 }
 
 func miseOutdatedResultDetail(result runner.Result, fallback string) string {
-	values := []string{result.Stderr, result.Stdout}
-	if result.Err != nil {
-		values = append(values, result.Err.Error())
-	}
-	if result.Code != 0 {
-		values = append(values, fmt.Sprintf("exit status %d", result.Code))
-	}
-	values = append(values, fallback)
-	return firstNonEmpty(values...)
-}
-
-func miseSafetyFinding(name string, item miseOutdatedItem) safetyFinding {
-	installed := []string{}
-	if current := strings.TrimSpace(item.Current); current != "" {
-		installed = append(installed, current)
-	}
-	return safetyFinding{
-		Provider:          "mise",
-		Kind:              "tool",
-		Name:              strings.TrimSpace(name),
-		InstalledVersions: installed,
-		CurrentVersion:    strings.TrimSpace(item.Latest),
-		Version:           strings.TrimSpace(item.Requested),
-		Decision:          "review",
-		Reason:            "mise update candidate needs updev-owned provider evidence before update",
-		Remediation:       "review the mise backend, source, and candidate version; add a temporary allow policy with reason and expiry if accepted",
-		Evidence:          []string{"mise outdated --json"},
-		Confidence:        "low",
-	}
+	return runner.ResultDetail(result, fallback, runner.ResultDetailOption{IncludeExitStatus: true})
 }
 
 func brewOutdatedResultDetail(result runner.Result, fallback string) string {
-	values := []string{result.Stderr, result.Stdout}
-	if result.Err != nil {
-		values = append(values, result.Err.Error())
-	}
-	values = append(values, fallback)
-	return firstNonEmpty(values...)
-}
-
-func brewOutdatedJSONPayload(raw string) (string, error) {
-	raw = strings.TrimSpace(raw)
-	if raw == "" {
-		return "", nil
-	}
-	start := strings.Index(raw, "{")
-	end := strings.LastIndex(raw, "}")
-	if start < 0 || end < start {
-		return "", fmt.Errorf("brew outdated --json=v2 --greedy returned no JSON object")
-	}
-	return raw[start : end+1], nil
-}
-
-func brewSafetyFinding(kind string, item brewOutdatedItem, manifest brewSafetyManifest) safetyFinding {
-	entry := manifest.entry(kind, item.Name)
-	decision := "unknown"
-	reason := "release-age and provenance evidence are not available in the first Go safety slice"
-	remediation := "retry after Homebrew metadata is available; strict mode requires metadata and release-age evidence"
-	confidence := "low"
-	trustKind := ""
-	trustTarget := ""
-	trustCommand := ""
-	if entry.URLBased {
-		decision = "review"
-		reason = "URL-based Homebrew cask needs manual provenance review before update"
-		remediation = "review the cask source URL and add a temporary allow policy with reason and expiry if accepted"
-	} else if entry.Tap != "" && !isOfficialBrewTap(entry.Tap) {
-		decision = "review"
-		reason = "non-official Homebrew tap needs provenance review before update"
-		trustKind = "formula"
-		if kind == "cask" {
-			trustKind = "cask"
-		}
-		trustTarget = firstNonEmpty(entry.RawName, item.Name)
-		trustCommand = "brew trust --" + trustKind + " " + trustTarget
-		remediation = "review the tap repository; if the package is accepted, prefer item-scoped trust with " + trustCommand + " before adding a temporary allow policy"
-	} else if kind == "cask" {
-		decision = "review"
-		reason = "Homebrew cask updates need provenance and URL/release-age checks before strict mode can allow them"
-		remediation = "review vendor provenance and add a temporary allow policy with reason and expiry if accepted"
-	}
-	finding := safetyFinding{
-		Provider:          "brew",
-		Kind:              kind,
-		Name:              item.Name,
-		InstalledVersions: []string(item.InstalledVersions),
-		CurrentVersion:    item.CurrentVersion,
-		Decision:          decision,
-		Reason:            reason,
-		Remediation:       remediation,
-		Evidence:          []string{"brew outdated --json=v2 --greedy"},
-		Source:            entry.Source,
-		Tap:               entry.Tap,
-		Confidence:        confidence,
-	}
-	if trustCommand != "" {
-		finding.TrustStatus = "needs-review"
-		finding.TrustTarget = trustTarget
-		finding.TrustCommand = trustCommand
-		finding.Evidence = appendEvidence(finding.Evidence, "Homebrew 6 tap trust target: "+trustKind+" "+trustTarget)
-	}
-	return finding
+	return runner.ResultDetail(result, fallback, runner.ResultDetailOption{})
 }
 
 func enrichBrewSafetyFindings(ctx context.Context, client *http.Client, apiBase string, findings []safetyFinding, minReleaseAge time.Duration) []safetyFinding {
@@ -610,7 +525,7 @@ func enrichBrewSafetyFindings(ctx context.Context, client *http.Client, apiBase 
 		metadata, err := fetchHomebrewMetadata(ctx, client, apiBase, finding.Kind, finding.Name)
 		if err != nil {
 			finding.Decision = "review"
-			finding.Reason = "Homebrew metadata unavailable before update: " + err.Error()
+			setSafetyFindingReason(&finding, securityreason.HomebrewPostureReason(securityreason.HomebrewMetadataUnavailable, finding.Kind, finding.Name, "Homebrew metadata unavailable before update: "+err.Error(), map[string]string{"error": err.Error()}))
 			finding.Remediation = "retry after Homebrew metadata is reachable; otherwise review manually or allow by policy with reason and expiry"
 			finding.Confidence = "low"
 			finding.Evidence = appendEvidence(finding.Evidence, "formulae.brew.sh metadata")
@@ -704,17 +619,25 @@ func applyBrewSafetyAdvisory(finding safetyFinding, advisory securityFinding) sa
 	finding.AdvisoryIDs = appendUniqueString(finding.AdvisoryIDs, advisory.VulnID)
 	switch {
 	case advisory.Ecosystem == "GIT":
-		finding.Reason = "OSV advisory match for Homebrew source tag: " + strings.Join(finding.AdvisoryIDs, ",")
+		setHomebrewAdvisoryReason(&finding, "OSV source tag", "OSV advisory match for Homebrew source tag")
 	case isGitHubAdvisoryFinding(advisory):
-		finding.Reason = "GitHub Advisory match for curated Homebrew mapping: " + strings.Join(finding.AdvisoryIDs, ",")
+		setHomebrewAdvisoryReason(&finding, "GitHub Advisory", "GitHub Advisory match for curated Homebrew mapping")
 	default:
-		finding.Reason = "OSV advisory match for curated Homebrew mapping: " + strings.Join(finding.AdvisoryIDs, ",")
+		setHomebrewAdvisoryReason(&finding, "OSV curated mapping", "OSV advisory match for curated Homebrew mapping")
 	}
 	for _, fixed := range advisory.FixedVersions {
 		finding.FixedVersions = appendUniqueString(finding.FixedVersions, fixed)
 	}
 	finding.Remediation = homebrewAdvisoryRemediation(finding.FixedVersions)
 	return finding
+}
+
+func setHomebrewAdvisoryReason(finding *safetyFinding, source string, textPrefix string) {
+	ids := strings.Join(finding.AdvisoryIDs, ",")
+	setSafetyFindingReason(finding, securityreason.HomebrewPostureReason(securityreason.HomebrewAdvisoryMatch, finding.Kind, finding.Name, textPrefix+": "+ids, map[string]string{
+		"advisory_source": source,
+		"advisory_ids":    ids,
+	}))
 }
 
 func homebrewAdvisoryRemediation(fixedVersions []string) string {
@@ -736,47 +659,17 @@ func appendUniqueString(values []string, value string) []string {
 	return append(values, value)
 }
 
-type githubRelease struct {
-	PublishedAt string `json:"published_at"`
-	CreatedAt   string `json:"created_at"`
-}
-
-type githubGitObject struct {
-	Type string `json:"type"`
-	SHA  string `json:"sha"`
-	URL  string `json:"url"`
-}
-
-type githubGitRef struct {
-	Ref    string          `json:"ref"`
-	Object githubGitObject `json:"object"`
-}
-
-type githubGitIdentity struct {
-	Date string `json:"date"`
-}
-
-type githubGitTag struct {
-	Tagger githubGitIdentity `json:"tagger"`
-	Object githubGitObject   `json:"object"`
-}
-
-type githubGitCommit struct {
-	Author    githubGitIdentity `json:"author"`
-	Committer githubGitIdentity `json:"committer"`
-}
-
 func applyHomebrewReleaseAge(ctx context.Context, client *http.Client, apiBase string, finding safetyFinding, minAge time.Duration) safetyFinding {
 	if finding.Provider != "brew" || (finding.Kind != "brew" && finding.Kind != "cask") || minAge <= 0 || (finding.URL == "" && finding.Homepage == "") {
 		return finding
 	}
-	repo, tag, ok := githubRepoTagFromURL(finding.URL)
+	repo, tag, ok := githubrepo.RepoTagFromURL(finding.URL)
 	if ok {
 		release, evidence, err := fetchGitHubReleaseOrTagByTag(ctx, client, apiBase, repo, tag, false)
 		if err != nil {
 			if finding.Decision == "allow" {
 				finding.Decision = "review"
-				finding.Reason = "GitHub release/tag date unavailable before update: " + err.Error()
+				setSafetyFindingReason(&finding, securityreason.HomebrewPostureReason(securityreason.HomebrewReleaseUnavailable, finding.Kind, finding.Name, "GitHub release/tag date unavailable before update: "+err.Error(), map[string]string{"error": err.Error()}))
 				finding.Remediation = "review the upstream release manually; retry when GitHub release or tag metadata is available or allow by policy"
 				finding.Confidence = "medium"
 			}
@@ -798,26 +691,22 @@ func applyHomebrewReleaseAge(ctx context.Context, client *http.Client, apiBase s
 	return finding
 }
 
-func applyHomebrewReleaseAgeFromRelease(finding safetyFinding, release githubRelease, minAge time.Duration, evidence string) safetyFinding {
+func applyHomebrewReleaseAgeFromRelease(finding safetyFinding, release githubrepo.Release, minAge time.Duration, evidence string) safetyFinding {
 	releasedAt, err := parseGitHubReleaseTime(release)
 	if err != nil {
 		if finding.Decision == "allow" {
 			finding.Decision = "review"
-			finding.Reason = "GitHub release date unavailable before update: " + err.Error()
+			setSafetyFindingReason(&finding, securityreason.HomebrewPostureReason(securityreason.HomebrewReleaseUnavailable, finding.Kind, finding.Name, "GitHub release date unavailable before update: "+err.Error(), map[string]string{"error": err.Error()}))
 			finding.Remediation = "review the upstream release manually; retry when GitHub release metadata is available or allow by policy"
 			finding.Confidence = "medium"
 		}
 		finding.Evidence = appendEvidence(finding.Evidence, evidence)
 		return finding
 	}
-	age := time.Since(releasedAt)
-	finding.ReleaseDate = releasedAt.Format(time.RFC3339)
-	finding.ReleaseAgeDays = int(age.Hours() / 24)
-	finding.MinReleaseAgeDays = int(minAge.Hours() / 24)
-	finding.Evidence = appendEvidence(finding.Evidence, evidence)
+	finding, age := securitygate.AnnotateReleaseAge(finding, releasedAt, minAge, evidence)
 	if age < minAge {
 		finding.Decision = "hold"
-		finding.Reason = fmt.Sprintf("candidate release is too new: age %d days, minimum %d days", finding.ReleaseAgeDays, finding.MinReleaseAgeDays)
+		setSafetyFindingReason(&finding, securityreason.CandidateReleaseTooNewReason(finding.ReleaseAgeDays, finding.MinReleaseAgeDays))
 		finding.Remediation = "wait until the release reaches the minimum age or allow temporarily by policy after review"
 		finding.Confidence = "medium"
 	}
@@ -825,228 +714,20 @@ func applyHomebrewReleaseAgeFromRelease(finding safetyFinding, release githubRel
 }
 
 func inferredHomebrewGitHubReleaseTags(finding safetyFinding) (string, []string, bool) {
-	repo, ok := githubRepoFromHomebrewFinding(finding)
+	repo, ok := githubrepo.RepoFromURLs(finding.URL, finding.Homepage)
 	if !ok {
 		return "", nil, false
 	}
-	version := strings.TrimSpace(firstNonEmpty(finding.CurrentVersion, finding.Version))
-	if version == "" {
-		return "", nil, false
-	}
-	tags := []string{}
-	tags = appendUniqueString(tags, version)
-	if !strings.HasPrefix(strings.ToLower(version), "v") {
-		tags = appendUniqueString(tags, "v"+version)
-	}
-	if finding.Name != "" {
-		tags = appendUniqueString(tags, finding.Name+"-"+version)
-		if !strings.HasPrefix(strings.ToLower(version), "v") {
-			tags = appendUniqueString(tags, finding.Name+"-v"+version)
-		}
-	}
+	tags := githubrepo.VersionTagCandidates(finding.Name, firstNonEmpty(finding.CurrentVersion, finding.Version))
 	return repo, tags, len(tags) > 0
 }
 
-func githubRepoFromHomebrewFinding(finding safetyFinding) (string, bool) {
-	for _, rawURL := range []string{finding.URL, finding.Homepage} {
-		repo, ok := githubRepoFromURL(rawURL)
-		if ok {
-			return repo, true
-		}
-	}
-	return "", false
+func fetchGitHubReleaseOrTagByTag(ctx context.Context, client *http.Client, apiBase string, repository string, tag string, inferred bool) (githubrepo.Release, string, error) {
+	return githubrepo.FetchReleaseOrTagByTag(ctx, client, apiBase, githubToken(), repository, tag, inferred)
 }
 
-func githubRepoFromURL(rawURL string) (string, bool) {
-	parsed, err := neturl.Parse(rawURL)
-	if err != nil || !strings.EqualFold(parsed.Host, "github.com") {
-		return "", false
-	}
-	parts := splitPath(parsed.EscapedPath())
-	if len(parts) < 2 {
-		return "", false
-	}
-	owner := parts[0]
-	repo := strings.TrimSuffix(parts[1], ".git")
-	if validGitHubPathPart(owner) && validGitHubPathPart(repo) {
-		return owner + "/" + repo, true
-	}
-	return "", false
-}
-
-func githubRepoTagFromURL(rawURL string) (string, string, bool) {
-	parsed, err := neturl.Parse(rawURL)
-	if err != nil || !strings.EqualFold(parsed.Host, "github.com") {
-		return "", "", false
-	}
-	parts := splitPath(parsed.EscapedPath())
-	if len(parts) < 4 {
-		return "", "", false
-	}
-	owner := parts[0]
-	repo := parts[1]
-	switch {
-	case len(parts) >= 5 && parts[2] == "releases" && parts[3] == "download":
-		tag := parts[4]
-		if validGitHubPathPart(owner) && validGitHubPathPart(repo) && tag != "" {
-			return owner + "/" + repo, tag, true
-		}
-	case len(parts) >= 6 && parts[2] == "archive" && parts[3] == "refs" && parts[4] == "tags":
-		tag := strings.Join(parts[5:], "/")
-		tag = trimArchiveSuffix(tag)
-		if validGitHubPathPart(owner) && validGitHubPathPart(repo) && tag != "" {
-			return owner + "/" + repo, tag, true
-		}
-	case parts[2] == "archive":
-		tag := strings.Join(parts[3:], "/")
-		tag = trimArchiveSuffix(tag)
-		if validGitHubPathPart(owner) && validGitHubPathPart(repo) && tag != "" {
-			return owner + "/" + repo, tag, true
-		}
-	}
-	return "", "", false
-}
-
-func splitPath(path string) []string {
-	parts := []string{}
-	for _, part := range strings.Split(path, "/") {
-		if part == "" {
-			continue
-		}
-		unescaped, err := neturl.PathUnescape(part)
-		if err != nil {
-			unescaped = part
-		}
-		parts = append(parts, unescaped)
-	}
-	return parts
-}
-
-func trimArchiveSuffix(tag string) string {
-	for _, suffix := range []string{".tar.gz", ".tar.xz", ".tar.bz2", ".tgz", ".zip"} {
-		tag = strings.TrimSuffix(tag, suffix)
-	}
-	return tag
-}
-
-func fetchGitHubReleaseByTag(ctx context.Context, client *http.Client, apiBase string, repository string, tag string) (githubRelease, error) {
-	endpoint := strings.TrimRight(apiBase, "/") + "/repos/" + repository + "/releases/tags/" + neturl.PathEscape(tag)
-	var release githubRelease
-	if err := fetchGitHubJSON(ctx, client, endpoint, &release); err != nil {
-		return githubRelease{}, err
-	}
-	return release, nil
-}
-
-func fetchGitHubReleaseOrTagByTag(ctx context.Context, client *http.Client, apiBase string, repository string, tag string, inferred bool) (githubRelease, string, error) {
-	release, releaseErr := fetchGitHubReleaseByTag(ctx, client, apiBase, repository, tag)
-	if releaseErr == nil {
-		if inferred {
-			return release, "GitHub inferred release metadata", nil
-		}
-		return release, "GitHub release metadata", nil
-	}
-	release, tagErr := fetchGitHubTagDateByRef(ctx, client, apiBase, repository, tag)
-	if tagErr == nil {
-		if inferred {
-			return release, "GitHub inferred tag metadata", nil
-		}
-		return release, "GitHub tag metadata", nil
-	}
-	return githubRelease{}, "", fmt.Errorf("%w; tag metadata fallback failed: %v", releaseErr, tagErr)
-}
-
-func fetchGitHubTagDateByRef(ctx context.Context, client *http.Client, apiBase string, repository string, tag string) (githubRelease, error) {
-	endpoint := strings.TrimRight(apiBase, "/") + "/repos/" + repository + "/git/ref/tags/" + neturl.PathEscape(tag)
-	var ref githubGitRef
-	if err := fetchGitHubJSON(ctx, client, endpoint, &ref); err != nil {
-		return githubRelease{}, err
-	}
-	switch ref.Object.Type {
-	case "tag":
-		return fetchGitHubAnnotatedTagDate(ctx, client, apiBase, repository, ref.Object.SHA)
-	case "commit":
-		return fetchGitHubCommitDate(ctx, client, apiBase, repository, ref.Object.SHA)
-	default:
-		return githubRelease{}, fmt.Errorf("unsupported github tag object type: %s", ref.Object.Type)
-	}
-}
-
-func fetchGitHubAnnotatedTagDate(ctx context.Context, client *http.Client, apiBase string, repository string, sha string) (githubRelease, error) {
-	if sha == "" {
-		return githubRelease{}, fmt.Errorf("github tag object sha is empty")
-	}
-	endpoint := strings.TrimRight(apiBase, "/") + "/repos/" + repository + "/git/tags/" + neturl.PathEscape(sha)
-	var tag githubGitTag
-	if err := fetchGitHubJSON(ctx, client, endpoint, &tag); err != nil {
-		return githubRelease{}, err
-	}
-	if strings.TrimSpace(tag.Tagger.Date) != "" {
-		return githubRelease{CreatedAt: tag.Tagger.Date}, nil
-	}
-	if tag.Object.Type == "commit" && tag.Object.SHA != "" {
-		return fetchGitHubCommitDate(ctx, client, apiBase, repository, tag.Object.SHA)
-	}
-	return githubRelease{}, fmt.Errorf("github annotated tag date is empty")
-}
-
-func fetchGitHubCommitDate(ctx context.Context, client *http.Client, apiBase string, repository string, sha string) (githubRelease, error) {
-	if sha == "" {
-		return githubRelease{}, fmt.Errorf("github commit object sha is empty")
-	}
-	endpoint := strings.TrimRight(apiBase, "/") + "/repos/" + repository + "/git/commits/" + neturl.PathEscape(sha)
-	var commit githubGitCommit
-	if err := fetchGitHubJSON(ctx, client, endpoint, &commit); err != nil {
-		return githubRelease{}, err
-	}
-	date := firstNonEmpty(commit.Committer.Date, commit.Author.Date)
-	if strings.TrimSpace(date) == "" {
-		return githubRelease{}, fmt.Errorf("github commit date is empty")
-	}
-	return githubRelease{CreatedAt: date}, nil
-}
-
-func fetchGitHubJSON(ctx context.Context, client *http.Client, endpoint string, out any) error {
-	requestCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
-	defer cancel()
-	request, err := http.NewRequestWithContext(requestCtx, http.MethodGet, endpoint, nil)
-	if err != nil {
-		return err
-	}
-	request.Header.Set("Accept", "application/vnd.github+json")
-	request.Header.Set("X-GitHub-Api-Version", "2022-11-28")
-	if token := githubToken(); token != "" {
-		request.Header.Set("Authorization", "Bearer "+token)
-	}
-	response, err := client.Do(request)
-	if err != nil {
-		return err
-	}
-	defer response.Body.Close()
-	body, err := io.ReadAll(io.LimitReader(response.Body, 1024*1024))
-	if err != nil {
-		return err
-	}
-	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return fmt.Errorf("github query failed: HTTP %d: %s", response.StatusCode, truncate(strings.TrimSpace(string(body)), 180))
-	}
-	if err := json.Unmarshal(body, out); err != nil {
-		return err
-	}
-	return nil
-}
-
-func parseGitHubReleaseTime(release githubRelease) (time.Time, error) {
-	for _, value := range []string{release.PublishedAt, release.CreatedAt} {
-		if strings.TrimSpace(value) == "" {
-			continue
-		}
-		parsed, err := time.Parse(time.RFC3339, value)
-		if err == nil {
-			return parsed, nil
-		}
-	}
-	return time.Time{}, fmt.Errorf("published_at and created_at are empty")
+func parseGitHubReleaseTime(release githubrepo.Release) (time.Time, error) {
+	return githubrepo.ParseReleaseTime(release)
 }
 
 func minHomebrewReleaseAge() time.Duration {
@@ -1054,16 +735,7 @@ func minHomebrewReleaseAge() time.Duration {
 }
 
 func minHomebrewReleaseAgeWithConfig(config updevConfig) time.Duration {
-	days := 3
-	if config.Security.Homebrew.MinReleaseAgeDays != nil && *config.Security.Homebrew.MinReleaseAgeDays >= 0 {
-		days = *config.Security.Homebrew.MinReleaseAgeDays
-	}
-	if value := strings.TrimSpace(os.Getenv("UPDEV_HOMEBREW_MIN_RELEASE_AGE_DAYS")); value != "" {
-		parsed, err := strconv.Atoi(value)
-		if err == nil && parsed >= 0 {
-			days = parsed
-		}
-	}
+	days := configuredNonNegativeInt(3, config.Security.Homebrew.MinReleaseAgeDays, "UPDEV_HOMEBREW_MIN_RELEASE_AGE_DAYS")
 	return time.Duration(days) * 24 * time.Hour
 }
 
@@ -1083,22 +755,24 @@ func applyHomebrewSafetyMetadata(finding safetyFinding, metadata homebrewMetadat
 	switch {
 	case metadata.Disabled:
 		finding.Decision = "review"
-		finding.Reason = firstNonEmpty(metadata.DisableReason, "Homebrew metadata marks this entry disabled")
+		reasonText := firstNonEmpty(metadata.DisableReason, "Homebrew metadata marks this entry disabled")
+		setSafetyFindingReason(&finding, securityreason.HomebrewPostureReason(securityreason.HomebrewEntryDisabled, finding.Kind, finding.Name, reasonText, map[string]string{"reason_text": reasonText}))
 		finding.Remediation = "remove or replace the disabled Homebrew entry before updating"
 		finding.Confidence = "medium"
 	case metadata.Deprecated:
 		finding.Decision = "review"
-		finding.Reason = firstNonEmpty(metadata.DeprecationReason, "Homebrew metadata marks this entry deprecated")
+		reasonText := firstNonEmpty(metadata.DeprecationReason, "Homebrew metadata marks this entry deprecated")
+		setSafetyFindingReason(&finding, securityreason.HomebrewPostureReason(securityreason.HomebrewEntryDeprecated, finding.Kind, finding.Name, reasonText, map[string]string{"reason_text": reasonText}))
 		finding.Remediation = "replace the deprecated Homebrew entry or allow temporarily by policy after review"
 		finding.Confidence = "medium"
 	case finding.Kind == "brew":
 		finding.Decision = "allow"
-		finding.Reason = "official Homebrew formula metadata is available and not disabled or deprecated"
+		setSafetyFindingReason(&finding, securityreason.HomebrewPostureReason(securityreason.HomebrewOfficialFormula, finding.Kind, finding.Name, "official Homebrew formula metadata is available and not disabled or deprecated", nil))
 		finding.Remediation = ""
 		finding.Confidence = "medium"
 	case finding.Kind == "cask":
 		finding.Decision = "review"
-		finding.Reason = caskProvenanceReason(finding.HomepageHost, finding.URLHost)
+		setSafetyFindingReason(&finding, securityreason.HomebrewCaskProvenanceReason(finding.Name, caskProvenanceReason(finding.HomepageHost, finding.URLHost), finding.HomepageHost, finding.URLHost))
 		finding.Remediation = caskProvenanceRemediation(finding.HomepageHost, finding.URLHost)
 		finding.Confidence = "low"
 	}
@@ -1129,20 +803,11 @@ func hostFromURL(rawURL string) string {
 }
 
 func appendEvidence(evidence []string, value string) []string {
-	for _, existing := range evidence {
-		if existing == value {
-			return evidence
-		}
-	}
-	return append(evidence, value)
+	return securitygate.AppendEvidence(evidence, value)
 }
 
 func loadBrewSafetyManifest(root string) (brewSafetyManifest, error) {
-	home := updevpath.HomeDir()
-	path := filepath.Join(home, "Brewfile")
-	if _, err := os.Stat(path); err != nil {
-		path = filepath.Join(root, "Brewfile.tmpl")
-	}
+	path := updevpath.HomeOrRootBrewfile(root)
 	file, err := os.Open(path)
 	if err != nil {
 		return brewSafetyManifest{}, err
@@ -1152,100 +817,32 @@ func loadBrewSafetyManifest(root string) (brewSafetyManifest, error) {
 }
 
 func parseBrewSafetyManifest(reader io.Reader, source string) (brewSafetyManifest, error) {
-	manifest := brewSafetyManifest{entries: map[string]brewSafetyEntry{}}
-	lineRe := regexp.MustCompile(`^\s*(brew|cask|tap|vscode)\s+"([^"]+)"`)
-	scanner := bufio.NewScanner(reader)
-	for scanner.Scan() {
-		match := lineRe.FindStringSubmatch(scanner.Text())
-		if match == nil {
-			continue
-		}
-		kind := match[1]
-		if kind != "brew" && kind != "cask" {
-			continue
-		}
-		rawName := strings.TrimSpace(match[2])
-		entry := brewSafetyEntry{
-			Kind:     kind,
-			Name:     brewSafetyNormalizeName(kind, rawName),
-			RawName:  rawName,
-			Source:   source,
-			Tap:      brewSafetyTap(kind, rawName),
-			URLBased: isURLBrewName(rawName),
-		}
-		manifest.entries[brewSafetyKey(kind, entry.Name)] = entry
-	}
-	return manifest, scanner.Err()
+	manifest, err := brew.ParseManifest(reader, source)
+	return brewSafetyManifest{Manifest: manifest}, err
 }
 
 func (manifest brewSafetyManifest) entry(kind string, name string) brewSafetyEntry {
-	if manifest.entries == nil {
-		return brewSafetyEntry{}
-	}
-	return manifest.entries[brewSafetyKey(kind, brewSafetyNormalizeName(kind, name))]
+	return manifest.Entry(kind, name)
 }
 
 func manifestWarnings(manifest brewSafetyManifest) []safetyFinding {
-	if manifest.entries == nil {
-		return nil
-	}
-	findings := []safetyFinding{}
-	for _, entry := range manifest.entries {
-		if !entry.URLBased {
-			continue
-		}
-		findings = append(findings, safetyFinding{
-			Provider:    "brew",
-			Kind:        entry.Kind,
-			Name:        entry.RawName,
-			Decision:    "review",
-			Reason:      "URL-based Homebrew cask needs manual provenance review before update",
-			Remediation: "review the cask source URL and add a temporary allow policy with reason and expiry if accepted",
-			Evidence:    []string{"Brewfile"},
-			Source:      entry.Source,
-			Tap:         entry.Tap,
-		})
-	}
-	sort.Slice(findings, func(i, j int) bool {
-		return findings[i].Name < findings[j].Name
-	})
-	return findings
-}
-
-func brewSafetyKey(kind string, name string) string {
-	return kind + ":" + name
+	return brew.ManifestWarnings(manifest.Manifest)
 }
 
 func brewSafetyNormalizeName(kind string, name string) string {
-	name = strings.TrimSpace(name)
-	if (kind == "brew" || kind == "cask") && strings.Contains(name, "/") && !isURLBrewName(name) {
-		parts := strings.Split(name, "/")
-		return parts[len(parts)-1]
-	}
-	return name
+	return brew.NormalizePackageName(kind, name)
 }
 
 func brewSafetyTap(kind string, name string) string {
-	if kind != "brew" && kind != "cask" {
-		return ""
-	}
-	if !strings.Contains(name, "/") || isURLBrewName(name) {
-		return ""
-	}
-	parts := strings.Split(name, "/")
-	if len(parts) < 3 {
-		return ""
-	}
-	return strings.Join(parts[:len(parts)-1], "/")
+	return brew.TapName(kind, name)
 }
 
 func isOfficialBrewTap(tap string) bool {
-	return tap == "" || strings.HasPrefix(tap, "homebrew/")
+	return brew.IsOfficialTap(tap)
 }
 
 func isURLBrewName(name string) bool {
-	lower := strings.ToLower(strings.TrimSpace(name))
-	return strings.HasPrefix(lower, "http://") || strings.HasPrefix(lower, "https://") || strings.HasPrefix(lower, "file://")
+	return brew.IsURLName(name)
 }
 
 func providerHeldBySafety(provider string, opts updateOptions, gates []safetyGate) string {

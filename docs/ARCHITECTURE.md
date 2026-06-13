@@ -17,21 +17,39 @@ support files such as `mise.toml`. Implementation belongs under `internal/`.
     cmd/        CLI commands, TTY routing, JSON/text output, cmd-only data
     backend/    backend recommendation reports, preference registry, evidence probes
     provider/   provider interfaces and comparison helpers
-    brew/       Homebrew and Brewfile provider
-    mise/       mise provider
+    brew/       Homebrew/Brewfile provider plus manifest parsing, metadata, outdated JSON, safety finding, and posture helpers
+    githubrepo/ GitHub repository/release URL parsing, release/tag metadata, and posture helpers
+    inventoryannotate/ inventory report annotations that combine provider evidence with root/profile policy
+    manualinventory/ platform/source scanners and source parsers for manual and external apps
+    mise/       mise provider, manifest/outdated JSON helpers, safety finding, registry/provider metadata resolvers, and backend evidence helpers
+    nativeaudit/ provider-native audit evidence model, target discovery, summaries, JSON schemas, and parsers
+    registryaudit/ package-registry security metadata and posture helpers
+    vscode/    VS Code Marketplace metadata and posture helpers
     plan/       updev-specific status/report model
     runner/     subprocess runner and test seam
     snapshot/   manifest snapshots and rollback helpers
     textui/     table, width, color, and non-TTY rendering helpers
     reviewui/   reusable TTY review/detail browser
-    securitygate/ provider gate, finding, summary, and update-safety cache model
-    updevpath/  updev root, XDG config/cache, policy, and source path resolution
+    updatereason/ update-step reason codes, structured args, compatibility inference, and render-time labels
+    securityreason/ security finding reason codes, structured args, compatibility inference, and render-time labels
+    securityscanner/ external scanner selection, evidence summaries, and scanner option helpers
+    securitygate/ provider gate/finding model, decision helpers, gate finalization, update-safety cache, and registry metadata cache
+    securitypolicy/ local security policy JSON schema, store, rule analysis, and matching helpers
+    updevpath/  updev root, XDG config/cache/data, policy, and source path resolution
 ```
 
 Keep new provider-specific code in its provider package when possible. Put
 backend/provider recommendation logic in `internal/backend`. Put code in
 `internal/cmd/` only when it is command parsing, command-local adapters,
 human/JSON rendering, or TTY route/action wiring.
+Avoid adding one-helper files to `internal/cmd/`; when a helper is not clearly
+command-local, extract it to an internal package with a narrow API. When a
+helper is command-local, colocate it with the command domain that owns the data
+shape instead of creating another top-level `cmd` file.
+Do not solve `cmd` file count by creating nested command subpackages that still
+own business logic; Go directories are package boundaries, so useful cleanup is
+domain extraction (`securitygate`, `registryaudit`, `reviewui`, `backend`,
+`manualinventory`, etc.) followed by thinner command wiring.
 
 ## Provider Model
 
@@ -89,9 +107,9 @@ Known direct subprocess exceptions:
   foreground interactive edit sessions.
 - `cmd.translateBatch` launches Codex for description translation; this is an
   explicit agent-assisted side path, not provider state collection.
-- `cmd.runManualAgentCommand` launches the configured local agent command for
-  manual inventory metadata enrichment after explicit opt-in; it validates the
-  structured draft before writing anything.
+- `manualinventory.RunAgentCommand` launches the configured local agent command
+  for manual inventory metadata enrichment after explicit opt-in; command code
+  validates the structured draft before writing anything.
 - `cmd.readGlobalDefault` shells out to `defaults` to read macOS global locale
   when environment locale is not enough.
 - `cmd.githubTokenFromCLI` may call `gh auth token` as an isolated credential
@@ -110,7 +128,7 @@ the docs check passes.
 `internal/textui` owns ANSI-safe widths, headings, status labels, color, and
 non-TTY-safe output. `internal/reviewui` owns reusable browser/detail behavior:
 keyboard focus, Back/Home/Exit, `/` filtering, expandable rows, scroll
-preservation, and opt-in mouse modes.
+preservation, action consumption, route state caching, and opt-in mouse modes.
 
 Keep report builders independent from terminal interaction. TTY views consume
 reports; they should not be the only place where behavior is computed.
@@ -122,49 +140,20 @@ exit code after successful encoding.
 
 ## Scalability Audit And Refactor Plan
 
-Before adding broad provider surfaces, review new work against these placement
-questions:
+Source-count budgets, package placement rules, and the active refactor ledger
+live in [SOURCE-STRUCTURE.md](SOURCE-STRUCTURE.md). Read that file before adding
+new files under `internal/` or moving code between packages.
 
-- Is this provider-specific evidence, policy, or mutation logic? Keep it in the
-  provider package or a provider-oriented engine, not in the command handler.
-- Is this UI-only presentation? Keep behavior in the report/action model and
-  render it from `textui` or `reviewui`.
-- Is this curated policy data? Put it behind an explicit data/config-backed
-  registry with source evidence and tests.
-- Is this path, environment, OS, or profile resolution? Centralize it behind a
-  testable config/path helper and avoid implicit dotfiles-only defaults.
-- Is this an external command? Use `internal/runner` unless it is one of the
-  documented interactive or credential exceptions.
-- Is this user-facing text? Keep stable JSON codes and decisions first; localize
-  and shorten human labels at the render boundary.
+The short version:
 
-Current scalability risks and planned responses:
-
-| Area | Risk | Plan | Priority |
-|------|------|------|----------|
-| `internal/cmd` size | Command files can mix CLI parsing, report building, provider evidence, TUI routing, and action execution. | Keep backend recommendation reports in `internal/backend`; continue extracting action services, manual inventory, and security gate engines so `cmd` mostly assembles commands and views. | P1 |
-| Backend recommendations | Curated backend preference seeds can become opaque as ecosystems broaden. | Keep tool-specific seeds in the backend registry or a provider-metadata resolver with source evidence. Registry rules must carry source evidence that is surfaced in JSON/detail views and covered by tests. New one-off mappings require a registry entry and tests, not an inline `case`. | P1 |
-| Direct subprocesses | A direct `exec.Command` can bypass fakes, logs, policy, and test seams. | Keep direct subprocesses only in the documented exception list. Add periodic grep/docs-check coverage so new direct calls are reviewed. TUI actions that mutate state should call runner-backed services. | P1 |
-| OS/path defaults | macOS paths, XDG/Home, source-root, and repo-local markdown compatibility can become environment assumptions. | Keep root/config/cache/policy/source resolution in `internal/updevpath`. Continue moving provider/platform-specific paths behind explicit helpers or scanner contracts. Register OS scanners per platform. Keep repo-local markdown as explicit compatibility input, never an implicit public default. | P1 |
-| Security gates | Provider switches and feed parsing can grow into another command-local matrix. | Keep the common gate/finding/summary report model and update-safety cache store in `internal/securitygate`. Move provider-specific release-age/advisory/native-audit evidence into provider or security subpackages. mise vfox/asdf-style ecosystems use data-driven provider metadata entries (`provider identity`, resolver type, bounded source URL, parser contract) instead of tool-name branches. Add contract drift checks for provider CLI/API/schema changes. | P1 |
-| TUI routing | `updev`, `last`, `list`, manual review, and backend review can diverge in route handling and back-stack behavior. | Keep shared navigation, action focus, scroll preservation, and async refresh primitives in `reviewui`; command code supplies sections, rows, and action handlers. | P2 |
-| Width and localization | Hand-computed widths or embedded translated prose can regress tables and JSON contracts. | Keep display width in `textui`; keep recurring reason/status strings as stable codes plus render-time labels. | P1 |
-| Test structure | Large test files hide fixture duplication and make targeted runs slower. | Split tests by policy/scanner/native-audit/update/list/router/mise-bump domains and share fixture builders. Prefer focused unit tests before TTY acceptance tests. | P2 |
-| Cache/report schema | Caches can accidentally store final decisions instead of reusable evidence. | Document cache ownership and invalidation in the data model. Store raw provider evidence plus decision inputs; recompute decisions when policy changes. | P2 |
-
-Execution order:
-
-1. Freeze the placement rules above and use them in release reviews.
-2. Move reusable TTY action and text primitives into `reviewui`/`textui` before
-   adding more interactive screens.
-3. Expand the backend registry into data-backed entries with source evidence.
-4. Extract provider-specific security gate implementations.
-5. Split manual inventory scanners and enrichment into platform/source packages.
-6. Split large tests and add direct-subprocess/provider-contract drift checks.
-
-Do not add new tool-name-only fixes, direct provider command calls, implicit
-repository-local defaults, or TUI-only behavior that is missing from the report
-model.
+- provider-specific evidence, policy, mutation, parsing, and metadata contracts
+  belong in provider or security packages, not in command handlers;
+- UI-only presentation belongs in the report/action model and renders through
+  `textui` or `reviewui`;
+- user-facing text should start from stable JSON codes and decisions, with
+  localization at the render boundary;
+- external commands go through `internal/runner` unless listed in the direct
+  subprocess exceptions above.
 
 ## Shared Internal Extraction
 

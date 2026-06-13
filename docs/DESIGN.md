@@ -52,11 +52,10 @@ Apply these rules when changing docs or CLI behavior:
 - When a change affects a fact with multiple mirrors, the release checklist
   should name every mirror that must be reviewed, even when no edit is needed.
 
-Planned drift checks should start small: verify that release tags have matching
-release-note files, embedded agent skill output matches `docs/agent/`, README
-links resolve, and local `mise run check` still mirrors CI's module verify, vet,
-test, and build gates. Broader checks can later cover command-help snapshots,
-JSON schema examples, and provider compatibility ledgers.
+Current drift checks verify release-note presence, agent docs, README/local
+Markdown links, CI/mise validation parity, and direct subprocess exceptions.
+Broader checks can later cover command-help snapshots, JSON schema examples,
+and provider compatibility ledgers.
 
 ## Design Scope
 
@@ -134,14 +133,14 @@ Agent-facing guidance is useful both for users who ask AI coding agents to run
 place where command semantics drift. Keep one canonical agent guidance tree and
 make every other surface reference or embed it:
 
-- `docs/agent/USAGE.md` is the planned canonical guide for agent workflows:
+- `docs/agent/USAGE.md` is the canonical guide for agent workflows:
   safe read-only entrypoints, mutation boundaries, exit-code handling, JSON
   usage, security-gate behavior, and `updev list` as the primary review
   surface.
-- `docs/agent/SKILL.md` is the planned installable skill artifact. It stays
+- `docs/agent/SKILL.md` is the installable skill artifact. It stays
   short and procedural, and points to `updev help`, `updev help agent`, and
   `docs/agent/USAGE.md` instead of duplicating full command reference.
-- `updev skill` should print the embedded `docs/agent/SKILL.md`;
+- Future `updev skill` should print the embedded `docs/agent/SKILL.md`;
   `updev skill --full` should include the deeper usage guide. The CLI must
   embed these files directly rather than carrying a second copy in Go strings.
 - README should only advertise that agent guidance exists and show the minimal

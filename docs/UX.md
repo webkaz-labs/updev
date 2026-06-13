@@ -260,7 +260,10 @@ holding in the real TTY, not only in renderer tests:
      version mapping, platform, and distribution ownership evidence are strong
      enough to apply.
 
-## v0.5.7 Tracking Checklist
+## Accepted Routed UX Baseline
+
+This baseline was accepted in `v0.5.7` and remains an invariant for later TUI
+changes.
 
 - [x] Shared table browser rows can carry TTY-only routing actions and expose
   `a/1`, `2`, ... action hints like the detail browser.

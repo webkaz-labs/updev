@@ -2,24 +2,20 @@ package cmd
 
 import (
 	"bufio"
-	"bytes"
 	"context"
-	"encoding/json"
-	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"os"
-	"path/filepath"
 	"regexp"
-	"sort"
-	"strconv"
 	"strings"
 	"time"
 
 	"github.com/webkaz-labs/updev/internal/plan"
 	"github.com/webkaz-labs/updev/internal/runner"
+	"github.com/webkaz-labs/updev/internal/securitygate"
+	"github.com/webkaz-labs/updev/internal/securityreason"
 	"github.com/webkaz-labs/updev/internal/updevpath"
+	"github.com/webkaz-labs/updev/internal/vscode"
 )
 
 const defaultVSCodeMarketplaceURL = "https://marketplace.visualstudio.com/_apis/public/gallery/extensionquery?api-version=7.2-preview.1"
@@ -29,126 +25,45 @@ const (
 	defaultVSCodeMinAverageRating    = 2.0
 	defaultVSCodeMinExtensionAgeDays = 14
 	defaultVSCodeMinUpdateAgeDays    = 3
+	includeVSCodeEnvName             = "UPDEV_INCLUDE_VSCODE"
 	vscodeMinInstallCountEnvName     = "UPDEV_VSCODE_MIN_INSTALL_COUNT"
 	vscodeMinAverageRatingEnvName    = "UPDEV_VSCODE_MIN_AVERAGE_RATING"
 	vscodeMinExtensionAgeDaysEnvName = "UPDEV_VSCODE_MIN_EXTENSION_AGE_DAYS"
 	vscodeMinUpdateAgeDaysEnvName    = "UPDEV_VSCODE_MIN_UPDATE_AGE_DAYS"
 )
 
-type vscodePosture struct {
-	Provider          string   `json:"provider"`
-	Kind              string   `json:"kind"`
-	Name              string   `json:"name"`
-	Publisher         string   `json:"publisher,omitempty"`
-	DisplayName       string   `json:"display_name,omitempty"`
-	Version           string   `json:"version,omitempty"`
-	LastUpdated       string   `json:"last_updated,omitempty"`
-	PublishedDate     string   `json:"published_date,omitempty"`
-	Flags             string   `json:"flags,omitempty"`
-	PublisherVerified bool     `json:"publisher_verified"`
-	ExecutesCode      bool     `json:"executes_code,omitempty"`
-	RepositoryURL     string   `json:"repository_url,omitempty"`
-	SupportURL        string   `json:"support_url,omitempty"`
-	InstallCount      float64  `json:"install_count,omitempty"`
-	AverageRating     float64  `json:"average_rating,omitempty"`
-	Decision          string   `json:"decision"`
-	Confidence        string   `json:"confidence"`
-	Reason            string   `json:"reason,omitempty"`
-	Remediation       string   `json:"remediation,omitempty"`
-	Evidence          []string `json:"evidence,omitempty"`
-	URL               string   `json:"url,omitempty"`
+type vscodePosture = vscode.Posture
+type vscodeMarketplaceRequest = vscode.MarketplaceRequest
+type vscodeMarketplaceFilter = vscode.MarketplaceFilter
+type vscodeMarketplaceCriterion = vscode.MarketplaceCriterion
+type vscodeMarketplaceResponse = vscode.MarketplaceResponse
+type vscodeMarketplaceResult = vscode.MarketplaceResult
+type vscodeExtension = vscode.Extension
+type vscodePublisher = vscode.Publisher
+type vscodeVersion = vscode.Version
+type vscodeProperty = vscode.Property
+type vscodeStatistic = vscode.Statistic
+
+func includeVSCodeExtensionsByDefault() bool {
+	if value, ok := boolEnv(includeVSCodeEnvName); ok {
+		return value
+	}
+	if configured := loadUpdevConfig().Providers.IncludeVSCode; configured != nil {
+		return *configured
+	}
+	return false
 }
 
-type vscodeMarketplaceRequest struct {
-	Filters []vscodeMarketplaceFilter `json:"filters"`
-	Flags   int                       `json:"flags"`
+func providerFilterIsVSCode(provider string) bool {
+	return strings.EqualFold(strings.TrimSpace(provider), "vscode")
 }
 
-type vscodeMarketplaceFilter struct {
-	Criteria []vscodeMarketplaceCriterion `json:"criteria"`
-}
-
-type vscodeMarketplaceCriterion struct {
-	FilterType int    `json:"filterType"`
-	Value      string `json:"value"`
-}
-
-type vscodeMarketplaceResponse struct {
-	Results []vscodeMarketplaceResult `json:"results"`
-}
-
-type vscodeMarketplaceResult struct {
-	Extensions []vscodeExtension `json:"extensions"`
-}
-
-type vscodeExtension struct {
-	Publisher     vscodePublisher   `json:"publisher"`
-	ExtensionName string            `json:"extensionName"`
-	DisplayName   string            `json:"displayName"`
-	Flags         string            `json:"flags"`
-	LastUpdated   string            `json:"lastUpdated"`
-	PublishedDate string            `json:"publishedDate"`
-	Versions      []vscodeVersion   `json:"versions"`
-	Statistics    []vscodeStatistic `json:"statistics"`
-}
-
-type vscodePublisher struct {
-	PublisherName    string `json:"publisherName"`
-	DisplayName      string `json:"displayName"`
-	Flags            string `json:"flags"`
-	Domain           string `json:"domain"`
-	IsDomainVerified bool   `json:"isDomainVerified"`
-}
-
-type vscodeVersion struct {
-	Version     string           `json:"version"`
-	LastUpdated string           `json:"lastUpdated"`
-	Properties  []vscodeProperty `json:"properties"`
-}
-
-type vscodeProperty struct {
-	Key   string `json:"key"`
-	Value string `json:"value"`
-}
-
-type vscodeStatistic struct {
-	StatisticName string  `json:"statisticName"`
-	Value         float64 `json:"value"`
+func kindFilterIsVSCode(kind string) bool {
+	return strings.EqualFold(strings.TrimSpace(kind), "vscode")
 }
 
 func vscodePosturesFromItems(ctx context.Context, client *http.Client, endpoint string, items []plan.Item) ([]vscodePosture, error) {
-	extensions := []string{}
-	seen := map[string]bool{}
-	for _, item := range items {
-		if item.Provider != "brew" || item.Kind != "vscode" {
-			continue
-		}
-		name := strings.TrimSpace(item.Name)
-		if name == "" {
-			continue
-		}
-		key := strings.ToLower(name)
-		if seen[key] {
-			continue
-		}
-		seen[key] = true
-		extensions = append(extensions, name)
-	}
-	postures := make([]vscodePosture, 0, len(extensions))
-	errs := []error{}
-	for _, extension := range extensions {
-		metadata, err := fetchVSCodeMarketplaceExtension(ctx, client, endpoint, extension)
-		if err != nil {
-			errs = append(errs, fmt.Errorf("%s: %w", extension, err))
-			postures = append(postures, vscodePostureUnavailable(extension, err))
-			continue
-		}
-		postures = append(postures, vscodePostureFromMetadata(extension, metadata))
-	}
-	sort.Slice(postures, func(i, j int) bool {
-		return postures[i].Name < postures[j].Name
-	})
-	return postures, errors.Join(errs...)
+	return vscode.PosturesFromItems(ctx, client, endpoint, items, vscodeThresholds())
 }
 
 func collectVSCodeSafetyWithPolicy(ctx context.Context, commandRunner commandRunner, root string, policy securityPolicy) safetyGate {
@@ -175,13 +90,7 @@ func collectVSCodeSafetyWithPolicy(ctx context.Context, commandRunner commandRun
 		gate.Warnings = append(gate.Warnings, "VS Code advisory OSV query failed: "+advisoryErr.Error())
 	}
 	gate.Findings = applySecurityPolicyToSafetyFindings(policy, gate.Findings)
-	for _, finding := range gate.Findings {
-		if finding.Decision != "allow" {
-			gate.Status = plan.StatusHeld
-		}
-	}
-	gate.Summary = safetySummaryFromFindings(gate.Findings)
-	return gate
+	return applySafetyFindings(gate, gate.Findings)
 }
 
 func collectVSCodeUpdateSafetyWithPolicy(ctx context.Context, commandRunner commandRunner, root string, policy securityPolicy) safetyGate {
@@ -236,13 +145,7 @@ func collectVSCodeUpdateSafetyWithPolicy(ctx context.Context, commandRunner comm
 		}
 	}
 	gate.Findings = applySecurityPolicyToSafetyFindings(policy, gate.Findings)
-	for _, finding := range gate.Findings {
-		if finding.Decision != "allow" {
-			gate.Status = plan.StatusHeld
-		}
-	}
-	gate.Summary = safetySummaryFromFindings(gate.Findings)
-	return gate
+	return applySafetyFindings(gate, gate.Findings)
 }
 
 func vscodeInstalledBrewfileItems(items []plan.Item, installedVersions map[string]string) []plan.Item {
@@ -297,11 +200,7 @@ func parseVSCodeInstalledVersions(raw string) map[string]string {
 }
 
 func vscodeItemsFromBrewfile(root string) ([]plan.Item, error) {
-	home := updevpath.HomeDir()
-	path := filepath.Join(home, "Brewfile")
-	if _, err := os.Stat(path); err != nil {
-		path = filepath.Join(root, "Brewfile.tmpl")
-	}
+	path := updevpath.HomeOrRootBrewfile(root)
 	file, err := os.Open(path)
 	if err != nil {
 		return nil, err
@@ -356,6 +255,8 @@ func vscodeSafetyFinding(posture vscodePosture, installedVersion string) safetyF
 		AverageRating:     posture.AverageRating,
 		Decision:          posture.Decision,
 		Reason:            firstNonEmpty(posture.Reason, "VS Code Marketplace posture is allowed"),
+		ReasonCode:        posture.ReasonCode,
+		ReasonArgs:        posture.ReasonArgs,
 		Confidence:        posture.Confidence,
 		Evidence:          appendEvidence(posture.Evidence, "vscode-marketplace"),
 		URL:               posture.URL,
@@ -423,11 +324,10 @@ func vscodeSafetyAdvisoryPackagesFromFindings(findings []safetyFinding) ([]secur
 
 func applyVSCodeSafetyAdvisory(finding safetyFinding, advisory securityFinding) safetyFinding {
 	finding.Decision = "hold"
-	finding.Reason = "OSV advisory match for VS Code extension version: " + advisory.VulnID
 	finding.Confidence = "high"
 	finding.Evidence = appendEvidence(finding.Evidence, "osv-vscode")
 	finding.AdvisoryIDs = appendUniqueString(finding.AdvisoryIDs, advisory.VulnID)
-	finding.Reason = "OSV advisory match for VS Code extension version: " + strings.Join(finding.AdvisoryIDs, ",")
+	setSafetyFindingReason(&finding, securityreason.VSCodePostureReason(securityreason.VSCodeAdvisoryMatch, finding.Name, "OSV advisory match for VS Code extension version: "+strings.Join(finding.AdvisoryIDs, ","), map[string]string{"advisory_ids": strings.Join(finding.AdvisoryIDs, ",")}))
 	for _, fixed := range advisory.FixedVersions {
 		finding.FixedVersions = appendUniqueString(finding.FixedVersions, fixed)
 	}
@@ -443,148 +343,15 @@ func vscodeAdvisoryRemediation(fixedVersions []string) string {
 }
 
 func fetchVSCodeMarketplaceExtension(ctx context.Context, client *http.Client, endpoint string, extension string) (vscodeExtension, error) {
-	body := vscodeMarketplaceRequest{
-		Filters: []vscodeMarketplaceFilter{{
-			Criteria: []vscodeMarketplaceCriterion{{
-				FilterType: 7,
-				Value:      extension,
-			}},
-		}},
-		Flags: 914,
-	}
-	data, err := json.Marshal(body)
-	if err != nil {
-		return vscodeExtension{}, err
-	}
-	requestCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
-	defer cancel()
-	request, err := http.NewRequestWithContext(requestCtx, http.MethodPost, endpoint, bytes.NewReader(data))
-	if err != nil {
-		return vscodeExtension{}, err
-	}
-	request.Header.Set("Content-Type", "application/json")
-	request.Header.Set("Accept", "application/json;api-version=7.2-preview.1")
-	response, err := client.Do(request)
-	if err != nil {
-		return vscodeExtension{}, err
-	}
-	defer response.Body.Close()
-	raw, err := io.ReadAll(io.LimitReader(response.Body, 4*1024*1024))
-	if err != nil {
-		return vscodeExtension{}, err
-	}
-	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return vscodeExtension{}, fmt.Errorf("marketplace query failed: HTTP %d: %s", response.StatusCode, truncate(strings.TrimSpace(string(raw)), 180))
-	}
-	var decoded vscodeMarketplaceResponse
-	if err := json.Unmarshal(raw, &decoded); err != nil {
-		return vscodeExtension{}, err
-	}
-	for _, result := range decoded.Results {
-		for _, candidate := range result.Extensions {
-			fullName := strings.ToLower(candidate.Publisher.PublisherName + "." + candidate.ExtensionName)
-			if fullName == strings.ToLower(extension) {
-				return candidate, nil
-			}
-		}
-	}
-	return vscodeExtension{}, fmt.Errorf("extension not found")
+	return vscode.FetchMarketplaceExtension(ctx, client, endpoint, extension)
 }
 
 func vscodePostureFromMetadata(requestedName string, metadata vscodeExtension) vscodePosture {
-	version := ""
-	properties := []vscodeProperty{}
-	if len(metadata.Versions) > 0 {
-		version = metadata.Versions[0].Version
-		properties = metadata.Versions[0].Properties
-	}
-	repositoryURL := firstNonEmpty(
-		vscodePropertyValue(properties, "Microsoft.VisualStudio.Services.Links.Source"),
-		vscodePropertyValue(properties, "Microsoft.VisualStudio.Services.Links.Repository"),
-		vscodePropertyValue(properties, "Microsoft.VisualStudio.Services.Links.GitHub"),
-	)
-	supportURL := vscodePropertyValue(properties, "Microsoft.VisualStudio.Services.Links.Support")
-	executesCode := strings.EqualFold(vscodePropertyValue(properties, "Microsoft.VisualStudio.Code.ExecutesCode"), "true")
-	installCount, hasInstallCount := vscodeStatisticValue(metadata.Statistics, "install")
-	averageRating, hasAverageRating := vscodeStatisticValue(metadata.Statistics, "averagerating")
-	posture := vscodePosture{
-		Provider:          "brew",
-		Kind:              "vscode",
-		Name:              requestedName,
-		Publisher:         metadata.Publisher.PublisherName,
-		DisplayName:       metadata.DisplayName,
-		Version:           version,
-		LastUpdated:       metadata.LastUpdated,
-		PublishedDate:     metadata.PublishedDate,
-		Flags:             metadata.Flags,
-		PublisherVerified: metadata.Publisher.IsDomainVerified,
-		ExecutesCode:      executesCode,
-		RepositoryURL:     repositoryURL,
-		SupportURL:        supportURL,
-		InstallCount:      installCount,
-		AverageRating:     averageRating,
-		Decision:          "allow",
-		Confidence:        "medium",
-		URL:               "https://marketplace.visualstudio.com/items?itemName=" + requestedName,
-	}
-	minInstallCount := minVSCodeInstallCount()
-	minAverageRating := minVSCodeAverageRating()
-	minExtensionAge := minVSCodeExtensionAge()
-	switch {
-	case !strings.Contains(metadata.Flags, "public"):
-		posture.Decision = "review"
-		posture.Reason = "Marketplace metadata does not mark this extension public"
-		posture.Remediation = "review Marketplace visibility and source provenance before keeping this extension"
-	case !strings.Contains(metadata.Flags, "validated"):
-		posture.Decision = "review"
-		posture.Reason = "Marketplace metadata does not mark this extension validated"
-		posture.Remediation = "review Marketplace validation status and source provenance before keeping this extension"
-	case !metadata.Publisher.IsDomainVerified:
-		posture.Decision = "review"
-		posture.Reason = "publisher domain is not verified in Marketplace metadata"
-		posture.Remediation = "verify publisher identity and source repository before adding a temporary policy override"
-	case executesCode && repositoryURL == "":
-		posture.Decision = "review"
-		posture.Reason = "extension executes code but Marketplace metadata does not expose a source repository"
-		posture.Remediation = "require a trusted source repository or replace the extension before allowing code execution"
-	case repositoryURL == "":
-		posture.Decision = "review"
-		posture.Confidence = "low"
-		posture.Reason = "Marketplace metadata does not expose a source repository"
-		posture.Remediation = "review extension provenance manually before adding a temporary policy override"
-	case vscodeExtensionTooNew(posture.PublishedDate, minExtensionAge):
-		posture.Decision = "review"
-		posture.Confidence = "low"
-		posture.Reason = vscodeExtensionAgeReason(posture.PublishedDate, minExtensionAge)
-		posture.Remediation = "wait until the Marketplace extension reaches the minimum age or review publisher/source provenance before allowing"
-		posture.Evidence = appendEvidence(posture.Evidence, "vscode-marketplace age")
-	case hasInstallCount && posture.InstallCount < minInstallCount:
-		posture.Decision = "review"
-		posture.Confidence = "low"
-		posture.Reason = fmt.Sprintf("Marketplace install count is below threshold: %.0f installs, minimum %.0f", posture.InstallCount, minInstallCount)
-		posture.Remediation = "review publisher and repository provenance before accepting a low-install extension"
-		posture.Evidence = appendEvidence(posture.Evidence, "vscode-marketplace popularity")
-	case hasAverageRating && posture.AverageRating < minAverageRating:
-		posture.Decision = "review"
-		posture.Confidence = "low"
-		posture.Reason = fmt.Sprintf("Marketplace average rating is below threshold: %.1f, minimum %.1f", posture.AverageRating, minAverageRating)
-		posture.Remediation = "review extension quality signals and source provenance before accepting a low-rated extension"
-		posture.Evidence = appendEvidence(posture.Evidence, "vscode-marketplace rating")
-	}
-	return posture
+	return vscode.PostureFromMetadata(requestedName, metadata, vscodeThresholds())
 }
 
 func vscodePostureUnavailable(extension string, err error) vscodePosture {
-	return vscodePosture{
-		Provider:    "brew",
-		Kind:        "vscode",
-		Name:        extension,
-		Decision:    "review",
-		Confidence:  "low",
-		Reason:      "VS Code Marketplace metadata unavailable: " + err.Error(),
-		Remediation: "retry when Marketplace metadata is reachable or review the extension manually before adding a policy override",
-		URL:         "https://marketplace.visualstudio.com/items?itemName=" + extension,
-	}
+	return vscode.PostureUnavailable(extension, err)
 }
 
 func vscodeAdvisoryPackagesFromPostures(postures []vscodePosture) []securityPackage {
@@ -612,28 +379,23 @@ func vscodeAdvisoryPackagesFromPostures(postures []vscodePosture) []securityPack
 }
 
 func vscodeStatisticValue(statistics []vscodeStatistic, name string) (float64, bool) {
-	for _, statistic := range statistics {
-		if statistic.StatisticName == name {
-			return statistic.Value, true
-		}
-	}
-	return 0, false
+	return vscode.StatisticValue(statistics, name)
 }
 
 func vscodePropertyValue(properties []vscodeProperty, key string) string {
-	for _, property := range properties {
-		if property.Key == key {
-			return strings.TrimSpace(property.Value)
-		}
-	}
-	return ""
+	return vscode.PropertyValue(properties, key)
 }
 
 func vscodeMarketplaceURL() string {
-	if value := strings.TrimSpace(os.Getenv("UPDEV_VSCODE_MARKETPLACE_URL")); value != "" {
-		return value
+	return configuredEnvString(defaultVSCodeMarketplaceURL, "UPDEV_VSCODE_MARKETPLACE_URL")
+}
+
+func vscodeThresholds() vscode.Thresholds {
+	return vscode.Thresholds{
+		MinInstallCount:  minVSCodeInstallCount(),
+		MinAverageRating: minVSCodeAverageRating(),
+		MinExtensionAge:  minVSCodeExtensionAge(),
 	}
-	return defaultVSCodeMarketplaceURL
 }
 
 func minVSCodeInstallCount() float64 {
@@ -641,17 +403,7 @@ func minVSCodeInstallCount() float64 {
 }
 
 func minVSCodeInstallCountWithConfig(config updevConfig) float64 {
-	threshold := float64(defaultVSCodeMinInstallCount)
-	if config.Security.VSCode.MinInstallCount != nil && *config.Security.VSCode.MinInstallCount >= 0 {
-		threshold = *config.Security.VSCode.MinInstallCount
-	}
-	if value := strings.TrimSpace(os.Getenv(vscodeMinInstallCountEnvName)); value != "" {
-		parsed, err := strconv.ParseFloat(value, 64)
-		if err == nil && parsed >= 0 {
-			threshold = parsed
-		}
-	}
-	return threshold
+	return configuredNonNegativeFloat(float64(defaultVSCodeMinInstallCount), config.Security.VSCode.MinInstallCount, vscodeMinInstallCountEnvName)
 }
 
 func minVSCodeAverageRating() float64 {
@@ -659,17 +411,7 @@ func minVSCodeAverageRating() float64 {
 }
 
 func minVSCodeAverageRatingWithConfig(config updevConfig) float64 {
-	threshold := defaultVSCodeMinAverageRating
-	if config.Security.VSCode.MinAverageRating != nil && *config.Security.VSCode.MinAverageRating >= 0 {
-		threshold = *config.Security.VSCode.MinAverageRating
-	}
-	if value := strings.TrimSpace(os.Getenv(vscodeMinAverageRatingEnvName)); value != "" {
-		parsed, err := strconv.ParseFloat(value, 64)
-		if err == nil && parsed >= 0 {
-			threshold = parsed
-		}
-	}
-	return threshold
+	return configuredNonNegativeFloat(defaultVSCodeMinAverageRating, config.Security.VSCode.MinAverageRating, vscodeMinAverageRatingEnvName)
 }
 
 func minVSCodeExtensionAge() time.Duration {
@@ -677,16 +419,7 @@ func minVSCodeExtensionAge() time.Duration {
 }
 
 func minVSCodeExtensionAgeWithConfig(config updevConfig) time.Duration {
-	days := defaultVSCodeMinExtensionAgeDays
-	if config.Security.VSCode.MinExtensionAgeDays != nil && *config.Security.VSCode.MinExtensionAgeDays >= 0 {
-		days = *config.Security.VSCode.MinExtensionAgeDays
-	}
-	if value := strings.TrimSpace(os.Getenv(vscodeMinExtensionAgeDaysEnvName)); value != "" {
-		parsed, err := strconv.Atoi(value)
-		if err == nil && parsed >= 0 {
-			days = parsed
-		}
-	}
+	days := configuredNonNegativeInt(defaultVSCodeMinExtensionAgeDays, config.Security.VSCode.MinExtensionAgeDays, vscodeMinExtensionAgeDaysEnvName)
 	return time.Duration(days) * 24 * time.Hour
 }
 
@@ -695,38 +428,16 @@ func minVSCodeUpdateAge() time.Duration {
 }
 
 func minVSCodeUpdateAgeWithConfig(config updevConfig) time.Duration {
-	days := defaultVSCodeMinUpdateAgeDays
-	if config.Security.VSCode.MinUpdateAgeDays != nil && *config.Security.VSCode.MinUpdateAgeDays >= 0 {
-		days = *config.Security.VSCode.MinUpdateAgeDays
-	}
-	if value := strings.TrimSpace(os.Getenv(vscodeMinUpdateAgeDaysEnvName)); value != "" {
-		parsed, err := strconv.Atoi(value)
-		if err == nil && parsed >= 0 {
-			days = parsed
-		}
-	}
+	days := configuredNonNegativeInt(defaultVSCodeMinUpdateAgeDays, config.Security.VSCode.MinUpdateAgeDays, vscodeMinUpdateAgeDaysEnvName)
 	return time.Duration(days) * 24 * time.Hour
 }
 
 func vscodeExtensionTooNew(publishedDate string, minAge time.Duration) bool {
-	if minAge <= 0 {
-		return false
-	}
-	published, ok := parseVSCodeMarketplaceTime(publishedDate)
-	if !ok {
-		return false
-	}
-	return time.Since(published) < minAge
+	return vscode.ExtensionTooNew(publishedDate, minAge)
 }
 
 func vscodeExtensionAgeReason(publishedDate string, minAge time.Duration) string {
-	published, ok := parseVSCodeMarketplaceTime(publishedDate)
-	if !ok {
-		return "Marketplace extension age is unavailable"
-	}
-	ageDays := int(time.Since(published).Hours() / 24)
-	minDays := int(minAge.Hours() / 24)
-	return fmt.Sprintf("Marketplace extension is newly published: age %d days, minimum %d days", ageDays, minDays)
+	return vscode.ExtensionAgeReason(publishedDate, minAge)
 }
 
 func applyVSCodeUpdateAge(finding safetyFinding, minAge time.Duration) safetyFinding {
@@ -734,33 +445,22 @@ func applyVSCodeUpdateAge(finding safetyFinding, minAge time.Duration) safetyFin
 	if minAge <= 0 || !ok {
 		return finding
 	}
-	age := time.Since(updated)
-	finding.ReleaseDate = updated.Format(time.RFC3339)
-	finding.ReleaseAgeDays = int(age.Hours() / 24)
-	finding.MinReleaseAgeDays = int(minAge.Hours() / 24)
-	finding.Evidence = appendEvidence(finding.Evidence, "vscode-marketplace update-age")
+	finding, age := securitygate.AnnotateReleaseAge(finding, updated, minAge, "vscode-marketplace update-age")
 	if age >= minAge {
 		return finding
 	}
 	finding.Decision = "hold"
 	finding.Confidence = "medium"
-	finding.Reason = fmt.Sprintf("Marketplace extension update is too new: age %d days, minimum %d days", finding.ReleaseAgeDays, finding.MinReleaseAgeDays)
+	setSafetyFindingReason(&finding, securityreason.VSCodePostureReason(securityreason.VSCodeExtensionTooNew, finding.Name, fmt.Sprintf("Marketplace extension update is too new: age %d days, minimum %d days", finding.ReleaseAgeDays, finding.MinReleaseAgeDays), map[string]string{
+		"age_days":     fmt.Sprintf("%d", finding.ReleaseAgeDays),
+		"min_age_days": fmt.Sprintf("%d", finding.MinReleaseAgeDays),
+	}))
 	finding.Remediation = "wait until the Marketplace extension update reaches the minimum age or add a temporary allow policy with reason and expiry after review"
 	return finding
 }
 
 func parseVSCodeMarketplaceTime(value string) (time.Time, bool) {
-	value = strings.TrimSpace(value)
-	if value == "" {
-		return time.Time{}, false
-	}
-	for _, layout := range []string{time.RFC3339Nano, time.RFC3339} {
-		parsed, err := time.Parse(layout, value)
-		if err == nil {
-			return parsed, true
-		}
-	}
-	return time.Time{}, false
+	return vscode.ParseMarketplaceTime(value)
 }
 
 func hasVSCodePostureReview(postures []vscodePosture) bool {

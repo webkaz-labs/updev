@@ -43,7 +43,7 @@ allowed_entries=(
   "internal/cmd/list.go:translateBatch|cmd.translateBatch"
   "internal/cmd/security_github.go:githubTokenFromCLI|cmd.githubTokenFromCLI"
   "internal/cmd/mutation.go:runEdit|cmd.runEdit"
-  "internal/cmd/inventory_review.go:runManualAgentCommand|cmd.runManualAgentCommand"
+  "internal/manualinventory/agent.go:RunAgentCommand|manualinventory.RunAgentCommand"
   "internal/cmd/inventory_review.go:editManualOverrideBlock|cmd.editManualOverrideBlock"
 )
 

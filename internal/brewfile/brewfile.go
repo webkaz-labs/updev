@@ -265,7 +265,7 @@ func sourcePath(root string) string {
 	if root == "" {
 		root = updevpath.DefaultChezmoiSourceRoot()
 	}
-	return filepath.Join(root, "Brewfile.tmpl")
+	return updevpath.RootBrewfileTemplate(root)
 }
 
 func runCommand(ctx context.Context, name string, args ...string) int {

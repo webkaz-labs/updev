@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"os"
@@ -12,13 +11,14 @@ import (
 	"strings"
 	"time"
 
+	"github.com/webkaz-labs/updev/internal/mise"
 	"github.com/webkaz-labs/updev/internal/plan"
 	"github.com/webkaz-labs/updev/internal/runner"
 )
 
 const (
-	miseBumpProvider = "mise-bump"
-	miseBumpSource   = "mise-bump"
+	miseBumpProvider = mise.BumpProvider
+	miseBumpSource   = mise.BumpSource
 )
 
 func defaultMiseBumpMode() string {
@@ -144,55 +144,7 @@ func unavailableMiseBumpDiscoveryFinding(detail string) safetyFinding {
 }
 
 func parseMiseBumpOutdated(raw string) ([]safetyFinding, error) {
-	raw = strings.TrimSpace(raw)
-	if raw == "" {
-		return nil, nil
-	}
-	var report map[string]miseOutdatedItem
-	if err := json.Unmarshal([]byte(raw), &report); err != nil {
-		return nil, fmt.Errorf("mise outdated --json --bump returned invalid JSON: %w", err)
-	}
-	names := make([]string, 0, len(report))
-	for name := range report {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-	findings := make([]safetyFinding, 0, len(names))
-	for _, name := range names {
-		item := report[name]
-		if item.Bump == nil || strings.TrimSpace(*item.Bump) == "" {
-			continue
-		}
-		item.Latest = strings.TrimSpace(*item.Bump)
-		findings = append(findings, markMiseBumpFinding(miseSafetyFinding(name, item)))
-	}
-	return findings, nil
-}
-
-func markMiseBumpFinding(finding safetyFinding) safetyFinding {
-	finding.Source = miseBumpSource
-	finding.Evidence = replaceEvidence(finding.Evidence, "mise outdated --json", "mise outdated --json --bump")
-	finding.Evidence = appendEvidence(finding.Evidence, "mise pinned-version bump candidate")
-	finding.Reason = "mise pinned-version bump candidate needs release-age and provenance evidence before bump"
-	finding.Remediation = "review the candidate, then run a scoped mise bump action if accepted"
-	return finding
-}
-
-func replaceEvidence(values []string, oldValue string, newValue string) []string {
-	out := make([]string, 0, len(values))
-	replaced := false
-	for _, value := range values {
-		if value == oldValue {
-			out = append(out, newValue)
-			replaced = true
-			continue
-		}
-		out = append(out, value)
-	}
-	if !replaced {
-		out = append(out, newValue)
-	}
-	return out
+	return mise.BumpSafetyFindingsFromOutdatedJSON(raw)
 }
 
 func miseNativeReleaseAgeBumpHoldFindings(ctx context.Context, commandRunner commandRunner, root string, normal []safetyFinding) ([]safetyFinding, []string) {

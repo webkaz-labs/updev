@@ -2,18 +2,15 @@ package cmd
 
 import (
 	"bytes"
-	"context"
-	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strconv"
 	"strings"
-	"time"
 
+	"github.com/webkaz-labs/updev/internal/manualinventory"
 	"github.com/webkaz-labs/updev/internal/plan"
 )
 
@@ -50,13 +47,6 @@ type manualAppOverrideRawBlock struct {
 	Override manualAppOverride
 	Start    int
 	End      int
-}
-
-type manualStructuredAppRawBlock struct {
-	App   manualStructuredApp
-	Start int
-	End   int
-	Text  string
 }
 
 func parseInventoryReviewOptions(args []string) (inventoryReviewOptions, error) {
@@ -173,7 +163,7 @@ func buildInventoryReviewReport(opts inventoryReviewOptions) inventoryReviewRepo
 		OverridesPath:   configuredInventoryOverridesPath(opts.root),
 		Candidates:      candidates,
 		Overrides:       overrides,
-		OverridePreview: renderManualOverridePreview(candidates),
+		OverridePreview: manualinventory.RenderOverridePreview(candidates),
 	}
 }
 
@@ -292,19 +282,10 @@ func applyInventoryReviewAction(opts inventoryReviewOptions, report inventoryRev
 			return manualReviewCandidate{}, manualAppOverride{}, nil, err
 		}
 	}
-	if err := appendManualOverrideBlock(configuredInventoryOverridesPath(opts.root), content); err != nil {
+	if err := manualinventory.AppendOverrideBlock(configuredInventoryOverridesPath(opts.root), content); err != nil {
 		return manualReviewCandidate{}, manualAppOverride{}, nil, err
 	}
 	return candidate, manualAppOverride{}, nil, nil
-}
-
-type manualAgentEnrichmentRequest struct {
-	SchemaVersion int                     `json:"schema_version"`
-	Provider      string                  `json:"provider"`
-	Action        string                  `json:"action"`
-	Candidates    []manualReviewCandidate `json:"candidates"`
-	Output        string                  `json:"output"`
-	Instructions  []string                `json:"instructions"`
 }
 
 func applyManualAgentEnrichmentAction(opts inventoryReviewOptions, candidates []manualReviewCandidate) ([]manualStructuredApp, error) {
@@ -323,35 +304,19 @@ func applyManualAgentEnrichmentAction(opts inventoryReviewOptions, candidates []
 	if err != nil {
 		return nil, err
 	}
-	request := manualAgentEnrichmentRequest{
-		SchemaVersion: 1,
-		Provider:      manualProviderName,
-		Action:        opts.action,
-		Candidates:    selected,
-		Output:        "TOML [[manual.apps]] entries with review_status = \"draft\"",
-		Instructions: []string{
-			"Return only TOML. Do not include prose or markdown fences.",
-			"Use one [[manual.apps]] entry per candidate.",
-			"Keep review_status = \"draft\" for every entry.",
-			"Use [manual.apps.identifiers] for bundle_id, mas_id, cask, or path when known.",
-			"Use [manual.apps.provenance] source = \"agent\" and evidence = [...].",
-			"Add source_url or review_url when a vendor or provider page is known.",
-			"Add owner, update_owner, and provider_metadata when ownership evidence is known.",
-		},
-	}
-	payload, err := json.MarshalIndent(request, "", "  ")
+	payload, err := manualinventory.BuildAgentRequestPayload(manualProviderName, opts.action, selected)
 	if err != nil {
 		return nil, err
 	}
-	stdout, err := runManualAgentCommand(config.Inventory.Agent.Command, payload)
+	stdout, err := manualinventory.RunAgentCommand(config.Inventory.Agent.Command, payload)
 	if err != nil {
 		return nil, err
 	}
-	drafts, err := validateManualAgentDrafts(stdout, selected, config.Inventory.Agent.Command)
+	drafts, err := manualinventory.ValidateAgentDrafts(stdout, selected, config.Inventory.Agent.Command)
 	if err != nil {
 		return nil, err
 	}
-	if err := appendManualStructuredDrafts(sourcePath, drafts); err != nil {
+	if err := manualinventory.AppendStructuredDrafts(sourcePath, drafts); err != nil {
 		return nil, err
 	}
 	return drafts, nil
@@ -399,228 +364,6 @@ func manualAgentEnrichmentAvailable(root string) bool {
 		manualAgentDraftSourcePath(root) != ""
 }
 
-func runManualAgentCommand(command []string, payload []byte) (string, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-	defer cancel()
-	cmd := exec.CommandContext(ctx, command[0], command[1:]...)
-	cmd.Stdin = bytes.NewReader(payload)
-	var stdout bytes.Buffer
-	var stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
-		if ctx.Err() == context.DeadlineExceeded {
-			return "", fmt.Errorf("manual inventory agent command timed out")
-		}
-		return "", fmt.Errorf("manual inventory agent command failed: %v %s", err, strings.TrimSpace(stderr.String()))
-	}
-	return stdout.String(), nil
-}
-
-func validateManualAgentDrafts(content string, candidates []manualReviewCandidate, command []string) ([]manualStructuredApp, error) {
-	drafts := parseManualStructuredApps(content)
-	if len(drafts) == 0 {
-		return nil, fmt.Errorf("manual inventory agent output did not contain any [[manual.apps]] draft entries")
-	}
-	candidateIndex := map[string]manualReviewCandidate{}
-	for _, candidate := range candidates {
-		for _, key := range manualReviewCandidateIdentityKeys(candidate) {
-			if key != "" {
-				candidateIndex[key] = candidate
-			}
-		}
-	}
-	out := make([]manualStructuredApp, 0, len(drafts))
-	seen := map[string]bool{}
-	for _, draft := range drafts {
-		match, ok := manualAgentDraftMatchesCandidate(draft, candidateIndex)
-		if !ok {
-			return nil, fmt.Errorf("manual inventory agent draft %q does not match selected candidates", draft.Name)
-		}
-		draft.ReviewStatus = "draft"
-		if draft.Provenance == nil {
-			draft.Provenance = map[string]string{}
-		}
-		draft.Provenance["source"] = "agent"
-		if len(command) > 0 && draft.Provenance["command"] == "" {
-			draft.Provenance["command"] = filepath.Base(command[0])
-		}
-		for _, evidence := range match.Evidence {
-			if evidence.Scanner != "" && !stringListContains(draft.Evidence, evidence.Scanner) {
-				draft.Evidence = append(draft.Evidence, evidence.Scanner)
-			}
-			if draft.Provenance["source_url"] == "" {
-				draft.Provenance["source_url"] = firstNonEmpty(evidence.SourceURL, evidence.ReviewURL)
-			}
-			if draft.Provenance["owner"] == "" {
-				draft.Provenance["owner"] = evidence.Owner
-			}
-			if draft.Provenance["update_owner"] == "" {
-				draft.Provenance["update_owner"] = evidence.UpdateOwner
-			}
-			if draft.Provenance["provider_metadata"] == "" {
-				draft.Provenance["provider_metadata"] = evidence.ProviderMetadata
-			}
-		}
-		key := normalizedManualAppKey(draft.Name)
-		if key == "" || seen[key] {
-			continue
-		}
-		seen[key] = true
-		out = append(out, draft)
-	}
-	if len(out) == 0 {
-		return nil, fmt.Errorf("manual inventory agent output did not contain usable draft entries")
-	}
-	return out, nil
-}
-
-func manualReviewCandidateIdentityKeys(candidate manualReviewCandidate) []string {
-	keys := []string{}
-	for _, key := range manualAppKeys(candidate.Name) {
-		keys = append(keys, "name:"+key)
-	}
-	for _, alias := range candidate.SuggestedOverride.Aliases {
-		if key := normalizedManualAppKey(alias); key != "" {
-			keys = append(keys, "name:"+key)
-		}
-	}
-	for _, evidence := range candidate.Evidence {
-		if evidence.BundleID != "" {
-			keys = append(keys, "bundle:"+strings.ToLower(evidence.BundleID))
-		}
-		if evidence.MASID != "" {
-			keys = append(keys, "mas:"+strings.ToLower(evidence.MASID))
-		}
-		if evidence.Path != "" {
-			for _, key := range manualAppPathKeys(evidence.Path) {
-				keys = append(keys, "name:"+key)
-			}
-		}
-	}
-	return keys
-}
-
-func manualAgentDraftMatchesCandidate(draft manualStructuredApp, candidateIndex map[string]manualReviewCandidate) (manualReviewCandidate, bool) {
-	row := manualStructuredAppRow(draft)
-	for _, key := range manualRowIdentityKeys(row) {
-		if candidate, ok := candidateIndex[key]; ok {
-			return candidate, true
-		}
-	}
-	return manualReviewCandidate{}, false
-}
-
-func appendManualStructuredDrafts(path string, drafts []manualStructuredApp) error {
-	blocks := make([]string, 0, len(drafts))
-	for _, draft := range drafts {
-		blocks = append(blocks, renderManualStructuredDraftBlock(draft))
-	}
-	return appendManualOverrideBlock(path, strings.Join(blocks, "\n"))
-}
-
-func stringListContains(values []string, want string) bool {
-	for _, value := range values {
-		if value == want {
-			return true
-		}
-	}
-	return false
-}
-
-func renderManualStructuredDraftBlock(app manualStructuredApp) string {
-	app.ReviewStatus = "draft"
-	if app.Provenance == nil {
-		app.Provenance = map[string]string{}
-	}
-	app.Provenance["source"] = "agent"
-	return renderManualStructuredAppBlock(app)
-}
-
-func renderManualStructuredAppBlock(app manualStructuredApp) string {
-	var builder strings.Builder
-	builder.WriteString("[[manual.apps]]\n")
-	builder.WriteString("name = ")
-	builder.WriteString(tomlString(app.Name))
-	builder.WriteString("\n")
-	if len(app.Aliases) > 0 {
-		builder.WriteString("aliases = ")
-		builder.WriteString(tomlStringArray(app.Aliases))
-		builder.WriteString("\n")
-	}
-	if app.Category != "" {
-		builder.WriteString("category = ")
-		builder.WriteString(tomlString(app.Category))
-		builder.WriteString("\n")
-	}
-	if app.ManagedBy != "" {
-		builder.WriteString("managed_by = ")
-		builder.WriteString(tomlString(app.ManagedBy))
-		builder.WriteString("\n")
-	}
-	if app.Lifecycle != "" {
-		builder.WriteString("lifecycle = ")
-		builder.WriteString(tomlString(app.Lifecycle))
-		builder.WriteString("\n")
-	}
-	if app.Detail != "" {
-		builder.WriteString("description = ")
-		builder.WriteString(tomlString(app.Detail))
-		builder.WriteString("\n")
-	}
-	if app.Confidence != "" {
-		builder.WriteString("confidence = ")
-		builder.WriteString(tomlString(app.Confidence))
-		builder.WriteString("\n")
-	}
-	builder.WriteString("review_status = ")
-	builder.WriteString(tomlString(firstNonEmpty(app.ReviewStatus, "draft")))
-	builder.WriteString("\n")
-	if len(app.Identifiers) > 0 {
-		builder.WriteString("\n[manual.apps.identifiers]\n")
-		for _, key := range []string{"bundle_id", "mas_id", "cask", "path"} {
-			if value := app.Identifiers[key]; value != "" {
-				builder.WriteString(key)
-				builder.WriteString(" = ")
-				builder.WriteString(tomlString(value))
-				builder.WriteString("\n")
-			}
-		}
-	}
-	if len(app.Provenance) > 0 || len(app.Evidence) > 0 {
-		builder.WriteString("\n[manual.apps.provenance]\n")
-		if source := firstNonEmpty(app.Provenance["source"], "agent"); source != "" {
-			builder.WriteString("source = ")
-			builder.WriteString(tomlString(source))
-			builder.WriteString("\n")
-		}
-		if command := app.Provenance["command"]; command != "" {
-			builder.WriteString("command = ")
-			builder.WriteString(tomlString(command))
-			builder.WriteString("\n")
-		}
-		for _, key := range manualStructuredProvenanceDetailKeys() {
-			if value := app.Provenance[key]; value != "" {
-				builder.WriteString(key)
-				builder.WriteString(" = ")
-				builder.WriteString(tomlString(value))
-				builder.WriteString("\n")
-			}
-		}
-		if reviewedAt := app.Provenance["reviewed_at"]; reviewedAt != "" {
-			builder.WriteString("reviewed_at = ")
-			builder.WriteString(tomlString(reviewedAt))
-			builder.WriteString("\n")
-		}
-		if len(app.Evidence) > 0 {
-			builder.WriteString("evidence = ")
-			builder.WriteString(tomlStringArray(app.Evidence))
-			builder.WriteString("\n")
-		}
-	}
-	return builder.String()
-}
-
 func applyManualStructuredDraftAction(root string, action string, query string) error {
 	path := manualAgentDraftSourcePath(root)
 	if path == "" {
@@ -631,7 +374,7 @@ func applyManualStructuredDraftAction(root string, action string, query string) 
 		return err
 	}
 	content := string(data)
-	block, err := selectManualStructuredDraftBlock(parseManualStructuredAppRawBlocks(content), query)
+	block, err := manualinventory.SelectStructuredDraftBlock(manualinventory.ParseStructuredAppRawBlocks(content), query)
 	if err != nil {
 		return err
 	}
@@ -639,104 +382,18 @@ func applyManualStructuredDraftAction(root string, action string, query string) 
 	case "accept-draft":
 		app := block.App
 		app.ReviewStatus = "accepted"
-		return os.WriteFile(path, []byte(replaceManualStructuredBlock(content, block, renderManualStructuredAppBlock(app))), 0o600)
+		return os.WriteFile(path, []byte(manualinventory.ReplaceStructuredBlock(content, block, manualinventory.RenderStructuredAppBlock(app))), 0o600)
 	case "edit-draft":
-		edited, err := editManualStructuredAppBlock(renderManualStructuredAppBlock(block.App))
+		edited, err := editManualStructuredAppBlock(manualinventory.RenderStructuredAppBlock(block.App))
 		if err != nil {
 			return err
 		}
-		return os.WriteFile(path, []byte(replaceManualStructuredBlock(content, block, edited)), 0o600)
+		return os.WriteFile(path, []byte(manualinventory.ReplaceStructuredBlock(content, block, edited)), 0o600)
 	case "ignore-draft":
-		return os.WriteFile(path, []byte(replaceManualStructuredBlock(content, block, "")), 0o600)
+		return os.WriteFile(path, []byte(manualinventory.ReplaceStructuredBlock(content, block, "")), 0o600)
 	default:
 		return fmt.Errorf("unsupported manual draft action: %s", action)
 	}
-}
-
-func parseManualStructuredAppRawBlocks(content string) []manualStructuredAppRawBlock {
-	type rawBlock struct {
-		start int
-		end   int
-	}
-	blocks := []rawBlock{}
-	offset := 0
-	currentStart := -1
-	for _, line := range strings.SplitAfter(content, "\n") {
-		trimmed := stripTOMLComment(strings.TrimSpace(line))
-		if strings.HasPrefix(trimmed, "[[") && strings.HasSuffix(trimmed, "]]") {
-			section := strings.ToLower(strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(trimmed, "[["), "]]")))
-			if section == "manual.apps" {
-				if currentStart >= 0 {
-					blocks = append(blocks, rawBlock{start: currentStart, end: offset})
-				}
-				currentStart = offset
-			}
-		}
-		offset += len(line)
-	}
-	if currentStart >= 0 {
-		blocks = append(blocks, rawBlock{start: currentStart, end: len(content)})
-	}
-	out := make([]manualStructuredAppRawBlock, 0, len(blocks))
-	for _, block := range blocks {
-		text := content[block.start:block.end]
-		apps := parseManualStructuredApps(text)
-		if len(apps) != 1 || strings.TrimSpace(apps[0].Name) == "" {
-			continue
-		}
-		out = append(out, manualStructuredAppRawBlock{App: apps[0], Start: block.start, End: block.end, Text: text})
-	}
-	return out
-}
-
-func selectManualStructuredDraftBlock(blocks []manualStructuredAppRawBlock, query string) (manualStructuredAppRawBlock, error) {
-	query = strings.ToLower(strings.TrimSpace(query))
-	matches := []manualStructuredAppRawBlock{}
-	for _, block := range blocks {
-		if manualStructuredAppAccepted(block.App) {
-			continue
-		}
-		if query == "" || manualStructuredAppMatchesQuery(block.App, query) {
-			matches = append(matches, block)
-		}
-	}
-	switch len(matches) {
-	case 0:
-		if query == "" {
-			return manualStructuredAppRawBlock{}, fmt.Errorf("no manual structured draft entries")
-		}
-		return manualStructuredAppRawBlock{}, fmt.Errorf("no manual structured draft entries match %q", query)
-	case 1:
-		return matches[0], nil
-	default:
-		return manualStructuredAppRawBlock{}, fmt.Errorf("manual draft action requires a query matching exactly one draft; matched %d", len(matches))
-	}
-}
-
-func manualStructuredAppMatchesQuery(app manualStructuredApp, query string) bool {
-	parts := []string{app.Name, app.Category, app.Detail, app.ManagedBy, app.Lifecycle, app.Confidence, app.ReviewStatus}
-	parts = append(parts, app.Aliases...)
-	for _, key := range []string{"bundle_id", "mas_id", "cask", "path"} {
-		parts = append(parts, app.Identifiers[key])
-	}
-	for _, value := range app.Provenance {
-		parts = append(parts, value)
-	}
-	parts = append(parts, app.Evidence...)
-	return strings.Contains(strings.ToLower(strings.Join(parts, " ")), query)
-}
-
-func replaceManualStructuredBlock(content string, block manualStructuredAppRawBlock, replacement string) string {
-	replacement = strings.TrimSpace(replacement)
-	prefix := content[:block.Start]
-	suffix := content[block.End:]
-	if replacement != "" {
-		replacement += "\n"
-		if strings.TrimSpace(prefix) != "" && !strings.HasSuffix(prefix, "\n\n") {
-			replacement = "\n" + replacement
-		}
-	}
-	return strings.TrimRight(prefix+replacement+strings.TrimLeft(suffix, "\n"), "\n") + "\n"
 }
 
 func editManualStructuredAppBlock(content string) (string, error) {
@@ -744,12 +401,12 @@ func editManualStructuredAppBlock(content string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	apps := parseManualStructuredApps(edited)
+	apps := manualinventory.ParseStructuredApps(edited)
 	if len(apps) != 1 || strings.TrimSpace(apps[0].Name) == "" {
 		return "", fmt.Errorf("edited draft must contain exactly one [[manual.apps]] entry with name")
 	}
 	apps[0].ReviewStatus = "draft"
-	return renderManualStructuredAppBlock(apps[0]), nil
+	return manualinventory.RenderStructuredAppBlock(apps[0]), nil
 }
 
 func applyManualOverrideManagementAction(opts inventoryReviewOptions, overrides []manualAppOverride) (manualAppOverride, error) {
@@ -991,7 +648,7 @@ func manualOverrideBlockForAction(action string, candidate manualReviewCandidate
 		override.Lifecycle = "local-only"
 		override.Detail = "local-only app ignored by manual inventory review"
 	}
-	return renderManualOverrideBlock(candidate, override)
+	return manualinventory.RenderOverrideBlock(candidate, override)
 }
 
 func editManualOverrideBlock(content string) (string, error) {
@@ -1038,143 +695,6 @@ func editManualOverrideBlock(content string) (string, error) {
 	return edited + "\n", nil
 }
 
-func appendManualOverrideBlock(path string, content string) error {
-	content = strings.TrimSpace(content)
-	if content == "" {
-		return fmt.Errorf("manual override content is empty")
-	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return err
-	}
-	existing, err := os.ReadFile(path)
-	if err != nil && !os.IsNotExist(err) {
-		return err
-	}
-	var builder strings.Builder
-	if len(existing) > 0 {
-		builder.Write(existing)
-		if !strings.HasSuffix(string(existing), "\n") {
-			builder.WriteString("\n")
-		}
-		builder.WriteString("\n")
-	}
-	builder.WriteString(strings.TrimRight(content, "\n"))
-	builder.WriteString("\n")
-	return os.WriteFile(path, []byte(builder.String()), 0o600)
-}
-
-func renderManualOverridePreview(candidates []manualReviewCandidate) string {
-	if len(candidates) == 0 {
-		return ""
-	}
-	var builder strings.Builder
-	builder.WriteString("# Generated preview by `updev inventory review --provider manual`.\n")
-	builder.WriteString("# Review each entry before copying it into the configured inventory overrides TOML.\n")
-	for _, candidate := range candidates {
-		builder.WriteString("\n")
-		builder.WriteString(strings.TrimRight(renderManualOverrideBlock(candidate, candidate.SuggestedOverride), "\n"))
-		builder.WriteString("\n")
-	}
-	return strings.TrimRight(builder.String(), "\n") + "\n"
-}
-
-func renderManualOverrideBlock(candidate manualReviewCandidate, override manualReviewOverrideFields) string {
-	var builder strings.Builder
-	builder.WriteString("[[manual.apps]]\n")
-	builder.WriteString("name = ")
-	builder.WriteString(tomlString(override.Name))
-	builder.WriteString("\n")
-	if len(override.Aliases) > 0 {
-		builder.WriteString("aliases = ")
-		builder.WriteString(tomlStringArray(override.Aliases))
-		builder.WriteString("\n")
-	}
-	if override.Category != "" {
-		builder.WriteString("category = ")
-		builder.WriteString(tomlString(override.Category))
-		builder.WriteString("\n")
-	}
-	if override.ManagedBy != "" {
-		builder.WriteString("managed_by = ")
-		builder.WriteString(tomlString(override.ManagedBy))
-		builder.WriteString("\n")
-	}
-	if override.Lifecycle != "" {
-		builder.WriteString("lifecycle = ")
-		builder.WriteString(tomlString(override.Lifecycle))
-		builder.WriteString("\n")
-	}
-	if override.Detail != "" {
-		builder.WriteString("detail = ")
-		builder.WriteString(tomlString(override.Detail))
-		builder.WriteString("\n")
-	}
-	if candidate.ReasonCode != "" {
-		builder.WriteString("# reason_code = ")
-		builder.WriteString(tomlString(candidate.ReasonCode))
-		builder.WriteString("\n")
-	}
-	if candidate.RemediationCode != "" {
-		builder.WriteString("# remediation_code = ")
-		builder.WriteString(tomlString(candidate.RemediationCode))
-		builder.WriteString("\n")
-	}
-	if candidate.Confidence != "" {
-		builder.WriteString("# confidence = ")
-		builder.WriteString(tomlString(candidate.Confidence))
-		builder.WriteString("\n")
-	}
-	for _, evidence := range candidate.Evidence {
-		builder.WriteString("# evidence")
-		if evidence.Scanner != "" {
-			builder.WriteString(" scanner=")
-			builder.WriteString(tomlString(evidence.Scanner))
-		}
-		if evidence.Path != "" {
-			builder.WriteString(" path=")
-			builder.WriteString(tomlString(evidence.Path))
-		}
-		if evidence.ReviewURL != "" {
-			builder.WriteString(" review_url=")
-			builder.WriteString(tomlString(evidence.ReviewURL))
-		}
-		if evidence.SourceURL != "" {
-			builder.WriteString(" source_url=")
-			builder.WriteString(tomlString(evidence.SourceURL))
-		}
-		if evidence.Owner != "" {
-			builder.WriteString(" owner=")
-			builder.WriteString(tomlString(evidence.Owner))
-		}
-		if evidence.ManagedBy != "" {
-			builder.WriteString(" managed_by=")
-			builder.WriteString(tomlString(evidence.ManagedBy))
-		}
-		if evidence.UpdateOwner != "" {
-			builder.WriteString(" update_owner=")
-			builder.WriteString(tomlString(evidence.UpdateOwner))
-		}
-		if evidence.OwnershipConfidence != "" {
-			builder.WriteString(" ownership_confidence=")
-			builder.WriteString(tomlString(evidence.OwnershipConfidence))
-		}
-		if evidence.ProviderMetadata != "" {
-			builder.WriteString(" provider_metadata=")
-			builder.WriteString(tomlString(evidence.ProviderMetadata))
-		}
-		if evidence.BundleID != "" {
-			builder.WriteString(" bundle_id=")
-			builder.WriteString(tomlString(evidence.BundleID))
-		}
-		if evidence.Version != "" {
-			builder.WriteString(" version=")
-			builder.WriteString(tomlString(evidence.Version))
-		}
-		builder.WriteString("\n")
-	}
-	return builder.String()
-}
-
 func renderManualAppOverrideBlock(override manualAppOverride) string {
 	fields := manualReviewOverrideFields{
 		Name:      override.Name,
@@ -1184,62 +704,5 @@ func renderManualAppOverrideBlock(override manualAppOverride) string {
 		ManagedBy: override.ManagedBy,
 		Lifecycle: override.Lifecycle,
 	}
-	return renderManualOverrideFields(fields)
-}
-
-func renderManualOverrideFields(override manualReviewOverrideFields) string {
-	var builder strings.Builder
-	builder.WriteString("[[manual.apps]]\n")
-	builder.WriteString("name = ")
-	builder.WriteString(tomlString(override.Name))
-	builder.WriteString("\n")
-	if len(override.Aliases) > 0 {
-		builder.WriteString("aliases = ")
-		builder.WriteString(tomlStringArray(override.Aliases))
-		builder.WriteString("\n")
-	}
-	if override.Category != "" {
-		builder.WriteString("category = ")
-		builder.WriteString(tomlString(override.Category))
-		builder.WriteString("\n")
-	}
-	if override.ManagedBy != "" {
-		builder.WriteString("managed_by = ")
-		builder.WriteString(tomlString(override.ManagedBy))
-		builder.WriteString("\n")
-	}
-	if override.Lifecycle != "" {
-		builder.WriteString("lifecycle = ")
-		builder.WriteString(tomlString(override.Lifecycle))
-		builder.WriteString("\n")
-	}
-	if override.Detail != "" {
-		builder.WriteString("detail = ")
-		builder.WriteString(tomlString(override.Detail))
-		builder.WriteString("\n")
-	}
-	return builder.String()
-}
-
-func tomlStringArray(values []string) string {
-	quoted := make([]string, 0, len(values))
-	seen := map[string]bool{}
-	for _, value := range values {
-		value = strings.TrimSpace(value)
-		if value == "" || seen[value] {
-			continue
-		}
-		seen[value] = true
-		quoted = append(quoted, tomlString(value))
-	}
-	return "[" + strings.Join(quoted, ", ") + "]"
-}
-
-func tomlString(value string) string {
-	value = strings.ReplaceAll(value, "\\", "\\\\")
-	value = strings.ReplaceAll(value, "\"", "\\\"")
-	value = strings.ReplaceAll(value, "\n", "\\n")
-	value = strings.ReplaceAll(value, "\r", "\\r")
-	value = strings.ReplaceAll(value, "\t", "\\t")
-	return "\"" + value + "\""
+	return manualinventory.RenderOverrideFields(fields)
 }

@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/webkaz-labs/updev/internal/plan"
+	"github.com/webkaz-labs/updev/internal/textui"
 )
 
 func buildSecurityReviewReport(ctx context.Context, opts securityReviewOptions, client *http.Client, commandRunner commandRunner) securityReviewReport {
@@ -374,7 +375,7 @@ func printSecurityReviewText(w io.Writer, report securityReviewReport) {
 		fmt.Fprintf(w, "error: %s\n", report.Error)
 	}
 	if report.Filters != nil {
-		if filterSummary := securityReviewFilterSummary(*report.Filters); filterSummary != "" {
+		if filterSummary := textui.FilterSummaryWithSeparator(securityReviewFilterMap(*report.Filters), ", ", "decision", "kind", "name"); filterSummary != "" {
 			fmt.Fprintf(w, "filters: %s\n", filterSummary)
 		}
 	}
@@ -418,18 +419,12 @@ func printSecurityReviewText(w io.Writer, report securityReviewReport) {
 	}
 }
 
-func securityReviewFilterSummary(filters securityReviewFilters) string {
-	parts := []string{}
-	if filters.Decision != "" {
-		parts = append(parts, "decision="+filters.Decision)
+func securityReviewFilterMap(filters securityReviewFilters) map[string]string {
+	return map[string]string{
+		"decision": filters.Decision,
+		"kind":     filters.Kind,
+		"name":     filters.Name,
 	}
-	if filters.Kind != "" {
-		parts = append(parts, "kind="+filters.Kind)
-	}
-	if filters.Name != "" {
-		parts = append(parts, "name="+filters.Name)
-	}
-	return strings.Join(parts, ", ")
 }
 
 func securityReviewPackageContext(candidate securityReviewCandidate) string {

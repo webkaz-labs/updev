@@ -5,27 +5,18 @@ import (
 	"fmt"
 	"strings"
 
-	tea "charm.land/bubbletea/v2"
-
 	"github.com/webkaz-labs/updev/internal/reviewui"
 	"github.com/webkaz-labs/updev/internal/textui"
 )
 
-type updateSummaryLine struct {
-	Text            string
-	Action          string
-	Label           string
-	HideInlineBadge bool
-	Kind            updateSummaryLineKind
-}
-
-type updateSummaryLineKind string
+type updateSummaryLine = reviewui.ActionSummaryLine
+type updateSummaryLineKind = reviewui.ActionSummaryLineKind
 
 const (
-	updateSummaryLineNormal      updateSummaryLineKind = ""
-	updateSummaryLineSection     updateSummaryLineKind = "section"
-	updateSummaryLineTableHeader updateSummaryLineKind = "table-header"
-	updateSummaryLineMeta        updateSummaryLineKind = "meta"
+	updateSummaryLineNormal      = reviewui.ActionSummaryLineNormal
+	updateSummaryLineSection     = reviewui.ActionSummaryLineSection
+	updateSummaryLineTableHeader = reviewui.ActionSummaryLineTableHeader
+	updateSummaryLineMeta        = reviewui.ActionSummaryLineMeta
 )
 
 type updateSummaryRoute struct {
@@ -36,32 +27,11 @@ type updateSummaryRoute struct {
 
 const updateSummaryRoutePrefix = "summary-route"
 
-type updateSummaryBrowserModel struct {
-	Title     string
-	Lines     []updateSummaryLine
-	State     reviewui.State
-	Color     bool
-	Height    int
-	Width     int
-	Help      bool
-	TopAnchor bool
-	actionMap []int
-}
+type updateSummaryBrowserModel = reviewui.ActionSummaryModel
 
 func runUpdateSummaryBrowser(title string, report updateReport, manualPlan inventoryPlanReport, backendPlan backendPlanReport, state reviewui.State, focusAction string, color bool) (reviewui.State, error) {
 	model := newUpdateSummaryBrowserModel(title, report, manualPlan, backendPlan, state, focusAction, color)
-	return runActionSummaryBrowserModel(model)
-}
-
-func runActionSummaryBrowserModel(model updateSummaryBrowserModel) (reviewui.State, error) {
-	final, err := tea.NewProgram(model).Run()
-	if err != nil {
-		return model.State, err
-	}
-	if result, ok := final.(updateSummaryBrowserModel); ok {
-		return result.State, nil
-	}
-	return model.State, nil
+	return reviewui.RunActionSummaryModel(model)
 }
 
 func newUpdateSummaryBrowserModel(title string, report updateReport, manualPlan inventoryPlanReport, backendPlan backendPlanReport, state reviewui.State, focusAction string, color bool) updateSummaryBrowserModel {
@@ -73,16 +43,20 @@ func newUpdateSummaryBrowserModelWithLoading(title string, report updateReport, 
 }
 
 func newActionSummaryBrowserModel(title string, lines []updateSummaryLine, state reviewui.State, focusAction string, color bool) updateSummaryBrowserModel {
-	model := updateSummaryBrowserModel{Title: title, Lines: lines, State: state, Color: color}
-	model.refreshActionMap()
-	if state.Offset == 0 && state.Selected == 0 && state.Action == "" {
-		model.TopAnchor = true
+	labels := reviewui.ActionSummaryLabels{
+		HelpMove:      tr("Up/Down or j/k: move between selectable summary rows", "↑↓ または j/k: 選択可能な summary 行を移動"),
+		HelpOpen:      tr("Enter, Space, or a: open the selected detail", "Enter / Space / a: 選択した詳細を開く"),
+		HelpExit:      tr("b, q, Esc, or Ctrl-C: exit", "b / q / Esc / Ctrl-C: 終了"),
+		Controls:      tr("Up/Down/j/k move, Enter open selected summary, Space/a open, ? help, q exit", "↑↓/j/k 移動、Enter で選択 summary を開く、Space/a も開く、? help、q 終了"),
+		FocusedPrefix: tr("focused actions:", "選択中の操作:"),
+		EnterFormat:   tr("Enter: %s", "Enter: %s"),
 	}
-	if focusAction != "" {
-		model.focusAction(focusAction)
+	actions := reviewui.ActionSummaryActions{Exit: updevActionExit}
+	focusMatcher := func(lineAction string, focusAction string) bool {
+		route, ok := parseUpdateSummaryRoute(lineAction)
+		return ok && route.Base == focusAction
 	}
-	model.clampSelection()
-	return model
+	return reviewui.NewActionSummaryModel(title, lines, state, focusAction, labels, actions, focusMatcher, color)
 }
 
 func updateSummaryBrowserLines(report updateReport, manualPlan inventoryPlanReport, backendPlan backendPlanReport, color bool) []updateSummaryLine {
@@ -331,105 +305,6 @@ func isUpdateSummaryTableHeaderLine(line string) bool {
 	}
 }
 
-func (m updateSummaryBrowserModel) Init() tea.Cmd {
-	return nil
-}
-
-func (m updateSummaryBrowserModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	switch msg := msg.(type) {
-	case tea.KeyPressMsg:
-		if m.Help {
-			m.Help = false
-			return m, nil
-		}
-		switch msg.String() {
-		case "q", "ctrl+c", "esc", "b", "left", "backspace":
-			m.State.Action = updevActionExit
-			return m, tea.Quit
-		case "up", "k":
-			m.move(-1)
-		case "down", "j":
-			m.move(1)
-		case "pgup":
-			m.move(-10)
-		case "pgdown":
-			m.move(10)
-		case "home":
-			m.State.Selected = 0
-			m.ensureSelectedVisible()
-		case "end":
-			if len(m.actionMap) > 0 {
-				m.State.Selected = len(m.actionMap) - 1
-				m.ensureSelectedVisible()
-			}
-		case "enter", "a", " ":
-			if m.selectAction() {
-				return m, tea.Quit
-			}
-		case "?":
-			m.Help = true
-		}
-	case tea.WindowSizeMsg:
-		m.Height = msg.Height
-		m.Width = msg.Width
-		m.ensureSelectedVisible()
-	}
-	return m, nil
-}
-
-func (m updateSummaryBrowserModel) View() tea.View {
-	var out strings.Builder
-	fmt.Fprintf(&out, "%s\n", textui.StyleHeading(m.Title, m.Color))
-	if m.Help {
-		fmt.Fprintf(&out, "  %s\n", tr("Up/Down or j/k: move between selectable summary rows", "↑↓ または j/k: 選択可能な summary 行を移動"))
-		fmt.Fprintf(&out, "  %s\n", tr("Enter, Space, or a: open the selected detail", "Enter / Space / a: 選択した詳細を開く"))
-		fmt.Fprintf(&out, "  %s\n", tr("b, q, Esc, or Ctrl-C: exit", "b / q / Esc / Ctrl-C: 終了"))
-		view := tea.NewView(out.String())
-		view.AltScreen = true
-		return view
-	}
-	fmt.Fprintf(&out, "%s\n", textui.StyleDim(tr("Up/Down/j/k move, Enter open selected summary, Space/a open, ? help, q exit", "↑↓/j/k 移動、Enter で選択 summary を開く、Space/a も開く、? help、q 終了"), m.Color))
-	if hint := m.selectedHint(); hint != "" {
-		fmt.Fprintf(&out, "%s\n", hint)
-	}
-	fmt.Fprintln(&out)
-	start, end := m.visibleLineRange()
-	selectedLine := m.selectedLineIndex()
-	for index := start; index < end; index++ {
-		line := m.Lines[index]
-		text := m.renderLineText(line)
-		prefix := "  "
-		if index == selectedLine {
-			prefix = textui.StyleRequested("> ", m.Color)
-			text = m.selectedLineText(line, text)
-		} else if line.Action == "" {
-			prefix = ""
-		} else if line.Kind == updateSummaryLineMeta {
-			prefix = ""
-		} else {
-			prefix = textui.StyleDim("  ", m.Color)
-		}
-		if m.Width > 0 {
-			text = textTruncate(text, m.Width-2)
-		}
-		fmt.Fprintf(&out, "%s%s\n", prefix, text)
-	}
-	view := tea.NewView(out.String())
-	view.AltScreen = true
-	return view
-}
-
-func (m updateSummaryBrowserModel) renderLineText(line updateSummaryLine) string {
-	switch line.Kind {
-	case updateSummaryLineSection:
-		return browserSectionHeadingText(line.Text, m.Color)
-	case updateSummaryLineTableHeader:
-		return textui.StyleHeading(line.Text, m.Color)
-	default:
-		return line.Text
-	}
-}
-
 func browserSectionHeadingText(text string, color bool) string {
 	trimmed := strings.TrimSpace(text)
 	if trimmed == "" {
@@ -437,154 +312,3 @@ func browserSectionHeadingText(text string, color bool) string {
 	}
 	return textui.StyleSection(trimmed, color)
 }
-
-func (m *updateSummaryBrowserModel) refreshActionMap() {
-	m.actionMap = m.actionMap[:0]
-	for index, line := range m.Lines {
-		if line.Action != "" {
-			m.actionMap = append(m.actionMap, index)
-		}
-	}
-}
-
-func (m *updateSummaryBrowserModel) clampSelection() {
-	if len(m.actionMap) == 0 {
-		m.State.Selected = 0
-		m.State.Offset = 0
-		return
-	}
-	if m.State.Selected < 0 {
-		m.State.Selected = 0
-	}
-	if m.State.Selected >= len(m.actionMap) {
-		m.State.Selected = len(m.actionMap) - 1
-	}
-	m.ensureSelectedVisible()
-}
-
-func (m *updateSummaryBrowserModel) move(delta int) {
-	if len(m.actionMap) == 0 {
-		return
-	}
-	m.TopAnchor = false
-	m.State.Selected += delta
-	m.clampSelection()
-}
-
-func (m *updateSummaryBrowserModel) focusAction(action string) {
-	for actionIndex, lineIndex := range m.actionMap {
-		if m.Lines[lineIndex].Action == action {
-			m.State.Selected = actionIndex
-			return
-		}
-	}
-	for actionIndex, lineIndex := range m.actionMap {
-		if route, ok := parseUpdateSummaryRoute(m.Lines[lineIndex].Action); ok && route.Base == action {
-			m.State.Selected = actionIndex
-			return
-		}
-	}
-}
-
-func (m *updateSummaryBrowserModel) ensureSelectedVisible() {
-	if m.TopAnchor {
-		m.State.Offset = 0
-		return
-	}
-	selectedLine := m.selectedLineIndex()
-	if selectedLine < 0 {
-		m.State.Offset = 0
-		return
-	}
-	capacity := m.visibleBodyCapacity()
-	if selectedLine < m.State.Offset {
-		m.State.Offset = selectedLine
-	}
-	if selectedLine >= m.State.Offset+capacity {
-		m.State.Offset = selectedLine - capacity + 1
-	}
-	if m.State.Offset < 0 {
-		m.State.Offset = 0
-	}
-}
-
-func (m updateSummaryBrowserModel) visibleLineRange() (int, int) {
-	start := m.State.Offset
-	if start < 0 {
-		start = 0
-	}
-	if start > len(m.Lines) {
-		start = len(m.Lines)
-	}
-	end := start + m.visibleBodyCapacity()
-	if end > len(m.Lines) {
-		end = len(m.Lines)
-	}
-	return start, end
-}
-
-func (m updateSummaryBrowserModel) visibleBodyCapacity() int {
-	if m.Height <= 0 {
-		return 28
-	}
-	capacity := m.Height - 5
-	if capacity < 8 {
-		return 8
-	}
-	return capacity
-}
-
-func (m updateSummaryBrowserModel) selectedLineIndex() int {
-	if len(m.actionMap) == 0 || m.State.Selected < 0 || m.State.Selected >= len(m.actionMap) {
-		return -1
-	}
-	return m.actionMap[m.State.Selected]
-}
-
-func (m *updateSummaryBrowserModel) selectAction() bool {
-	lineIndex := m.selectedLineIndex()
-	if lineIndex < 0 || lineIndex >= len(m.Lines) {
-		return false
-	}
-	action := m.Lines[lineIndex].Action
-	if action == "" {
-		return false
-	}
-	m.State.Action = action
-	return true
-}
-
-func (m updateSummaryBrowserModel) selectedHint() string {
-	lineIndex := m.selectedLineIndex()
-	if lineIndex < 0 || lineIndex >= len(m.Lines) {
-		return ""
-	}
-	line := m.Lines[lineIndex]
-	label := firstNonEmpty(line.Label, line.Action)
-	position := fmt.Sprintf("%d/%d", m.State.Selected+1, len(m.actionMap))
-	return fmt.Sprintf("%s %s  %s",
-		textui.StyleDim(tr("focused actions:", "選択中の操作:"), m.Color),
-		textui.StyleAction("a/1="+label, m.Color),
-		textui.StyleCount(position, m.Color),
-	)
-}
-
-func (m updateSummaryBrowserModel) selectedLineText(line updateSummaryLine, text string) string {
-	if line.HideInlineBadge {
-		return text
-	}
-	label := firstNonEmpty(line.Label, line.Action)
-	badge := " [" + fmt.Sprintf(tr("Enter: %s", "Enter: %s"), label) + "]"
-	badge = textui.StyleLabel(badge, m.Color)
-	if m.Width <= 0 {
-		return text + badge
-	}
-	available := m.Width - 2
-	if available <= textui.DisplayWidth(badge)+8 {
-		return text
-	}
-	textWidth := available - textui.DisplayWidth(badge)
-	return textui.Truncate(text, textWidth) + badge
-}
-
-var _ tea.Model = updateSummaryBrowserModel{}

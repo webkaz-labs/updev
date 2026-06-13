@@ -10,13 +10,14 @@ stays an integer schema contract. `v0.x` releases are public preview releases;
 
 ## Current Release
 
-The current implemented release is `updev v0.6.1`. `updev version`,
+The current implemented release is `updev v0.6.2`. `updev version`,
 `updev --version`, and `updev -v` report this command contract.
 
-`updev v0.6.1` is the first patch on the `v0.6.0` provider-gate release. It
-keeps the `v0.6.0` macOS/Homebrew/mise scope, then finishes the first
-architecture cleanup slice and closes the release/export gaps found after the
-initial public tag.
+`updev v0.6.2` is the follow-up patch on the `v0.6.0`/`v0.6.1`
+provider-gate line. The public `v0.6.1` tag remains the initial patch release;
+`v0.6.2` keeps the same macOS/Homebrew/mise scope, then finishes the first
+architecture cleanup slice and closes the release/export gaps found after that
+tag.
 
 `updev v0.6.0` completed the first updev-owned provider gate model for the
 macOS/Homebrew/mise preview. It keeps the accepted routed TTY UX from
@@ -30,20 +31,41 @@ dashboard only when canceled or partial results cannot be mistaken for completed
 cached reports. Keep detailed implementation history in git log and tag-specific
 notes in [release-notes](release-notes/).
 
-### v0.6.1 Patch Scope
+### v0.6.2 Patch Scope
 
+- `v0.6.2` completes the first P1 architecture cleanup slice while preserving
+  the v0.6.0 macOS/Homebrew/mise preview contract.
 - Extract the backend recommendation engine into `internal/backend` so
   provider evidence, preference policy, action planning, and rendering can
   evolve without command-local branches.
 - Centralize command/path/security-gate support code that had started to grow
   in `internal/cmd`: direct subprocess detection, root/config/cache path
   resolution, the common security gate model, and update-safety cache storage.
+- Move inventory annotation logic that combines provider evidence with
+  root/profile policy into `internal/inventoryannotate` so command files do not
+  keep accumulating report mutation helpers.
+- Move manual inventory source parsing, draft/override rendering, agent
+  request construction, review models, and row classification into
+  `internal/manualinventory` so command files keep only CLI/TUI routing and
+  write-flow wiring.
+- Add stable `reason_code` / `reason_args` fields to update steps for
+  strict-safety and mise-bump decisions while preserving the compatible
+  human-readable `reason` field.
+- Add stable `reason_code` / `reason_args` fields to core security gate
+  findings for release-age holds, mise opaque backend reviews, mise native
+  minimum-release-age holds, and security policy overrides while preserving the
+  compatible human-readable `reason` field.
 - Add source evidence to backend recommendations so JSON/detail views can
   explain why a provider rewrite is suggested.
+- Replace Homebrew/mise provider mutation shell chains with runner-backed
+  command plans. Update reports keep the legacy primary `command` field and add
+  structured `commands` entries for multi-step provider actions such as
+  Homebrew metadata/update/cleanup and mise bump preflight/apply.
 - Make Homebrew 6 trust findings actionable from security detail views with
   confirmed item-scoped `brew trust --formula` / `brew trust --cask` actions.
   Whole-tap trust remains a separate confirmation-only action and update never
-  auto-trusts taps.
+  auto-trusts taps. Trust findings keep the compatible `trust_command` string
+  and also expose `trust_command_argv` for agents and JSON consumers.
 - Harden public export checks so the split public repository does not retain
   dotfiles-only documentation links and exported Markdown local links are
   checked before release.
@@ -219,9 +241,9 @@ tagging or mirroring the release.
 - [x] `mise -C tools/updev run check`, `mise -C tools/updev run docs-check`,
   `git diff --check`, and `chezmoi apply --dry-run` pass before release.
 
-### v0.6.1 Release Criteria
+### v0.6.2 Release Criteria
 
-- [x] `updev version`, `updev --version`, and `updev -v` report `updev v0.6.1`.
+- [x] `updev version`, `updev --version`, and `updev -v` report `updev v0.6.2`.
 - [x] Backend recommendation code is extracted into `internal/backend`, with
   source evidence carried into JSON/detail output.
 - [x] Root/config/cache/security path resolution is centralized in
@@ -229,9 +251,17 @@ tagging or mirroring the release.
   live in `internal/securitygate`.
 - [x] Direct subprocess exceptions are checked by
   `scripts/check-direct-subprocesses.sh` from `scripts/check-docs.sh`.
+- [x] Homebrew and mise update mutation uses structured command plans rather
+  than provider shell chains; update detail/search output includes the full
+  command list while preserving the compatible primary `command` field.
+- [x] `mise-bump` reports include the scoped dry-run preflight and apply
+  command plans, including release-age bypass and dependency-blocked retry
+  paths, without leaking temporary npm config paths.
 - [x] Homebrew 6 non-official tap/package trust findings expose confirmed
   item-scoped `brew trust --formula` / `brew trust --cask` detail actions; tap
-  trust remains confirmation-only and is never automatic during update.
+  trust remains confirmation-only and is never automatic during update. JSON
+  findings also expose `trust_command_argv` alongside the compatible
+  `trust_command` string.
 - [x] Public export removes dotfiles-only documentation rows and
   `scripts/check-docs.sh` checks exported Markdown local links.
 - [x] Public export to `webkaz-labs/updev` passes `scripts/check-docs.sh`,
@@ -242,8 +272,10 @@ tagging or mirroring the release.
 ## Next Patch: v0.6.x
 
 The next patch line should stay incremental and should not broaden the stable
-preview support promise without explicit dogfood. Start this line with the
-architecture/scalability track before adding broader provider surfaces:
+preview support promise without explicit dogfood. After the `v0.6.2` P1
+foundation, preserve the new backend/path/securitygate boundaries, continue
+shrinking command handlers, and choose one narrow provider/inventory/agent
+surface at a time:
 
 - keep the backend recommendation engine in `internal/backend` and continue
   shrinking command handlers so provider evidence, preference policy, action
@@ -283,15 +315,15 @@ architecture/scalability track before adding broader provider surfaces:
   when the backend's upstream source, release-date source, and parser contract
   can be verified. Generic vfox remains strict-mode review unless a registry
   entry resolves the exact candidate version;
-- decide whether provider contract drift checks should only fail locally/CI or
-  also open/update GitHub issues with explicit public-repo credentials.
+- add public-repository issue automation for provider contract drift only after
+  explicit credentials, repository ownership, and opt-in posting policy exist.
 
 ## Later Ordering
 
 Longer-term priorities live in [ROADMAP.md](ROADMAP.md). The short version:
 
-1. Continue provider-general inventory after `v0.6.0` with deeper
-   Linux/Windows scanners.
+1. Continue provider-general inventory after the `v0.6.2` P1 cleanup with
+   deeper read-only Linux/Windows scanners.
 2. Broaden Homebrew and mise release-age/advisory confidence beyond GitHub and
    first registry paths.
 3. Apply the common updev-owned gate model to VS Code and future providers.

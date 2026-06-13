@@ -158,14 +158,14 @@ authenticated where needed, and visible on `PATH`.
 | Manual app inventory | macOS `.app` bundle metadata is read locally; Mac App Store evidence is used only when receipts or `mas` evidence are available. |
 | Security gates | Network evidence is best-effort and provider-scoped. Strict mode can hold Homebrew updates, mise updates, and opt-in VS Code extension updates when required evidence is missing. Homebrew 6 trust remains a human security decision; whole-tap trust is confirmation-only and never runs automatically during update. |
 
-Known-good validation as of 2026-06-04:
+Known-good validation for the current release gate:
 
 | Tool | Verified version/path |
 |------|-----------------------|
 | macOS | primary supported preview platform. |
 | Homebrew | `6.0.0-2-g1cd9e81` locally; CI uses mocked provider output. |
-| mise | `2026.5.18` locally; GitHub backend install smoke is covered separately. |
-| Go | module and repository mise config pin `go 1.25.8`. |
+| mise | `2026.6.2 macos-x64`; GitHub backend install smoke is covered separately. |
+| Go | module and repository mise config use `go1.26.4` for local validation. |
 | GitHub Actions | CI and release workflows use GitHub-maintained Node 24 action majors. |
 
 These are validation anchors, not permanent minimum versions. If a newer
@@ -221,8 +221,10 @@ review for:
 
 - Homebrew releases and VS Code extension updates whose release age is below
   the configured minimum-age threshold;
-- mise `github:`, `npm:`, `cargo:`, and `pipx:` pending updates whose
-  release/publish/upload age is below the configured minimum-age threshold;
+- mise GitHub-backed entries, explicit and registry `aqua` entries, selected
+  core runtimes, high-confidence `npm:` / `cargo:` / `pipx:` entries, and
+  data-driven vfox entries whose release/publish/upload age is below the
+  configured minimum-age threshold;
 - Homebrew casks, URL casks, and non-official taps that need provenance review;
 - advisory matches from OSV or GitHub Advisory evidence where package identity
   is reliable;

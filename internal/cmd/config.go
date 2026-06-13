@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"bufio"
+	"math"
 	"os"
 	"strconv"
 	"strings"
@@ -116,6 +117,15 @@ func loadUpdevConfig() updevConfig {
 
 func updevConfigPath() string {
 	return updevpath.ConfigFile()
+}
+
+func truthyEnv(name string) bool {
+	value, _ := boolEnv(name)
+	return value
+}
+
+func boolEnv(name string) (bool, bool) {
+	return parseBoolValue(os.Getenv(name))
 }
 
 func parseUpdevConfigTOML(data string) updevConfig {
@@ -324,12 +334,34 @@ func parseNonEmptyStringPtr(value string) *string {
 	return &value
 }
 
+func configuredEnvString(defaultValue string, envName string) string {
+	if parsed := parseNonEmptyStringPtr(os.Getenv(envName)); parsed != nil {
+		return *parsed
+	}
+	return defaultValue
+}
+
 func parseNonNegativeIntPtr(value string) *int {
+	value = strings.TrimSpace(value)
 	parsed, err := strconv.Atoi(value)
 	if err != nil || parsed < 0 {
 		return nil
 	}
 	return &parsed
+}
+
+func configuredNonNegativeInt(defaultValue int, configured *int, envName string) int {
+	value := defaultValue
+	if configured != nil && *configured >= 0 {
+		value = *configured
+	}
+	if envName == "" {
+		return value
+	}
+	if parsed := parseNonNegativeIntPtr(os.Getenv(envName)); parsed != nil {
+		value = *parsed
+	}
+	return value
 }
 
 func parseStringArray(value string) []string {
@@ -353,11 +385,26 @@ func parseStringArray(value string) []string {
 }
 
 func parseNonNegativeFloatPtr(value string) *float64 {
+	value = strings.TrimSpace(value)
 	parsed, err := strconv.ParseFloat(value, 64)
-	if err != nil || parsed < 0 {
+	if err != nil || parsed < 0 || math.IsNaN(parsed) || math.IsInf(parsed, 0) {
 		return nil
 	}
 	return &parsed
+}
+
+func configuredNonNegativeFloat(defaultValue float64, configured *float64, envName string) float64 {
+	value := defaultValue
+	if configured != nil && *configured >= 0 {
+		value = *configured
+	}
+	if envName == "" {
+		return value
+	}
+	if parsed := parseNonNegativeFloatPtr(os.Getenv(envName)); parsed != nil {
+		value = *parsed
+	}
+	return value
 }
 
 func parseBoolPtr(value string) *bool {

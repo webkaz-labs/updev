@@ -36,12 +36,90 @@ func TestCacheDirUsesXDGCacheHome(t *testing.T) {
 	}
 }
 
+func TestReportCacheDirUsesCacheSubdir(t *testing.T) {
+	cacheHome := filepath.Join(t.TempDir(), "cache")
+	t.Setenv("XDG_CACHE_HOME", cacheHome)
+
+	want := filepath.Join(cacheHome, "updev", "reports")
+	if got := ReportCacheDir(); got != want {
+		t.Fatalf("expected report cache dir %q, got %q", want, got)
+	}
+}
+
+func TestSecurityMetadataCacheFileUsesVersionedCacheSubdir(t *testing.T) {
+	cacheHome := filepath.Join(t.TempDir(), "cache")
+	t.Setenv("XDG_CACHE_HOME", cacheHome)
+
+	want := filepath.Join(cacheHome, "updev", "security-metadata-v1", "github-repo", "abc.json")
+	if got := SecurityMetadataCacheFile("github-repo", "abc"); got != want {
+		t.Fatalf("expected security metadata cache path %q, got %q", want, got)
+	}
+	if got := SecurityMetadataCacheFile("", "abc"); got != "" {
+		t.Fatalf("expected empty kind to return empty path, got %q", got)
+	}
+	if got := SecurityMetadataCacheFile("github-repo", ""); got != "" {
+		t.Fatalf("expected empty key to return empty path, got %q", got)
+	}
+}
+
+func TestDataHomeUsesXDGDataHome(t *testing.T) {
+	dataHome := filepath.Join(t.TempDir(), "data")
+	t.Setenv("XDG_DATA_HOME", dataHome)
+
+	if got := DataHome(); got != dataHome {
+		t.Fatalf("expected XDG data home %q, got %q", dataHome, got)
+	}
+}
+
+func TestDataHomeFallsBackToHomeLocalShare(t *testing.T) {
+	t.Setenv("XDG_DATA_HOME", "")
+	home := HomeDir()
+	if home == "" {
+		t.Skip("home directory unavailable")
+	}
+
+	want := filepath.Join(home, ".local", "share")
+	if got := DataHome(); got != want {
+		t.Fatalf("expected home data dir %q, got %q", want, got)
+	}
+}
+
 func TestInventoryCacheFileUsesConfiguredStateDir(t *testing.T) {
 	stateDir := "state/updev"
 
 	want := filepath.Join("/root", stateDir, "inventory-v1.json")
 	if got := InventoryCacheFile("/root", &stateDir); got != want {
 		t.Fatalf("expected configured inventory cache file %q, got %q", want, got)
+	}
+}
+
+func TestHomeOrRootBrewfilePrefersExistingHomeBrewfile(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	if err := os.WriteFile(filepath.Join(home, "Brewfile"), []byte("brew \"git\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	want := filepath.Join(home, "Brewfile")
+	if got := HomeOrRootBrewfile("/root"); got != want {
+		t.Fatalf("expected home Brewfile %q, got %q", want, got)
+	}
+}
+
+func TestHomeOrRootBrewfileFallsBackToRootTemplate(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	want := RootBrewfileTemplate("/root")
+	if got := HomeOrRootBrewfile("/root"); got != want {
+		t.Fatalf("expected root Brewfile template %q, got %q", want, got)
+	}
+}
+
+func TestRootBrewfileTemplate(t *testing.T) {
+	want := filepath.Join("/root", "Brewfile.tmpl")
+	if got := RootBrewfileTemplate("/root"); got != want {
+		t.Fatalf("expected root Brewfile template %q, got %q", want, got)
 	}
 }
 
