@@ -34,7 +34,7 @@ type options struct {
 const (
 	usageExitCode = 64
 	toolName      = "updev"
-	toolVersion   = "v0.6.5"
+	toolVersion   = "v0.7.0"
 )
 
 var filterSummaryKeys = []string{"provider", "kind", "category", "status", "query", "limit", "include_vscode"}
@@ -169,6 +169,13 @@ func Run(args []string) int {
 		return runBackends(args)
 	case "doctor":
 		return runDoctor(args)
+	case "support":
+		opts, err := parseSupportOptions(args)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			return usageExitCode
+		}
+		return runSupport(opts)
 	case "fix":
 		return runFix(args)
 	case "security":
@@ -697,6 +704,7 @@ Commands:
   updev fix mise [--dry-run|--apply] [--format text|json]
   updev backends <doctor|plan> [--format text|json]
   updev doctor dependencies [--ledger file] [--format text|json]
+  updev doctor support [--surface provider|command|report|inventory_source|all] [--label supported_preview|experimental|compatibility|deferred] [--format text|json]
   updev last [--section summary|updates|security|inventory|logs|full] [--details] [--interactive|--no-interactive|--plain] [--format text|json]
   updev hub [inventory/list options]  # full menu selector for list views
   updev inventory [--refresh] [--include-vscode] [--provider name] [--kind kind] [--status status] [--query text] [--limit n] [--details] [--interactive|--no-interactive|--plain] [--format text|json]
@@ -719,6 +727,7 @@ Commands:
   updev plan [--refresh] [--include-vscode] [--format text|json]
   updev version [--format text|json]
   updev --version | -v
+  updev support [--surface provider|command|report|inventory_source|all] [--label supported_preview|experimental|compatibility|deferred] [--format text|json]
   updev skill [--full]
   updev help agent
   updev brewfile [--root path] <add|remove|has|check|sync> ...

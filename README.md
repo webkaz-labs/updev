@@ -149,6 +149,22 @@ release notes are kept in [`docs/release-notes`](docs/release-notes).
 already use, and provider support assumes those commands are installed,
 authenticated where needed, and visible on `PATH`.
 
+Support levels are explicit in v0.7:
+
+| Label | Meaning |
+|-------|---------|
+| `supported_preview` | Public preview path that is intended to work and receive compatibility fixes before v1. |
+| `experimental` | Available for dogfood or early evidence, but not a support promise. |
+| `compatibility` | Kept for migration or low-level workflows, not the main human path. |
+| `deferred` | Deliberately outside the current release scope. |
+
+Inspect the current catalog with:
+
+```bash
+updev support
+updev doctor support --format json
+```
+
 | Area | Requirement |
 |------|-------------|
 | macOS preview | Homebrew and mise installed locally. |
@@ -197,6 +213,8 @@ updev check
 updev sync
 updev doctor dependencies
 updev doctor dependencies --ledger ./updev-compatibility-ledger.json
+updev support
+updev support --surface provider --format json
 ```
 
 Review manual/vendor macOS apps:

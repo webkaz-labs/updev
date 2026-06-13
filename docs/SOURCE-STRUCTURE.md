@@ -13,7 +13,7 @@ temporary ceiling.
 
 | Package | Current Go files | Target | Temporary ceiling | Status | Next action |
 |---------|------------------|--------|-------------------|--------|-------------|
-| `internal/cmd` | 49 | <= 50 | 50 | within target | Keep new command files rare; extract provider, security, review UI, and inventory logic before adding files. |
+| `internal/cmd` | 50 | <= 50 | 50 | within target | At ceiling; do not add another cmd file before extracting provider, security, review UI, support catalog, or inventory logic. |
 | all other `internal/*` packages | <= 20 each | <= 20 | 20 | within target | Split by domain before adding the 21st Go source file. |
 
 Current largest non-`cmd` packages:
@@ -220,7 +220,7 @@ Completed P1 foundation slices:
   root `docs/agent/` files through `main.go`; `cmd` only renders the injected
   docs and keeps fallback text for tests.
 
-Current v0.6.5 guardrails:
+Current v0.7.0 guardrails:
 
 - Keep contract drift checks wired into local/CI validation while provider
   packages own their command contracts.
@@ -230,7 +230,7 @@ Current v0.6.5 guardrails:
   focused actions, grouped rows, and item-visible safety/update evidence should
   be tested or manually accepted before another UX refactor lands.
 
-Next extraction candidates after v0.6.5:
+Next extraction candidates after v0.7.0:
 
 | Area | Current pressure | Preferred destination | Done when |
 |------|------------------|-----------------------|-----------|

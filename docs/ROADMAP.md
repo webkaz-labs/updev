@@ -31,21 +31,21 @@ history in git log, and keep the current/next release target in
 - Documentation source-of-truth guidance, canonical `docs/agent/` usage/skill
   files, tag-specific release notes, and focused `docs-check` drift coverage are
   implemented.
-- `updev v0.6.5` is the current preview contract: it keeps the `v0.6.0`
-  mise/Homebrew provider gate scope, the `v0.6.2` scalability/export cleanup,
-  the `v0.6.3` provider-boundary maintenance slice, the `v0.6.4` shared text UI
-  action-badge ownership, and the full-scope v0.6 consolidation for embedded
-  agent guidance, provider compatibility ledgers, and experimental portable
-  inventory evidence.
+- `updev v0.7.0` is the current preview contract: it keeps the `v0.6.x`
+  Homebrew/mise provider gate, scalability, text UI, agent guidance,
+  compatibility ledger, and portable inventory groundwork, then adds explicit
+  support-level labels through `updev support` / `updev doctor support` and
+  compatibility-ledger `support_label` fields.
 - `updev brewfile ...` and `brewfile` remain compatibility or low-level
   surfaces, not the primary human workflow.
 
 ## Near-Term Order
 
-1. Keep dogfooding `updev v0.6.5` on the macOS/Homebrew/mise preview path while
-   preparing the v1 readiness narrowing release. Linux/Windows binaries and
-   fixture-backed inventory evidence stay experimental until real
-   runner/machine dogfood proves the contracts.
+1. Dogfood `updev v0.7.0` on the macOS/Homebrew/mise preview path. The current
+   policy is fixed: keep macOS/Homebrew/mise as supported preview, Linux/Windows
+   and agent enrichment experimental, `brewfile` compatibility oriented, and
+   external installer execution / dynamic plugins / stable Linux-Windows update
+   providers deferred.
 2. Continue the scalability refactor track in
    [ARCHITECTURE.md](ARCHITECTURE.md#scalability-audit-and-refactor-plan)
    before adding broad provider surfaces. Command handlers should keep shrinking
@@ -53,14 +53,14 @@ history in git log, and keep the current/next release target in
    importing TUI/report types.
 3. Preserve TTY/report regression guardrails for the accepted `updev`,
    `updev last`, and `updev list` flows before making additional UX changes.
-4. Promote provider-general inventory only after `v0.6.5` fixture evidence has
-   dogfood results: Linux read-only scanners, provider promotion suggestions,
-   and Windows evidence remain experimental until real machines or runners are
-   available.
-5. Continue provider evidence quality with richer source URLs, ownership
-   confidence, broader Homebrew/mise release-age/advisory confidence beyond the
-   current registry paths, and provider-native audit paths where package
-   identity is reliable.
+4. Use `v0.7.0` to decide support labels for provider-general inventory:
+   macOS/Homebrew/mise stays supported preview; Linux read-only scanners stay
+   experimental until fixture plus container/VM dogfood proves them; Windows
+   evidence remains fixture/spike until a real runner or machine is available.
+5. Continue provider evidence quality in `v0.7.0` with richer source URLs,
+   ownership confidence, broader Homebrew/mise release-age/advisory confidence
+   beyond the current registry paths, and provider-native audit paths where
+   package identity is reliable.
 6. Continue scanner hardening after OSV-Scanner, gitleaks, zizmor, Trivy, and
    Grype. Keep Syft and Prowler explicit future commands, not default package
    update gates.
@@ -85,8 +85,9 @@ history in git log, and keep the current/next release target in
 13. Keep Go CLI standard checks as part of future release reviews; direct
    subprocess exceptions, JSON encoding, and verbosity policy are documented for
    the current tool surface.
-14. Keep release notes, public docs, and the v1 readiness checklist focused on
-    narrowing stable, preview, experimental, and deferred surfaces deliberately.
+14. Keep release notes and public docs focused on `v0.7.0` preview hardening.
+    Do not turn support-level labels into `v1.0.0` promises until the dogfood
+    evidence is strong enough to freeze them.
 15. Maintain the macOS/Homebrew/mise public preview with installation docs,
     privacy boundaries, and explicit experimental status for Linux/Windows
     providers. Reserve `updev v1.0.0` for the first stable public contract after
@@ -111,8 +112,8 @@ history in git log, and keep the current/next release target in
 - Converge every provider on the same updev-owned gate model: provider-native
   safety settings are evidence, while updev reports consistent decisions,
   confidence, remediation, and policy override hooks.
-- Publish `updev v1.0.0` only after the readiness checklist in
-  [DESIGN.md](DESIGN.md#public-release-readiness) is satisfied.
+- Publish `updev v1.0.0` only after `v0.7.x` dogfood and the readiness
+  checklist in [DESIGN.md](DESIGN.md#public-release-readiness) are satisfied.
 - Make manual-app and provider-generated reports agent-maintained only after
   the scan/override model is stable.
 - Keep Markdown app reports generated from structured sources and live evidence;

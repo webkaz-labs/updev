@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/webkaz-labs/updev/internal/support"
 )
 
 func TestParseUpdateOptions(t *testing.T) {
@@ -44,8 +46,56 @@ func TestBuildVersionReport(t *testing.T) {
 	if report.SchemaVersion != 1 || report.Tool != toolName || report.Version != toolVersion {
 		t.Fatalf("unexpected version report: %#v", report)
 	}
-	if report.Major != 0 || report.Minor != 6 || report.Patch != 5 || report.Contract != "pre_stable" {
+	if report.Major != 0 || report.Minor != 7 || report.Patch != 0 || report.Contract != "pre_stable" {
 		t.Fatalf("unexpected version semantics: %#v", report)
+	}
+}
+
+func TestBuildSupportReportFiltersSupportLabels(t *testing.T) {
+	report := buildSupportReport(supportOptions{format: "json", surface: "provider", label: support.LabelExperimental})
+	if report.SchemaVersion != supportReportSchemaVersion || report.Tool != toolName || report.Version != toolVersion {
+		t.Fatalf("unexpected support report metadata: %#v", report)
+	}
+	if len(report.Entries) == 0 {
+		t.Fatal("expected support entries")
+	}
+	for _, entry := range report.Entries {
+		if entry.Surface != "provider" || entry.Label != support.LabelExperimental {
+			t.Fatalf("unexpected filtered entry: %#v", entry)
+		}
+	}
+	if report.Summary[support.LabelExperimental] != len(report.Entries) {
+		t.Fatalf("unexpected support summary: %#v", report.Summary)
+	}
+}
+
+func TestParseSupportOptions(t *testing.T) {
+	opts, err := parseSupportOptions([]string{"--surface", "command", "--label", "compatibility", "--format", "json"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if opts.surface != "command" || opts.label != "compatibility" || opts.format != "json" {
+		t.Fatalf("unexpected support options: %#v", opts)
+	}
+	for _, args := range [][]string{
+		{"--surface", "package"},
+		{"--label", "stable"},
+		{"--format", "xml"},
+	} {
+		if _, err := parseSupportOptions(args); err == nil {
+			t.Fatalf("expected parse error for %v", args)
+		}
+	}
+}
+
+func TestSupportTextMentionsLabels(t *testing.T) {
+	var builder strings.Builder
+	printSupportText(&builder, buildSupportReport(supportOptions{format: "text", surface: "provider"}), false)
+	out := builder.String()
+	for _, want := range []string{"updev support", "supported_preview", "experimental", "homebrew", "linux"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("support text missing %q:\n%s", want, out)
+		}
 	}
 }
 
