@@ -117,8 +117,20 @@ func TestWriteDependencyCompatibilityLedger(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(data), `"support_label"`) {
-		t.Fatalf("expected support_label to be part of the JSON contract, got %s", data)
+	var raw map[string]any
+	if err := json.Unmarshal(data, &raw); err != nil {
+		t.Fatal(err)
+	}
+	entries, ok := raw["entries"].([]any)
+	if !ok || len(entries) != 1 {
+		t.Fatalf("expected raw ledger entries, got %#v", raw["entries"])
+	}
+	entry, ok := entries[0].(map[string]any)
+	if !ok {
+		t.Fatalf("expected raw ledger entry object, got %#v", entries[0])
+	}
+	if _, ok := entry["support_label"]; !ok {
+		t.Fatalf("expected support_label key in ledger entry JSON, got %#v", entry)
 	}
 	var got dependencyCompatibilityLedger
 	if err := json.Unmarshal(data, &got); err != nil {
