@@ -23,7 +23,7 @@ func homebrewTapTrustDependencyCheck(ctx context.Context, commandRunner runner.R
 		Tool:     "brew",
 		Feature:  "tap-trust",
 		Required: false,
-		Command:  []string{"env", "HOMEBREW_NO_INSTALL_FROM_API=1", "brew", "trust", "--json=v1"},
+		Command:  brew.TrustJSONCommand(),
 		Status:   plan.StatusOK,
 	}
 	if _, err := commandRunner.LookPath("brew"); err != nil {
@@ -43,7 +43,7 @@ func homebrewTapTrustDependencyCheck(ctx context.Context, commandRunner runner.R
 		check.Value = "no non-official Brewfile trust targets"
 		return check
 	}
-	result := runDependencyCommand(ctx, commandRunner, "env", "HOMEBREW_NO_INSTALL_FROM_API=1", "brew", "trust", "--json=v1")
+	result := runDependencyCommand(ctx, commandRunner, check.Command[0], check.Command[1:]...)
 	state, err := parseHomebrewTrustState(result.Stdout)
 	if err != nil {
 		check.Status = plan.StatusDrift
@@ -194,10 +194,6 @@ func homebrewTrustActionParts(finding safetyFinding) (string, string, string, st
 	return action, trustKind, target, command, true
 }
 
-func homebrewTrustCommandArgv(kind string, target string) []string {
-	return brew.TrustCommandArgv(kind, target)
-}
-
 func validHomebrewTrustTarget(target string) bool {
 	return brew.ValidTrustTarget(target)
 }
@@ -206,16 +202,19 @@ func homebrewTrustCommandForSecurityAction(action string, target string) ([]stri
 	if !validHomebrewTrustTarget(target) {
 		return nil, false
 	}
+	trustKind := ""
 	switch action {
 	case securityActionBrewTrustFormula:
-		return []string{"brew", "trust", "--formula", strings.TrimSpace(target)}, true
+		trustKind = "formula"
 	case securityActionBrewTrustCask:
-		return []string{"brew", "trust", "--cask", strings.TrimSpace(target)}, true
+		trustKind = "cask"
 	case securityActionBrewTrustTap:
-		return []string{"brew", "trust", "--tap", strings.TrimSpace(target)}, true
+		trustKind = "tap"
 	default:
 		return nil, false
 	}
+	command := brew.TrustCommandArgv(trustKind, target)
+	return command, len(command) > 0
 }
 
 func confirmHomebrewTrustAction(action string, kind string, target string) bool {

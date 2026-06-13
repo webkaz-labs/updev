@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/webkaz-labs/updev/internal/plan"
-	"github.com/webkaz-labs/updev/internal/runner"
 	"github.com/webkaz-labs/updev/internal/securitygate"
 	"github.com/webkaz-labs/updev/internal/securityreason"
 	"github.com/webkaz-labs/updev/internal/updevpath"
@@ -160,41 +159,12 @@ func vscodeInstalledBrewfileItems(items []plan.Item, installedVersions map[strin
 }
 
 func vscodeInstalledVersions(ctx context.Context, commandRunner commandRunner, gate *safetyGate) map[string]string {
-	result := commandRunner.Run(ctx, "code", "--list-extensions", "--show-versions")
-	if result.Code != 0 || result.Err != nil {
+	versions, detail := vscode.InstalledVersions(ctx, commandRunner)
+	if detail != "" {
 		if gate != nil {
-			gate.Warnings = append(gate.Warnings, "VS Code installed extension versions unavailable: "+vscodeInstalledVersionsError(result))
+			gate.Warnings = append(gate.Warnings, "VS Code installed extension versions unavailable: "+detail)
 		}
 		return nil
-	}
-	return parseVSCodeInstalledVersions(result.Stdout)
-}
-
-func vscodeInstalledVersionsError(result runner.Result) string {
-	if detail := firstNonEmpty(result.Stderr, result.Stdout); detail != "" {
-		return detail
-	}
-	if result.Err != nil {
-		return result.Err.Error()
-	}
-	if result.Code != 0 {
-		return fmt.Sprintf("code exited with status %d", result.Code)
-	}
-	return "unknown error"
-}
-
-func parseVSCodeInstalledVersions(raw string) map[string]string {
-	versions := map[string]string{}
-	for _, line := range strings.Split(raw, "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" {
-			continue
-		}
-		name, version, ok := strings.Cut(line, "@")
-		if !ok || strings.TrimSpace(name) == "" || strings.TrimSpace(version) == "" {
-			continue
-		}
-		versions[strings.ToLower(strings.TrimSpace(name))] = strings.TrimSpace(version)
 	}
 	return versions
 }

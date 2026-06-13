@@ -31,25 +31,22 @@ history in git log, and keep the current/next release target in
 - Documentation source-of-truth guidance, canonical `docs/agent/` usage/skill
   files, tag-specific release notes, and focused `docs-check` drift coverage are
   implemented.
-- `updev v0.6.2` is the current preview contract: it keeps the `v0.6.0`
-  mise/Homebrew provider gate scope, then adds the first scalability refactor
-  slice, Homebrew trust detail actions, and public export drift checks.
+- `updev v0.6.3` is the current preview contract: it keeps the `v0.6.0`
+  mise/Homebrew provider gate scope, the `v0.6.2` scalability/export cleanup,
+  and the provider-boundary maintenance needed before the next provider
+  expansion.
 - `updev brewfile ...` and `brewfile` remain compatibility or low-level
   surfaces, not the primary human workflow.
 
 ## Near-Term Order
 
-1. Release and dogfood `updev v0.6.2`; keep macOS/Homebrew/mise as the supported
-   preview path while Linux/Windows binaries stay experimental.
+1. Keep dogfooding `updev v0.6.3` on the macOS/Homebrew/mise preview path while
+   Linux/Windows binaries stay experimental.
 2. Continue the scalability refactor track in
    [ARCHITECTURE.md](ARCHITECTURE.md#scalability-audit-and-refactor-plan)
-   before adding broad provider surfaces. The first `v0.6.2` slice moved
-   backend recommendations, common path/cache/gate helpers, inventory
-   annotations, manual inventory internals, update/security reasons, provider
-   command plans, TTY helpers, and compact text helpers out of command-local
-   code. Future slices should keep shrinking command handlers only where the
-   target package can own the full domain behavior without importing TUI/report
-   types.
+   before adding broad provider surfaces. Command handlers should keep shrinking
+   only where the target package can own the full domain behavior without
+   importing TUI/report types.
 3. Add `updev skill` / `updev help agent` only if the canonical `docs/agent/`
    files can be embedded without duplicating command reference in code.
 4. Add Linux read-only manual inventory evidence after cross-platform fixtures

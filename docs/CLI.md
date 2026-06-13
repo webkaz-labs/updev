@@ -125,7 +125,7 @@ Global flags:
   and `--format json`; add global verbosity only when a concrete cross-command
   diagnostic need appears.
 - `updev version`, `updev --version`, and `updev -v` report the current
-  implemented release contract, currently `updev v0.6.2`. JSON output from
+  implemented release contract, currently `updev v0.6.3`. JSON output from
   `updev version --format json` includes SemVer parts and the stable/pre-stable
   contract label.
 - Read-only aliases are supported for common commands: `ls` for `list`,

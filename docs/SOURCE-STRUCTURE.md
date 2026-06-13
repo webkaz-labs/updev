@@ -20,10 +20,10 @@ Current largest non-`cmd` packages:
 
 | Package | Current Go files | Status |
 |---------|------------------|--------|
-| `internal/manualinventory` | 14 | ok |
-| `internal/brew` | 13 | ok |
+| `internal/manualinventory` | 16 | ok |
+| `internal/brew` | 14 | ok |
+| `internal/mise` | 13 | ok |
 | `internal/reviewui` | 12 | ok |
-| `internal/mise` | 11 | ok |
 | `internal/registryaudit` | 9 | ok |
 | `internal/securitygate` | 9 | ok |
 | `internal/securityscanner` | 8 | ok |
@@ -87,6 +87,9 @@ Completed P1 foundation slices:
 - Homebrew and VS Code provider posture/update-safety reasons expose structured
   reason codes and args for allow/review/hold paths; command renderers localize
   from those codes before falling back to legacy prose.
+- VS Code installed-extension command, parsing, and error normalization live in
+  `internal/vscode`; command code only turns unavailable provider evidence into
+  gate warnings.
 - NPM, Cargo, and PyPI registry logic lives in `internal/registryaudit`; command
   code imports that owner package directly and keeps only endpoint resolution
   and display-count helpers local to the CLI/report surface.
@@ -166,14 +169,18 @@ Completed P1 foundation slices:
 - Shared write-flow pending state and reason/expiry acceptance lives in
   `internal/reviewui`; cmd routers keep route-specific return behavior and the
   final local write operation.
-- Homebrew tap trust target parsing and trust-state interpretation live in
-  `internal/brew`.
+- Homebrew tap trust target parsing, trust-state interpretation, and trust
+  command argv builders live in `internal/brew`.
+- Homebrew and mise update command argv builders live in their provider
+  packages. Command code owns findings-to-target selection, report mutation,
+  and TTY routing; it should not rebuild provider command chains inline.
 - Curated backend preference rewrite seeds are data-backed registry entries
   with source evidence, so adding a known rewrite path does not require a new
   command-local or tool-name branch.
-- Manual inventory scanner orchestration, stable app identity keys, and scan
-  dedupe/sort behavior live in `internal/manualinventory`; cmd code only turns
-  scanned app records into report rows and actions.
+- Manual inventory scanner orchestration, live cask/MAS provider probes, stable
+  app identity keys, and scan dedupe/sort behavior live in
+  `internal/manualinventory`; cmd code only turns scanned app records into
+  report rows and actions.
 - Structured manual inventory source parsing and source-kind detection live in
   `internal/manualinventory`; cmd code uses parsed manual app records for row
   rendering, draft validation, and accepted override flows.
@@ -198,12 +205,12 @@ Completed P1 foundation slices:
   Homebrew/mise contract drift is reported as `drift`, while optional scanner
   integrations can be unavailable without failing the report.
 
-Next P1 execution order:
+Current P1 guardrails:
 
-1. Keep contract drift checks wired into local/CI validation while provider
-   packages take over their command contracts.
-2. Continue shrinking remaining command-local adapters only when the target
-   package can own the full domain behavior without importing TUI/report types.
+- Keep contract drift checks wired into local/CI validation while provider
+  packages own their command contracts.
+- Continue shrinking command-local adapters only when the target package can
+  own the full domain behavior without importing TUI/report types.
 
 Do not add new tool-name-only fixes, direct provider command calls, implicit
 repository-local defaults, or TUI-only behavior that is missing from the report

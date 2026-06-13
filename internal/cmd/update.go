@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/webkaz-labs/updev/internal/brew"
 	"github.com/webkaz-labs/updev/internal/brewfile"
 	"github.com/webkaz-labs/updev/internal/i18n"
 	"github.com/webkaz-labs/updev/internal/inventoryannotate"
@@ -371,21 +372,14 @@ func loadUpdateSecurityPolicy(opts updateOptions) securityPolicyLoadResult {
 func updateSteps() []updateStep {
 	return []updateStep{
 		{
-			Name:    "brew",
-			Command: []string{"brew", "upgrade", "--greedy"},
-			Commands: []updateCommand{
-				{Command: brewMetadataUpdateCommand()},
-				{Command: []string{"brew", "upgrade", "--greedy"}},
-				{Command: []string{"brew", "cleanup"}},
-			},
+			Name:     "brew",
+			Command:  brew.UpgradeGreedyCommand(),
+			Commands: updateCommandsFromArgv(brew.UpgradeGreedyCommands()),
 		},
 		{
-			Name:    "mise",
-			Command: []string{"mise", "upgrade"},
-			Commands: []updateCommand{
-				{Command: []string{"mise", "upgrade"}},
-				{Command: []string{"mise", "prune"}},
-			},
+			Name:     "mise",
+			Command:  mise.UpgradeAllCommand(),
+			Commands: updateCommandsFromArgv(mise.UpgradeAllCommands()),
 		},
 	}
 }
@@ -531,9 +525,9 @@ func runStrictBrewRefreshIfNoCandidates(ctx context.Context, commandRunner comma
 	}
 	refreshStep := updateStep{
 		Name:    "brew",
-		Command: brewMetadataUpdateCommand(),
+		Command: brew.UpdateCommand(),
 		Commands: []updateCommand{
-			{Command: brewMetadataUpdateCommand()},
+			{Command: brew.UpdateCommand()},
 		},
 	}
 	setUpdateStepReason(&refreshStep, updatereason.StrictBrewRefreshDoneReason())
@@ -594,15 +588,15 @@ func updateStepWithStrictSafety(step updateStep, opts updateOptions, gates []saf
 	}
 	safe, unsafe := splitUpdateSafetyFindings(gate.Findings)
 	if step.Name == "brew" && len(safe) == 0 && len(unsafe) == 0 {
-		step.Command = brewMetadataUpdateCommand()
-		step.Commands = []updateCommand{{Command: brewMetadataUpdateCommand()}}
+		step.Command = brew.UpdateCommand()
+		step.Commands = []updateCommand{{Command: brew.UpdateCommand()}}
 		setUpdateStepReason(&step, updatereason.StrictBrewRefreshOnlyReason())
 		return step, ""
 	}
 	if len(safe) == 0 && gate.Status == plan.StatusHeld {
 		if step.Name == "brew" && len(unsafe) > 0 {
-			step.Command = brewMetadataUpdateCommand()
-			step.Commands = []updateCommand{{Command: brewMetadataUpdateCommand()}}
+			step.Command = brew.UpdateCommand()
+			step.Commands = []updateCommand{{Command: brew.UpdateCommand()}}
 			setUpdateStepReason(&step, updatereason.StrictBrewHeldReason(len(unsafe)))
 			step.SkippedItems = updateSafetySkippedSummaries(unsafe)
 			return step, ""
@@ -670,30 +664,11 @@ func scopedMiseUpgradeCommand(root string, findings []safetyFinding) []string {
 	if len(tools) == 0 {
 		return nil
 	}
-	return scopedMiseUpgradeCommandForTools(root, tools)
+	return mise.UpgradeCommand(root, tools, miseMinimumReleaseAgeFlagValue())
 }
 
 func scopedMiseUpgradeCommands(root string, findings []safetyFinding) []updateCommand {
-	command := scopedMiseUpgradeCommand(root, findings)
-	if len(command) == 0 {
-		return nil
-	}
-	return []updateCommand{
-		{Command: command},
-		{Command: []string{"mise", "prune"}},
-	}
-}
-
-func scopedMiseUpgradeCommandForTools(root string, tools []string) []string {
-	miseCommand := []string{"mise", "upgrade", "--yes"}
-	if age := miseMinimumReleaseAgeFlagValue(); age != "" {
-		miseCommand = append(miseCommand, "--minimum-release-age", age)
-	}
-	if strings.TrimSpace(root) != "" {
-		miseCommand = append(miseCommand, "--cd", root)
-	}
-	miseCommand = append(miseCommand, tools...)
-	return miseCommand
+	return updateCommandsFromArgv(mise.UpgradeCommands(root, updateSafetyFindingNames(findings), miseMinimumReleaseAgeFlagValue()))
 }
 
 func miseGitHubTokenEnv() []string {
@@ -732,27 +707,22 @@ func miseMinimumReleaseAgeFlagValue() string {
 }
 
 func scopedBrewUpgradeCommand(findings []safetyFinding) []string {
-	names := updateSafetyFindingNames(findings)
-	if len(names) == 0 {
-		return nil
-	}
-	return append([]string{"env", "HOMEBREW_NO_AUTO_UPDATE=1", "brew", "upgrade", "--greedy"}, names...)
+	return brew.UpgradeGreedyNoAutoUpdateCommand(updateSafetyFindingNames(findings))
 }
 
 func scopedBrewUpgradeCommands(findings []safetyFinding) []updateCommand {
-	command := scopedBrewUpgradeCommand(findings)
-	if len(command) == 0 {
-		return nil
-	}
-	return []updateCommand{
-		{Command: command},
-		{Command: []string{"env", "HOMEBREW_NO_AUTO_UPDATE=1", "brew", "cleanup"}},
-		{Command: brewMetadataUpdateCommand()},
-	}
+	return updateCommandsFromArgv(brew.UpgradeGreedyNoAutoUpdateCommands(updateSafetyFindingNames(findings)))
 }
 
-func brewMetadataUpdateCommand() []string {
-	return []string{"brew", "update"}
+func updateCommandsFromArgv(commands [][]string) []updateCommand {
+	out := []updateCommand{}
+	for _, command := range commands {
+		if len(command) == 0 {
+			continue
+		}
+		out = append(out, updateCommand{Command: command})
+	}
+	return out
 }
 
 func updateSafetyFindingNames(findings []safetyFinding) []string {
@@ -957,24 +927,11 @@ func runMiseBumpCommand(ctx context.Context, commandRunner commandRunner, root s
 }
 
 func miseBumpCommandForFindings(root string, dryRun bool, yes bool, findings []safetyFinding) []string {
-	command := miseBumpCommand(root, dryRun, yes, findings)
-	if len(command) == 0 || !miseBumpNeedsReleaseAgeBypass(findings) {
-		return command
-	}
-	return append([]string{"env", "MISE_MINIMUM_RELEASE_AGE=0d"}, command...)
+	return mise.BumpCommand(root, miseBumpToolNames(findings), dryRun, yes, miseBumpNeedsReleaseAgeBypass(findings))
 }
 
 func miseBumpApplyCommands(root string, findings []safetyFinding) []updateCommand {
-	preflight := miseBumpCommandForFindings(root, true, false, findings)
-	apply := miseBumpCommandForFindings(root, false, true, findings)
-	commands := []updateCommand{}
-	if len(preflight) > 0 {
-		commands = append(commands, updateCommand{Command: preflight})
-	}
-	if len(apply) > 0 {
-		commands = append(commands, updateCommand{Command: apply})
-	}
-	return commands
+	return updateCommandsFromArgv(mise.BumpApplyCommands(root, miseBumpToolNames(findings), miseBumpNeedsReleaseAgeBypass(findings)))
 }
 
 func miseBumpNeedsReleaseAgeBypass(findings []safetyFinding) bool {
@@ -1095,26 +1052,6 @@ func npmConfigLineSetsReleaseAge(line string) bool {
 	}
 	key = strings.TrimSpace(strings.ToLower(strings.ReplaceAll(key, "_", "-")))
 	return key == "min-release-age" || key == "minimum-release-age"
-}
-
-func miseBumpCommand(root string, dryRun bool, yes bool, findings []safetyFinding) []string {
-	tools := miseBumpToolNames(findings)
-	if len(tools) == 0 {
-		return nil
-	}
-	args := []string{"upgrade"}
-	if dryRun {
-		args = append(args, "--dry-run")
-	}
-	args = append(args, "--bump")
-	if yes {
-		args = append(args, "--yes")
-	}
-	if strings.TrimSpace(root) != "" {
-		args = append(args, "--cd", root)
-	}
-	args = append(args, tools...)
-	return append([]string{"mise"}, args...)
 }
 
 func miseBumpToolNames(findings []safetyFinding) []string {
@@ -2876,7 +2813,7 @@ func findMiseBumpFinding(report updateReport, name string) (safetyFinding, bool)
 }
 
 func confirmMiseBumpWriteAction(root string, findings []safetyFinding) bool {
-	command := miseBumpCommand(root, true, false, findings)
+	command := miseBumpCommandForFindings(root, true, false, findings)
 	fmt.Printf("%s %s\n", textui.StyleLabel("preview:", textui.ColorEnabled()), joinCommand(command))
 	if err := validateMiseBumpPlannedCandidates(context.Background(), runner.Local{}, root, findings); err != nil {
 		fmt.Fprintf(os.Stderr, "mise bump candidate set changed before preview: %s\n", err)

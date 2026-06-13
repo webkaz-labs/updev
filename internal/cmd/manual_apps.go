@@ -1,14 +1,11 @@
 package cmd
 
 import (
-	"context"
 	"os"
 	"path/filepath"
 	"regexp"
-	"runtime"
 	"sort"
 	"strings"
-	"time"
 	"unicode"
 
 	"github.com/webkaz-labs/updev/internal/legacycache"
@@ -111,33 +108,7 @@ func manualCachedInventoryItems(root string) []plan.Item {
 }
 
 func manualLiveCaskInventoryItems(root string, local runner.Runner) []plan.Item {
-	if runtime.GOOS != "darwin" || !shouldUseHomeBrewfile(root) {
-		return nil
-	}
-	if _, err := local.LookPath("brew"); err != nil {
-		return nil
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	result := local.Run(ctx, "brew", "list", "--cask", "-1")
-	if result.Err != nil {
-		return nil
-	}
-	items := []plan.Item{}
-	for _, line := range strings.Split(result.Stdout, "\n") {
-		name := strings.TrimSpace(line)
-		if name == "" {
-			continue
-		}
-		items = append(items, plan.Item{
-			Provider: "brew",
-			Kind:     "cask",
-			Name:     name,
-			Status:   plan.StatusExtra,
-			Live:     true,
-		})
-	}
-	return items
+	return manualinventory.LiveCaskInventoryItems(root, shouldUseHomeBrewfile(root), local)
 }
 
 func manualCaskSections(items []plan.Item) []toolSection {
@@ -563,24 +534,14 @@ func scanManualApplications(root string) []manualScannedApp {
 }
 
 func manualMASListSections(root string) []toolSection {
-	if filepath.Clean(root) != filepath.Clean(defaultRoot()) {
-		return nil
-	}
-	local := runner.Local{}
-	if _, err := local.LookPath("mas"); err != nil {
-		return nil
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	result := local.Run(ctx, "mas", "list")
-	if result.Code != 0 || strings.TrimSpace(result.Stdout) == "" {
-		return nil
-	}
-	return manualMASListSectionsFromOutput(result.Stdout)
+	return manualMASListSectionsFromApps(manualinventory.InstalledMASApps(root, defaultRoot(), runner.Local{}))
 }
 
 func manualMASListSectionsFromOutput(output string) []toolSection {
-	apps := parseManualMASList(output)
+	return manualMASListSectionsFromApps(parseManualMASList(output))
+}
+
+func manualMASListSectionsFromApps(apps []manualMASApp) []toolSection {
 	if len(apps) == 0 {
 		return nil
 	}
