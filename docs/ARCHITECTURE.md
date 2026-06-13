@@ -155,15 +155,14 @@ The short version:
 - external commands go through `internal/runner` unless listed in the direct
   subprocess exceptions above.
 
-### v0.6.5 Architecture Focus
+### v0.7.0 Architecture Focus
 
-`v0.6.5` keeps the runtime contract stable while finishing the remaining v0.6
-groundwork around boundaries that are already visible in the product. Broad
-provider promotion still waits for real-machine evidence, but fixture-backed
-portable inventory and compatibility ledgers are now part of the preview
-contract:
+`v0.7.0` keeps the runtime contract stable while making preview support
+boundaries explicit. Broad provider promotion still waits for real-machine
+evidence, but fixture-backed portable inventory, compatibility ledgers, and the
+support catalog are now part of the preview contract:
 
-| Boundary | Owner | v0.6.5 rule |
+| Boundary | Owner | v0.7.0 rule |
 |----------|-------|-------------|
 | Provider command contracts | provider packages such as `brew`, `mise`, `vscode`, `manualinventory` | argv/env construction, structured parsing, and provider-specific error normalization stay with the provider owner. |
 | Security/update decisions | `securitygate`, `securityreason`, `updatereason`, provider safety packages | decisions are represented as stable codes/args first; localized prose is render-time output. |
@@ -173,6 +172,7 @@ contract:
 | Inventory annotations | `inventoryannotate`, `plan`, provider packages | report enrichment should be data-backed and available to cached report views, not TUI-only. |
 | Portable manual inventory evidence | `manualinventory` | macOS, Linux fixture-backed, and Windows fixture-backed scanners normalize into the same review/evidence model and remain explicitly experimental outside macOS. |
 | Agent guidance | root embed plus `cmd` read-only commands | `updev skill`, `updev skill --full`, and `updev help agent` embed the canonical `docs/agent/` files instead of duplicating command reference in Go strings. |
+| Support labels | `internal/support` plus thin `cmd` adapters | providers, commands, report families, and inventory sources use one catalog for `supported_preview`, `experimental`, `compatibility`, and `deferred` labels. |
 
 Extraction is justified when it moves an entire domain contract with tests.
 Moving only a helper to reduce file count is not enough. If a cleanup would

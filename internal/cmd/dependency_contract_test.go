@@ -99,10 +99,10 @@ func TestDependencyCompatibilityLedgerMarksRequiredDriftUnsupported(t *testing.T
 	if ledger.GeneratedAt != "2026-06-14T01:02:03Z" || len(ledger.Entries) != 2 {
 		t.Fatalf("unexpected ledger: %#v", ledger)
 	}
-	if ledger.Entries[0].Supported || !strings.Contains(ledger.Entries[0].Evidence, "Homebrew 6.0.0") {
+	if ledger.Entries[0].Supported || ledger.Entries[0].SupportLabel != "supported_preview" || !strings.Contains(ledger.Entries[0].Evidence, "Homebrew 6.0.0") {
 		t.Fatalf("expected required drift to be unsupported with evidence, got %#v", ledger.Entries[0])
 	}
-	if !ledger.Entries[1].Supported {
+	if !ledger.Entries[1].Supported || ledger.Entries[1].SupportLabel != "experimental" {
 		t.Fatalf("expected optional unavailable scanner to stay supported, got %#v", ledger.Entries[1])
 	}
 }

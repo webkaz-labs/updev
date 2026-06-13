@@ -36,6 +36,7 @@ updev fix mise  # dry-run-first mise manifest hygiene fixer
 updev last      # reopen cached last update dashboard/report
 updev --plain   # stable text update output without TUI
 updev version   # current implemented tool release
+updev support   # support-level labels for providers, commands, reports, and inventory sources
 updev --version # short version check; -v is an alias
 updev skill     # print the installable agent skill guidance
 updev help agent # print the detailed agent workflow guide
@@ -47,6 +48,7 @@ journey:
 ```bash
 updev brewfile ...
 updev doctor dependencies
+updev doctor support
 updev security ...
 updev trial ...
 ```
@@ -127,9 +129,14 @@ Global flags:
   and `--format json`; add global verbosity only when a concrete cross-command
   diagnostic need appears.
 - `updev version`, `updev --version`, and `updev -v` report the current
-  implemented release contract, currently `updev v0.6.5`. JSON output from
+  implemented release contract, currently `updev v0.7.0`. JSON output from
   `updev version --format json` includes SemVer parts and the stable/pre-stable
   contract label.
+- `updev support` and `updev doctor support` print the current support-level
+  catalog. Use `--surface provider|command|report|inventory_source|all`,
+  `--label supported_preview|experimental|compatibility|deferred`, and
+  `--format json` when an agent or CI job needs machine-readable support
+  boundaries.
 - `updev skill` prints the embedded `docs/agent/SKILL.md`. `updev skill
   --full` appends the detailed `docs/agent/USAGE.md` guide. `updev help agent`
   prints the detailed guide only. These commands are read-only and are intended
@@ -455,9 +462,9 @@ Trivy, Grype, and the optional Codex description-translation backend. Missing
 optional integrations are reported as unavailable but do not make the report
 fail; changed required JSON contracts return drift. JSON output includes a
 `compatibility_ledger` with provider/tool versions, command evidence, support
-status, and remediation. `updev doctor dependencies --ledger <file>` writes the
-ledger as a local JSON artifact for CI or release review without posting public
-issues by default.
+status, support label, and remediation. `updev doctor dependencies --ledger
+<file>` writes the ledger as a local JSON artifact for CI or release review
+without posting public issues by default.
 
 On Homebrew 6, doctor also reads `brew trust --json=v1` with
 `HOMEBREW_NO_INSTALL_FROM_API=1` and compares it with non-official tap, formula,

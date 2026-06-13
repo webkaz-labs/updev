@@ -15,6 +15,7 @@ import (
 	"github.com/webkaz-labs/updev/internal/mise"
 	"github.com/webkaz-labs/updev/internal/plan"
 	"github.com/webkaz-labs/updev/internal/runner"
+	"github.com/webkaz-labs/updev/internal/support"
 	"github.com/webkaz-labs/updev/internal/textui"
 )
 
@@ -62,15 +63,16 @@ type dependencyCompatibilityLedger struct {
 }
 
 type dependencyCompatibilityEntry struct {
-	Tool        string      `json:"tool"`
-	Feature     string      `json:"feature"`
-	Required    bool        `json:"required"`
-	Version     string      `json:"version,omitempty"`
-	Status      plan.Status `json:"status"`
-	Supported   bool        `json:"supported"`
-	Evidence    string      `json:"evidence,omitempty"`
-	Remediation string      `json:"remediation,omitempty"`
-	Command     []string    `json:"command,omitempty"`
+	Tool         string      `json:"tool"`
+	Feature      string      `json:"feature"`
+	Required     bool        `json:"required"`
+	Version      string      `json:"version,omitempty"`
+	Status       plan.Status `json:"status"`
+	Supported    bool        `json:"supported"`
+	SupportLabel string      `json:"support_label,omitempty"`
+	Evidence     string      `json:"evidence,omitempty"`
+	Remediation  string      `json:"remediation,omitempty"`
+	Command      []string    `json:"command,omitempty"`
 }
 
 type dependencyProbe struct {
@@ -86,10 +88,18 @@ type dependencyProbe struct {
 
 func runDoctor(args []string) int {
 	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "usage: updev doctor dependencies [--format text|json]")
+		fmt.Fprintln(os.Stderr, "usage: updev doctor <dependencies|support> [--format text|json]")
 		return usageExitCode
 	}
 	command := args[0]
+	if command == "support" {
+		opts, err := parseSupportOptions(args[1:])
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			return usageExitCode
+		}
+		return runSupport(opts)
+	}
 	if command != "dependencies" {
 		fmt.Fprintf(os.Stderr, "unsupported doctor command: %s\n", command)
 		return usageExitCode
@@ -203,15 +213,16 @@ func buildDependencyCompatibilityLedger(root string, checks []dependencyContract
 			evidence = check.Reason
 		}
 		entries = append(entries, dependencyCompatibilityEntry{
-			Tool:        check.Tool,
-			Feature:     check.Feature,
-			Required:    check.Required,
-			Version:     check.Version,
-			Status:      check.Status,
-			Supported:   supported,
-			Evidence:    evidence,
-			Remediation: check.Remediation,
-			Command:     append([]string{}, check.Command...),
+			Tool:         check.Tool,
+			Feature:      check.Feature,
+			Required:     check.Required,
+			Version:      check.Version,
+			Status:       check.Status,
+			Supported:    supported,
+			SupportLabel: dependencySupportLabel(check),
+			Evidence:     evidence,
+			Remediation:  check.Remediation,
+			Command:      append([]string{}, check.Command...),
 		})
 	}
 	return dependencyCompatibilityLedger{
@@ -219,6 +230,20 @@ func buildDependencyCompatibilityLedger(root string, checks []dependencyContract
 		GeneratedAt:   now.Format(time.RFC3339),
 		Root:          root,
 		Entries:       entries,
+	}
+}
+
+func dependencySupportLabel(check dependencyContractCheck) string {
+	switch check.Tool {
+	case "brew", "mise":
+		return support.LabelSupportedPreview
+	case "codex", "osv-scanner", "gitleaks", "zizmor", "trivy", "grype":
+		return support.LabelExperimental
+	default:
+		if check.Required {
+			return support.LabelSupportedPreview
+		}
+		return support.LabelExperimental
 	}
 }
 
