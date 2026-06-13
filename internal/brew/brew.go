@@ -13,6 +13,7 @@ import (
 
 	"github.com/webkaz-labs/updev/internal/plan"
 	"github.com/webkaz-labs/updev/internal/runner"
+	"github.com/webkaz-labs/updev/internal/updevpath"
 )
 
 type Provider struct {
@@ -52,16 +53,11 @@ func (p Provider) Desired(ctx context.Context) ([]plan.Item, error) {
 }
 
 func (p Provider) desiredPath() string {
-	sourcePath := filepath.Join(p.Root, "Brewfile.tmpl")
+	sourcePath := updevpath.RootBrewfileTemplate(p.Root)
 	if !p.UseHomeDesired {
 		return sourcePath
 	}
-	home, _ := os.UserHomeDir()
-	path := filepath.Join(home, "Brewfile")
-	if _, err := os.Stat(path); err != nil {
-		path = sourcePath
-	}
-	return path
+	return updevpath.HomeOrRootBrewfile(p.Root)
 }
 
 func DesiredFromPath(path string) ([]plan.Item, error) {

@@ -69,14 +69,11 @@ type updateHubRouterModel struct {
 	width          int
 	height         int
 
-	screen              updateHubRouterScreen
-	stateKey            string
-	returnAction        string
-	finalAction         string
-	pendingAction       string
-	pendingReason       string
-	pendingExpires      string
-	pendingReturnAction string
+	screen       updateHubRouterScreen
+	stateKey     string
+	returnAction string
+	finalAction  string
+	writeFlow    reviewui.WriteFlow
 
 	dashboard updateSummaryBrowserModel
 	detail    detailBrowserModel
@@ -229,10 +226,8 @@ func (m updateHubRouterModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case updateHubRouterDashboard:
 		updated, _ := m.dashboard.Update(msg)
 		if dashboard, ok := updated.(updateSummaryBrowserModel); ok {
-			action := dashboard.State.Action
-			dashboard.State.Action = ""
+			action := reviewui.TakeActionAndRemember(m.detailStates, m.stateKey, &dashboard.State)
 			m.dashboard = dashboard
-			m.detailStates[m.stateKey] = dashboard.State
 			if action != "" {
 				return m.handleAction(action)
 			}
@@ -240,10 +235,8 @@ func (m updateHubRouterModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case updateHubRouterDetail:
 		updated, _ := m.detail.Update(msg)
 		if detail, ok := updated.(detailBrowserModel); ok {
-			action := detail.State.Action
-			detail.State.Action = ""
+			action := reviewui.TakeActionAndRemember(m.detailStates, m.stateKey, &detail.State)
 			m.detail = detail
-			m.detailStates[m.stateKey] = detail.State
 			if action != "" {
 				return m.handleAction(action)
 			}
@@ -251,10 +244,8 @@ func (m updateHubRouterModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case updateHubRouterTable:
 		updated, _ := m.table.Update(msg)
 		if table, ok := updated.(toolTableBrowserModel); ok {
-			action := table.State.Action
-			table.State.Action = ""
+			action := reviewui.TakeActionAndRemember(m.detailStates, m.stateKey, &table.State)
 			m.table = table
-			m.detailStates[m.stateKey] = table.State
 			if action != "" {
 				return m.handleAction(action)
 			}
@@ -340,7 +331,7 @@ func (m updateHubRouterModel) handleAction(action string) (tea.Model, tea.Cmd) {
 			m.showDashboard("")
 			m.dashboard.TopAnchor = true
 			m.dashboard.State.Offset = 0
-			m.detailStates[m.stateKey] = m.dashboard.State
+			reviewui.RememberState(m.detailStates, m.stateKey, m.dashboard.State)
 			return m, nil
 		}
 		if strings.HasPrefix(m.stateKey, "filter-result:") && m.returnAction != "" {
@@ -587,29 +578,26 @@ func (m updateHubRouterModel) handleInputAction(input textInputBrowserModel) (te
 		m.finalAction = updevActionExit
 		return m, tea.Quit
 	case updevActionBack:
-		if strings.HasPrefix(m.stateKey, "write-") {
-			m.showReturnAction(m.pendingReturnAction)
+		if reviewui.IsWriteStateKey(m.stateKey) {
+			m.showReturnAction(m.writeFlow.ReturnAction)
 			return m, nil
 		}
 		m.showReturnAction(m.returnAction)
 		return m, nil
 	case "submit":
-		if strings.HasPrefix(m.stateKey, "write-reason:") {
-			m.pendingReason = strings.TrimSpace(input.Value)
-			if m.pendingReason == "" {
-				m.showReturnAction(m.pendingReturnAction)
+		if reviewui.IsWriteReasonStateKey(m.stateKey) {
+			if !m.writeFlow.AcceptReason(input.Value) {
+				m.showReturnAction(m.writeFlow.ReturnAction)
 				return m, nil
 			}
 			m.showWriteExpiryInput()
 			return m, nil
 		}
-		if strings.HasPrefix(m.stateKey, "write-expiry:") {
-			expires, err := validateSecurityPolicyAllowExpiry(input.Value, time.Now())
-			if err != nil {
-				m.showReturnAction(m.pendingReturnAction)
+		if reviewui.IsWriteExpiryStateKey(m.stateKey) {
+			if !m.writeFlow.AcceptExpiry(input.Value, time.Now(), validateSecurityPolicyAllowExpiry) {
+				m.showReturnAction(m.writeFlow.ReturnAction)
 				return m, nil
 			}
-			m.pendingExpires = expires
 			m.showWriteConfirm()
 			return m, nil
 		}
@@ -631,13 +619,7 @@ func (m *updateHubRouterModel) showWriteAction(action string) {
 	if !ok {
 		return
 	}
-	m.pendingAction = action
-	m.pendingReason = spec.DefaultReason
-	m.pendingExpires = spec.DefaultExpires
-	m.pendingReturnAction = m.currentAction()
-	if m.pendingReturnAction == "" {
-		m.pendingReturnAction = updateHubActionDashboard
-	}
+	m.writeFlow = reviewui.NewWriteFlow(action, m.currentAction(), updateHubActionDashboard, spec)
 	if spec.NeedsReason {
 		m.showWriteReasonInput(spec)
 		return
@@ -649,21 +631,18 @@ func (m *updateHubRouterModel) showWriteReasonInput(spec detailWriteActionSpec) 
 	model := newTextInputBrowserModel(spec.Title, spec.Description, spec.DefaultReason, spec.DefaultReason, m.color)
 	model.Label = tr("reason:", "reason:")
 	m.screen = updateHubRouterInput
-	m.stateKey = "write-reason:" + m.pendingAction
-	m.returnAction = m.pendingReturnAction
+	m.stateKey = reviewui.WriteReasonStateKey(m.writeFlow.Action)
+	m.returnAction = m.writeFlow.ReturnAction
 	m.input = model
 }
 
 func (m *updateHubRouterModel) showWriteExpiryInput() {
-	_, _, _, _, ok := parseSecurityDetailAction(m.pendingAction)
+	_, _, _, _, ok := parseSecurityDetailAction(m.writeFlow.Action)
 	if !ok {
 		m.showWriteConfirm()
 		return
 	}
-	defaultExpiry := m.pendingExpires
-	if strings.TrimSpace(defaultExpiry) == "" {
-		defaultExpiry = time.Now().AddDate(0, 0, 7).Format("2006-01-02")
-	}
+	defaultExpiry := m.writeFlow.DefaultExpiry(time.Now())
 	model := newTextInputBrowserModel(
 		tr("security allow expiry", "security allow 期限"),
 		tr("Enter the YYYY-MM-DD expiry for this temporary allow rule.", "一時 allow rule の期限を YYYY-MM-DD で入力します。"),
@@ -673,26 +652,21 @@ func (m *updateHubRouterModel) showWriteExpiryInput() {
 	)
 	model.Label = tr("expires:", "expires:")
 	m.screen = updateHubRouterInput
-	m.stateKey = "write-expiry:" + m.pendingAction
-	m.returnAction = m.pendingReturnAction
+	m.stateKey = reviewui.WriteExpiryStateKey(m.writeFlow.Action)
+	m.returnAction = m.writeFlow.ReturnAction
 	m.input = model
 }
 
 func (m *updateHubRouterModel) showWriteConfirm() {
-	spec, ok := routedDetailWriteActionSpec(m.pendingAction)
+	spec, ok := routedDetailWriteActionSpec(m.writeFlow.Action)
 	if !ok {
-		m.showReturnAction(m.pendingReturnAction)
+		m.showReturnAction(m.writeFlow.ReturnAction)
 		return
 	}
-	if m.pendingExpires != "" {
-		spec.Description = spec.Description + "\n" + tr("expires: ", "期限: ") + m.pendingExpires
-	}
-	if m.pendingReason != "" {
-		spec.Description = spec.Description + "\n" + tr("reason: ", "理由: ") + m.pendingReason
-	}
+	spec.Description = m.writeFlow.ConfirmDescription(spec, tr("expires: ", "期限: "), tr("reason: ", "理由: "))
 	m.screen = updateHubRouterConfirm
-	m.stateKey = "write-confirm:" + m.pendingAction
-	m.returnAction = m.pendingReturnAction
+	m.stateKey = reviewui.WriteConfirmStateKey(m.writeFlow.Action)
+	m.returnAction = m.writeFlow.ReturnAction
 	m.confirm = newConfirmBrowserModel(spec.Title, spec.Prompt, spec.Description, m.color)
 }
 
@@ -702,12 +676,12 @@ func (m updateHubRouterModel) handleConfirmAction(confirm confirmBrowserModel) (
 		m.finalAction = updevActionExit
 		return m, tea.Quit
 	case updevActionBack:
-		m.showReturnAction(m.pendingReturnAction)
+		m.showReturnAction(m.writeFlow.ReturnAction)
 		return m, nil
 	case "apply":
-		_ = applyRoutedDetailWriteAction(m.report.Root, &m.report, m.pendingAction, m.pendingReason, m.pendingExpires)
+		_ = applyRoutedDetailWriteAction(m.report.Root, &m.report, m.writeFlow.Action, m.writeFlow.Reason, m.writeFlow.Expires)
 		m.refreshPlansAfterWriteAction()
-		m.showReturnAction(m.pendingReturnAction)
+		m.showReturnAction(m.writeFlow.ReturnAction)
 		return m, nil
 	default:
 		return m, nil
@@ -715,15 +689,15 @@ func (m updateHubRouterModel) handleConfirmAction(confirm confirmBrowserModel) (
 }
 
 func (m *updateHubRouterModel) refreshPlansAfterWriteAction() {
-	if action, _, ok := parseManualPlanDetailAction(m.pendingAction); ok && manualPlanDetailActionRequiresConfirmation(action) {
+	if action, _, ok := parseManualPlanDetailAction(m.writeFlow.Action); ok && manualPlanDetailActionRequiresConfirmation(action) {
 		m.manualPlan = buildInventoryPlanForHub(m.report.Root)
 		m.manualLoading = false
 	}
-	if action, _, _, ok := parseBackendDetailAction(m.pendingAction); ok && backendDetailActionRequiresConfirmation(action) {
+	if action, _, _, ok := parseBackendDetailAction(m.writeFlow.Action); ok && backendDetailActionRequiresConfirmation(action) {
 		m.backendPlan = buildBackendPlanForHub(m.report.Root)
 		m.backendLoading = false
 	}
-	if action, _, _, _, ok := parseSecurityDetailAction(m.pendingAction); ok && securityDetailActionRequiresConfirmation(action) {
+	if action, _, _, _, ok := parseSecurityDetailAction(m.writeFlow.Action); ok && securityDetailActionRequiresConfirmation(action) {
 		m.report.Report = saveLastUpdateReport(m.report)
 	}
 }
@@ -918,13 +892,13 @@ func (m updateHubRouterModel) applyDashboardSize(model *updateSummaryBrowserMode
 		model.State.Offset = 0
 		return
 	}
-	model.ensureSelectedVisible()
+	model.EnsureSelectedVisible()
 }
 
 func (m updateHubRouterModel) applyDetailSize(model *detailBrowserModel) {
 	model.Width = m.width
 	model.Height = m.height
-	model.ensureSelectedVisible()
+	model.EnsureSelectedVisible()
 }
 
 func (m updateHubRouterModel) applyTableSize(model *toolTableBrowserModel) {

@@ -11,6 +11,8 @@ import (
 	"time"
 	"unicode"
 
+	"github.com/webkaz-labs/updev/internal/legacycache"
+	"github.com/webkaz-labs/updev/internal/manualinventory"
 	"github.com/webkaz-labs/updev/internal/plan"
 	"github.com/webkaz-labs/updev/internal/reviewui"
 	"github.com/webkaz-labs/updev/internal/runner"
@@ -30,19 +32,8 @@ type manualAppOverride struct {
 	Lifecycle string   `json:"lifecycle,omitempty"`
 }
 
-type manualStructuredApp struct {
-	Name         string
-	Aliases      []string
-	Category     string
-	Detail       string
-	ManagedBy    string
-	Lifecycle    string
-	Confidence   string
-	ReviewStatus string
-	Identifiers  map[string]string
-	Provenance   map[string]string
-	Evidence     []string
-}
+type manualStructuredApp = manualinventory.StructuredApp
+type manualMASApp = manualinventory.MASApp
 
 func manualAppSections(root string, filters listOptions, inventoryItems []plan.Item) []toolSection {
 	if !listIncludesManual(filters) {
@@ -84,7 +75,7 @@ func manualAppSections(root string, filters listOptions, inventoryItems []plan.I
 			if manualRowHiddenByDefault(section, row, filters) {
 				continue
 			}
-			if filters.status != "" && !toolRowStatusMatches(row.State, filters.status) {
+			if filters.status != "" && !legacycache.RowStatusMatches(row.State, filters.status) {
 				continue
 			}
 			if filters.query != "" && !manualRowMatches(section, row, filters.query) {
@@ -323,22 +314,22 @@ func manualInstalledAppGroupRules() []manualInstalledAppGroupRule {
 			Name:  "manual/installed-app-store",
 			Title: "manual / Installed / App Store",
 			Match: func(row toolRow) bool {
-				source := manualDetailValue(row.Detail, "source")
-				managedBy := manualDetailValue(row.Detail, "managed_by")
+				source := manualinventory.DetailValue(row.Detail, "source")
+				managedBy := manualinventory.DetailValue(row.Detail, "managed_by")
 				return strings.EqualFold(managedBy, "mas") ||
 					strings.EqualFold(source, "mac app store receipt") ||
 					strings.EqualFold(source, "mas list") ||
-					manualDetailValue(row.Detail, "mas_id") != ""
+					manualinventory.DetailValue(row.Detail, "mas_id") != ""
 			},
 		},
 		{
 			Name:  "manual/installed-homebrew-casks",
 			Title: "manual / Installed / Homebrew casks",
 			Match: func(row toolRow) bool {
-				source := manualDetailValue(row.Detail, "source")
+				source := manualinventory.DetailValue(row.Detail, "source")
 				return row.State == "brew" ||
 					strings.EqualFold(source, "homebrew cask") ||
-					manualDetailValue(row.Detail, "cask") != ""
+					manualinventory.DetailValue(row.Detail, "cask") != ""
 			},
 		},
 		{
@@ -387,20 +378,20 @@ func manualRowMatch(index map[string]manualRowRef, row toolRow) (manualRowRef, b
 
 func manualRowIdentityKeys(row toolRow) []string {
 	keys := []string{}
-	if bundleID := manualDetailValue(row.Detail, "bundle_id"); bundleID != "" {
+	if bundleID := manualinventory.DetailValue(row.Detail, "bundle_id"); bundleID != "" {
 		keys = append(keys, "bundle:"+strings.ToLower(bundleID))
 	}
-	if masID := manualDetailValue(row.Detail, "mas_id"); masID != "" {
+	if masID := manualinventory.DetailValue(row.Detail, "mas_id"); masID != "" {
 		keys = append(keys, "mas:"+strings.ToLower(masID))
 	}
-	if path := manualDetailValue(row.Detail, "path"); path != "" {
+	if path := manualinventory.DetailValue(row.Detail, "path"); path != "" {
 		for _, key := range manualAppPathKeys(path) {
 			if key != "" {
 				keys = append(keys, "name:"+key)
 			}
 		}
 	}
-	if cask := manualDetailValue(row.Detail, "cask"); cask != "" {
+	if cask := manualinventory.DetailValue(row.Detail, "cask"); cask != "" {
 		for _, key := range manualAppKeys(manualCaskDisplayName(cask)) {
 			if key != "" {
 				keys = append(keys, "name:"+key)
@@ -437,7 +428,7 @@ func mergeManualLiveRow(row *toolRow, live toolRow) {
 		row.State = "managed"
 	}
 	row.Detail = joinManualDetails(row.Detail, live.Detail)
-	row.Actions = mergeReviewActions(row.Actions, live.Actions)
+	row.Actions = reviewui.MergeActions(row.Actions, live.Actions)
 }
 
 func mergeManualEvidenceRow(row *toolRow, live toolRow) {
@@ -450,7 +441,7 @@ func mergeManualEvidenceRow(row *toolRow, live toolRow) {
 		row.State = "installed"
 	}
 	row.Detail = joinManualDetails(row.Detail, live.Detail)
-	row.Actions = mergeReviewActions(row.Actions, live.Actions)
+	row.Actions = reviewui.MergeActions(row.Actions, live.Actions)
 }
 
 func joinManualDetails(left string, right string) string {
@@ -486,64 +477,20 @@ func joinManualDetailParts(values ...string) string {
 	return strings.Join(parts, "; ")
 }
 
-func manualDetailValue(detail string, key string) string {
-	key = strings.TrimSpace(key)
-	if key == "" {
-		return ""
+type manualScannedApp = manualinventory.App
+
+type manualReviewCandidate = manualinventory.ReviewCandidate
+type manualReviewEvidence = manualinventory.ReviewEvidence
+type manualReviewOverrideFields = manualinventory.ReviewOverrideFields
+
+func manualReviewRow(sectionName string, row toolRow) manualinventory.ReviewRow {
+	return manualinventory.ReviewRow{
+		SectionName: sectionName,
+		Name:        row.Name,
+		State:       row.State,
+		Detail:      row.Detail,
+		Version:     row.Version,
 	}
-	prefix := key + ":"
-	for _, part := range strings.Split(detail, ";") {
-		part = strings.TrimSpace(part)
-		if strings.HasPrefix(part, prefix) {
-			return strings.TrimSpace(strings.TrimPrefix(part, prefix))
-		}
-	}
-	return ""
-}
-
-type manualScannedApp struct {
-	Name     string
-	Source   string
-	Path     string
-	BundleID string
-	Version  string
-}
-
-type manualReviewCandidate struct {
-	Provider          string                     `json:"provider"`
-	Kind              string                     `json:"kind"`
-	Name              string                     `json:"name"`
-	ReasonCode        string                     `json:"reason_code"`
-	RemediationCode   string                     `json:"remediation_code,omitempty"`
-	Confidence        string                     `json:"confidence,omitempty"`
-	Params            map[string]string          `json:"params,omitempty"`
-	Evidence          []manualReviewEvidence     `json:"evidence,omitempty"`
-	SuggestedOverride manualReviewOverrideFields `json:"suggested_override"`
-}
-
-type manualReviewEvidence struct {
-	Scanner             string `json:"scanner"`
-	Source              string `json:"source,omitempty"`
-	Path                string `json:"path,omitempty"`
-	ReviewURL           string `json:"review_url,omitempty"`
-	SourceURL           string `json:"source_url,omitempty"`
-	Owner               string `json:"owner,omitempty"`
-	ManagedBy           string `json:"managed_by,omitempty"`
-	UpdateOwner         string `json:"update_owner,omitempty"`
-	OwnershipConfidence string `json:"ownership_confidence,omitempty"`
-	ProviderMetadata    string `json:"provider_metadata,omitempty"`
-	MASID               string `json:"mas_id,omitempty"`
-	BundleID            string `json:"bundle_id,omitempty"`
-	Version             string `json:"version,omitempty"`
-}
-
-type manualReviewOverrideFields struct {
-	Name      string   `json:"name"`
-	Aliases   []string `json:"aliases,omitempty"`
-	Category  string   `json:"category,omitempty"`
-	ManagedBy string   `json:"managed_by,omitempty"`
-	Lifecycle string   `json:"lifecycle,omitempty"`
-	Detail    string   `json:"detail,omitempty"`
 }
 
 func manualScannedAppSections(root string) []toolSection {
@@ -612,52 +559,62 @@ func manualScannedAppOwnershipDetails(app manualScannedApp) []string {
 }
 
 func scanManualApplications(root string) []manualScannedApp {
-	apps := []manualScannedApp{}
-	seen := map[string]bool{}
-	for _, scanner := range manualApplicationScanners() {
-		for _, app := range scanner(root) {
-			key := manualScannedAppKey(app)
-			if key == "" || seen[key] {
-				continue
-			}
-			seen[key] = true
-			apps = append(apps, app)
-		}
-	}
-	sort.SliceStable(apps, func(i, j int) bool {
-		if apps[i].Name != apps[j].Name {
-			return apps[i].Name < apps[j].Name
-		}
-		return apps[i].Path < apps[j].Path
-	})
-	return apps
+	return manualinventory.ScanApplications(root, defaultRoot())
 }
 
-type manualApplicationScanner func(root string) []manualScannedApp
-
-func manualApplicationScanners() []manualApplicationScanner {
-	return []manualApplicationScanner{
-		scanManualMacApplications,
+func manualMASListSections(root string) []toolSection {
+	if filepath.Clean(root) != filepath.Clean(defaultRoot()) {
+		return nil
 	}
+	local := runner.Local{}
+	if _, err := local.LookPath("mas"); err != nil {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	result := local.Run(ctx, "mas", "list")
+	if result.Code != 0 || strings.TrimSpace(result.Stdout) == "" {
+		return nil
+	}
+	return manualMASListSectionsFromOutput(result.Stdout)
 }
 
-func manualScannedAppKey(app manualScannedApp) string {
-	if app.BundleID != "" {
-		return "bundle:" + strings.ToLower(app.BundleID)
+func manualMASListSectionsFromOutput(output string) []toolSection {
+	apps := parseManualMASList(output)
+	if len(apps) == 0 {
+		return nil
 	}
-	if app.Path != "" {
-		return "path:" + filepath.Clean(app.Path)
-	}
-	return "name:" + normalizedManualAppKey(app.Name)
-}
-
-func firstNonEmptyManualValue(values ...string) string {
-	for _, value := range values {
-		if trimmed := strings.TrimSpace(value); trimmed != "" {
-			return trimmed
+	rows := make([]toolRow, 0, len(apps))
+	for _, app := range apps {
+		details := []string{"source: mas list"}
+		if app.ID != "" {
+			details = append(details, "mas_id: "+app.ID)
 		}
+		if app.Version != "" {
+			details = append(details, "version: "+app.Version)
+		}
+		details = append(details,
+			"managed_by: mas",
+			"update_owner: mas",
+			"ownership_confidence: high",
+			"provider_metadata: mas list",
+		)
+		rows = append(rows, toolRow{
+			Name:    app.Name,
+			Version: app.Version,
+			State:   "installed",
+			Detail:  strings.Join(details, "; "),
+		})
 	}
-	return ""
+	return []toolSection{{
+		Name:  "manual/mac-app-store",
+		Title: "manual / Mac App Store",
+		Rows:  rows,
+	}}
+}
+
+func parseManualMASList(output string) []manualMASApp {
+	return manualinventory.ParseMASList(output)
 }
 
 func manualProviderSummary(sections []toolSection) plan.ProviderSummary {
@@ -692,8 +649,8 @@ func manualProviderSummary(sections []toolSection) plan.ProviderSummary {
 }
 
 func manualRowHasLiveEvidence(row toolRow) bool {
-	return manualDetailValue(row.Detail, "path") != "" ||
-		manualDetailValue(row.Detail, "mas_id") != "" ||
+	return manualinventory.DetailValue(row.Detail, "path") != "" ||
+		manualinventory.DetailValue(row.Detail, "mas_id") != "" ||
 		strings.Contains(row.Detail, "source: homebrew cask")
 }
 
@@ -717,15 +674,15 @@ func manualReviewCandidates(sections []toolSection) []manualReviewCandidate {
 				Name:            row.Name,
 				ReasonCode:      "manual_app_live_only",
 				RemediationCode: "manual_inventory_override",
-				Confidence:      manualReviewConfidence(row),
+				Confidence:      manualinventory.ReviewConfidence(manualReviewRow(section.Name, row)),
 				Params: map[string]string{
 					"name": row.Name,
 				},
 				Evidence: []manualReviewEvidence{manualReviewEvidenceFromRow(row)},
 				SuggestedOverride: manualReviewOverrideFields{
 					Name:      row.Name,
-					Aliases:   manualSuggestedAliases(row),
-					ManagedBy: manualSuggestedManagedBy(row),
+					Aliases:   manualinventory.SuggestedAliases(manualReviewRow(section.Name, row)),
+					ManagedBy: manualinventory.SuggestedManagedBy(manualReviewRow(section.Name, row)),
 					Detail:    "review installed app ownership and lifecycle",
 				},
 			}
@@ -737,136 +694,7 @@ func manualReviewCandidates(sections []toolSection) []manualReviewCandidate {
 }
 
 func manualReviewEvidenceFromRow(row toolRow) manualReviewEvidence {
-	version := row.Version
-	if version == "" {
-		version = manualDetailValue(row.Detail, "version")
-	}
-	path := manualDetailValue(row.Detail, "path")
-	masID := manualDetailValue(row.Detail, "mas_id")
-	scanner := "macos_app_bundle"
-	if path == "" && masID != "" {
-		scanner = "mas_list"
-	}
-	return manualReviewEvidence{
-		Scanner:             scanner,
-		Source:              manualDetailValue(row.Detail, "source"),
-		Path:                path,
-		ReviewURL:           manualPlanReviewURL(row),
-		SourceURL:           manualDetailFirstValue(row.Detail, "source_url", "url", "homepage"),
-		Owner:               manualDetailFirstValue(row.Detail, "owner", "ownership", "publisher", "developer", "vendor"),
-		ManagedBy:           manualEvidenceManagedBy(row),
-		UpdateOwner:         manualEvidenceUpdateOwner(row),
-		OwnershipConfidence: manualEvidenceOwnershipConfidence(row),
-		ProviderMetadata:    manualEvidenceProviderMetadata(row),
-		MASID:               masID,
-		BundleID:            manualDetailValue(row.Detail, "bundle_id"),
-		Version:             version,
-	}
-}
-
-func manualEvidenceManagedBy(row toolRow) string {
-	if value := manualDetailValue(row.Detail, "managed_by"); value != "" {
-		return value
-	}
-	if strings.EqualFold(manualDetailValue(row.Detail, "source"), "homebrew cask") || manualDetailValue(row.Detail, "cask") != "" || row.State == "brew" {
-		return "brew"
-	}
-	return manualSuggestedManagedBy(row)
-}
-
-func manualEvidenceUpdateOwner(row toolRow) string {
-	if value := manualDetailValue(row.Detail, "update_owner"); value != "" {
-		return value
-	}
-	switch manualEvidenceManagedBy(row) {
-	case "brew":
-		return "brew"
-	case "mas":
-		return "mas"
-	default:
-		return ""
-	}
-}
-
-func manualEvidenceOwnershipConfidence(row toolRow) string {
-	if value := manualDetailValue(row.Detail, "ownership_confidence"); value != "" {
-		return value
-	}
-	if value := manualDetailValue(row.Detail, "confidence"); value != "" {
-		return value
-	}
-	switch manualEvidenceManagedBy(row) {
-	case "brew", "mas":
-		return "high"
-	default:
-		return manualReviewConfidence(row)
-	}
-}
-
-func manualEvidenceProviderMetadata(row toolRow) string {
-	if value := manualDetailValue(row.Detail, "provider_metadata"); value != "" {
-		return value
-	}
-	source := manualDetailValue(row.Detail, "source")
-	switch {
-	case strings.EqualFold(source, "homebrew cask"):
-		return "Homebrew cask inventory"
-	case strings.EqualFold(source, "mas list"):
-		return "mas list"
-	case strings.EqualFold(source, "mac app store receipt"):
-		return "mac app store receipt"
-	case strings.EqualFold(source, "app bundle"):
-		return "Info.plist"
-	default:
-		return ""
-	}
-}
-
-func manualDetailFirstValue(detail string, keys ...string) string {
-	for _, key := range keys {
-		if value := manualDetailValue(detail, key); value != "" {
-			return value
-		}
-	}
-	return ""
-}
-
-func manualSuggestedAliases(row toolRow) []string {
-	aliases := []string{}
-	if path := manualDetailValue(row.Detail, "path"); path != "" {
-		base := filepath.Base(path)
-		if base != "" {
-			aliases = append(aliases, base)
-		}
-	}
-	if bundleID := manualDetailValue(row.Detail, "bundle_id"); bundleID != "" {
-		aliases = append(aliases, bundleID)
-	}
-	return aliases
-}
-
-func manualSuggestedManagedBy(row toolRow) string {
-	if strings.Contains(row.Detail, "source: mas list") {
-		return "mas"
-	}
-	switch manualDetailValue(row.Detail, "source") {
-	case "mac app store receipt":
-		return "mas"
-	default:
-		return "manual"
-	}
-}
-
-func manualReviewConfidence(row toolRow) string {
-	if strings.Contains(row.Detail, "source: mas list") {
-		return "high"
-	}
-	switch manualDetailValue(row.Detail, "source") {
-	case "mac app store receipt":
-		return "high"
-	default:
-		return "medium"
-	}
+	return manualinventory.EvidenceFromRow(manualReviewRow("", row))
 }
 
 func listIncludesManual(opts listOptions) bool {
@@ -1016,7 +844,7 @@ func configuredManualStructuredApps(root string) []manualStructuredApp {
 		if err != nil {
 			continue
 		}
-		out = append(out, parseManualStructuredApps(string(data))...)
+		out = append(out, manualinventory.ParseStructuredApps(string(data))...)
 	}
 	return out
 }
@@ -1025,7 +853,7 @@ func configuredManualStructuredInventoryPaths(root string) []string {
 	config := loadUpdevConfig()
 	paths := []string{}
 	for _, source := range config.Inventory.Manual.Sources {
-		if manualInventorySourceIsStructured(source) {
+		if manualinventory.SourceIsStructured(source) {
 			if path := resolveUpdevConfigPath(root, source); path != "" {
 				paths = append(paths, path)
 			}
@@ -1056,23 +884,13 @@ func configuredManualMarkdownInventoryPaths(root string) []string {
 		paths = append(paths, resolveUpdevConfigPath(root, "docs/apps.md"))
 	}
 	for _, source := range config.Inventory.Manual.Sources {
-		if manualInventorySourceIsMarkdown(source) {
+		if manualinventory.SourceIsMarkdown(source) {
 			if path := resolveUpdevConfigPath(root, source); path != "" {
 				paths = append(paths, path)
 			}
 		}
 	}
 	return dedupeStrings(paths)
-}
-
-func manualInventorySourceIsMarkdown(path string) bool {
-	lower := strings.ToLower(strings.TrimSpace(path))
-	return strings.HasSuffix(lower, ".md") || strings.HasSuffix(lower, ".markdown")
-}
-
-func manualInventorySourceIsStructured(path string) bool {
-	lower := strings.ToLower(strings.TrimSpace(path))
-	return strings.HasSuffix(lower, ".toml")
 }
 
 func dedupeStrings(values []string) []string {
@@ -1095,7 +913,7 @@ func addManualIndexRow(index map[string]toolRow, row toolRow, aliases []string) 
 			index[key] = row
 		}
 	}
-	if cask := manualDetailValue(row.Detail, "cask"); cask != "" {
+	if cask := manualinventory.DetailValue(row.Detail, "cask"); cask != "" {
 		aliases = append(aliases, cask)
 	}
 	for _, alias := range aliases {
@@ -1209,93 +1027,8 @@ func parseManualAppOverrides(content string) []manualAppOverride {
 	return out
 }
 
-func parseManualStructuredApps(content string) []manualStructuredApp {
-	apps := []manualStructuredApp{}
-	current := -1
-	subsection := ""
-	for _, raw := range strings.Split(collapseTOMLMultilineArrays(content), "\n") {
-		line := stripTOMLComment(strings.TrimSpace(raw))
-		if line == "" {
-			continue
-		}
-		if strings.HasPrefix(line, "[[") && strings.HasSuffix(line, "]]") {
-			section := strings.ToLower(strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(line, "[["), "]]")))
-			if section == "manual.apps" {
-				apps = append(apps, manualStructuredApp{
-					Identifiers: map[string]string{},
-					Provenance:  map[string]string{},
-				})
-				current = len(apps) - 1
-				subsection = "manual.apps"
-			} else {
-				current = -1
-				subsection = section
-			}
-			continue
-		}
-		if strings.HasPrefix(line, "[") && strings.HasSuffix(line, "]") {
-			subsection = strings.ToLower(strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(line, "["), "]")))
-			continue
-		}
-		if current < 0 {
-			continue
-		}
-		key, value, ok := strings.Cut(line, "=")
-		if !ok {
-			continue
-		}
-		key = strings.ToLower(strings.TrimSpace(key))
-		value = strings.TrimSpace(value)
-		stringValue := strings.Trim(value, "\"'")
-		app := &apps[current]
-		switch subsection {
-		case "manual.apps":
-			switch key {
-			case "name":
-				app.Name = stringValue
-			case "aliases":
-				app.Aliases = parseStringArray(value)
-			case "category":
-				app.Category = stringValue
-			case "description", "detail":
-				app.Detail = stringValue
-			case "managed_by":
-				app.ManagedBy = stringValue
-			case "lifecycle":
-				app.Lifecycle = stringValue
-			case "confidence":
-				app.Confidence = stringValue
-			case "review_status":
-				app.ReviewStatus = strings.ToLower(stringValue)
-			}
-		case "manual.apps.identifiers":
-			if app.Identifiers == nil {
-				app.Identifiers = map[string]string{}
-			}
-			app.Identifiers[key] = stringValue
-		case "manual.apps.provenance":
-			switch key {
-			case "evidence":
-				app.Evidence = parseStringArray(value)
-			default:
-				if app.Provenance == nil {
-					app.Provenance = map[string]string{}
-				}
-				app.Provenance[key] = stringValue
-			}
-		}
-	}
-	out := make([]manualStructuredApp, 0, len(apps))
-	for _, app := range apps {
-		if strings.TrimSpace(app.Name) != "" {
-			out = append(out, app)
-		}
-	}
-	return out
-}
-
 func manualStructuredAppAccepted(app manualStructuredApp) bool {
-	return strings.EqualFold(strings.TrimSpace(app.ReviewStatus), "accepted")
+	return manualinventory.StructuredAppAccepted(app)
 }
 
 func manualStructuredAppCategory(app manualStructuredApp) string {
@@ -1332,7 +1065,7 @@ func manualStructuredAppRow(app manualStructuredApp) toolRow {
 	if source := strings.TrimSpace(app.Provenance["source"]); source != "" {
 		details = append(details, "source: "+source)
 	}
-	for _, key := range manualStructuredProvenanceDetailKeys() {
+	for _, key := range manualinventory.StructuredProvenanceDetailKeys() {
 		if value := strings.TrimSpace(app.Provenance[key]); value != "" {
 			details = append(details, key+": "+value)
 		}
@@ -1360,20 +1093,6 @@ func manualStructuredAppRow(app manualStructuredApp) toolRow {
 		row.State = "manual"
 	}
 	return row
-}
-
-func manualStructuredProvenanceDetailKeys() []string {
-	return []string{
-		"source_url",
-		"review_url",
-		"homepage",
-		"owner",
-		"publisher",
-		"developer",
-		"vendor",
-		"update_owner",
-		"provider_metadata",
-	}
 }
 
 func manualDraftReviewAction(action string, target string, label string, description string) reviewui.Action {

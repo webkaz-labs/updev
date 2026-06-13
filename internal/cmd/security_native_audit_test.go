@@ -9,8 +9,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/webkaz-labs/updev/internal/nativeaudit"
 	"github.com/webkaz-labs/updev/internal/plan"
 	"github.com/webkaz-labs/updev/internal/runner"
+	"github.com/webkaz-labs/updev/internal/securityreason"
 )
 
 func TestPrintSecurityTextIncludesNativeAuditAttention(t *testing.T) {
@@ -59,6 +61,7 @@ func TestRunNPMNativeAuditReportsVulnerabilities(t *testing.T) {
 	if audit.Status != plan.StatusHeld || audit.Decision != "hold" || audit.AdvisoryCount != 1 || audit.Vulnerabilities == nil || audit.Vulnerabilities.High != 1 {
 		t.Fatalf("expected held npm audit, got %#v", audit)
 	}
+	assertNativeAuditVulnerabilityReason(t, audit, "npm", "npm")
 }
 
 func TestRunNPMLockfileNativeAuditReportsVulnerabilities(t *testing.T) {
@@ -80,6 +83,7 @@ func TestRunNPMLockfileNativeAuditReportsVulnerabilities(t *testing.T) {
 	if audit.Status != plan.StatusHeld || audit.Decision != "hold" || audit.AdvisoryCount != 1 || audit.Vulnerabilities == nil || audit.Vulnerabilities.High != 1 {
 		t.Fatalf("expected held npm lockfile audit, got %#v", audit)
 	}
+	assertNativeAuditVulnerabilityReason(t, audit, "npm", "npm")
 	if len(fake.calls) != 1 || !containsString(fake.calls[0], "--prefix") || !containsString(fake.calls[0], root) {
 		t.Fatalf("expected npm --prefix audit call, got %#v", fake.calls)
 	}
@@ -104,6 +108,7 @@ func TestRunPNPMLockfileNativeAuditReportsVulnerabilities(t *testing.T) {
 	if audit.Status != plan.StatusHeld || audit.Decision != "hold" || audit.AdvisoryCount != 1 || audit.Vulnerabilities == nil || audit.Vulnerabilities.High != 1 {
 		t.Fatalf("expected held pnpm audit, got %#v", audit)
 	}
+	assertNativeAuditVulnerabilityReason(t, audit, "pnpm", "npm")
 	if len(fake.calls) != 1 || !containsString(fake.calls[0], "--dir") || !containsString(fake.calls[0], root) {
 		t.Fatalf("expected pnpm --dir audit call, got %#v", fake.calls)
 	}
@@ -123,6 +128,7 @@ func TestRunBunLockfileNativeAuditReportsVulnerabilities(t *testing.T) {
 	if audit.Status != plan.StatusHeld || audit.Decision != "hold" || audit.AdvisoryCount != 1 || audit.Vulnerabilities == nil || audit.Vulnerabilities.Total != 1 {
 		t.Fatalf("expected held bun audit, got %#v", audit)
 	}
+	assertNativeAuditVulnerabilityReason(t, audit, "bun", "npm")
 	if len(fake.calls) != 1 || !containsString(fake.calls[0], "--cwd") || !containsString(fake.calls[0], root) {
 		t.Fatalf("expected bun --cwd audit call, got %#v", fake.calls)
 	}
@@ -201,6 +207,7 @@ func TestRunCargoNativeAuditReportsVulnerabilities(t *testing.T) {
 	if audit.Status != plan.StatusHeld || audit.Decision != "hold" || audit.AdvisoryCount != 2 || audit.Vulnerabilities == nil || audit.Vulnerabilities.Total != 2 {
 		t.Fatalf("expected held cargo audit, got %#v", audit)
 	}
+	assertNativeAuditVulnerabilityReason(t, audit, "cargo-audit", "crates.io")
 }
 
 func TestRunCargoNativeAuditReportsMissingBinaryContext(t *testing.T) {
@@ -250,6 +257,7 @@ func TestRunCargoProjectNativeAuditReportsVulnerabilities(t *testing.T) {
 	if audit.Status != plan.StatusHeld || audit.Decision != "hold" || audit.AdvisoryCount != 2 || audit.Vulnerabilities == nil || audit.Vulnerabilities.Total != 2 {
 		t.Fatalf("expected held Cargo project audit, got %#v", audit)
 	}
+	assertNativeAuditVulnerabilityReason(t, audit, "cargo-audit", "crates.io")
 	if len(fake.calls) != 1 || fake.calls[0][0] != "bash" || !containsString(fake.calls[0], root) {
 		t.Fatalf("expected bash-wrapped cargo audit call, got %#v", fake.calls)
 	}
@@ -318,6 +326,7 @@ func TestRunPyPINativeAuditReportsVulnerabilities(t *testing.T) {
 	if audit.Status != plan.StatusHeld || audit.Decision != "hold" || audit.AdvisoryCount != 2 || audit.Vulnerabilities == nil || audit.Vulnerabilities.Total != 2 {
 		t.Fatalf("expected held pip-audit, got %#v", audit)
 	}
+	assertNativeAuditVulnerabilityReason(t, audit, "pip-audit", "PyPI")
 	if len(fake.calls) != 1 || !containsString(fake.calls[0], "--path") || !containsString(fake.calls[0], sitePackages) {
 		t.Fatalf("expected pip-audit path call, got %#v", fake.calls)
 	}
@@ -375,6 +384,7 @@ func TestRunPythonProjectNativeAuditReportsVulnerabilities(t *testing.T) {
 	if audit.Status != plan.StatusHeld || audit.Decision != "hold" || audit.AdvisoryCount != 1 {
 		t.Fatalf("expected held Python project audit, got %#v", audit)
 	}
+	assertNativeAuditVulnerabilityReason(t, audit, "pip-audit", "PyPI")
 	if len(fake.calls) != 1 || !containsString(fake.calls[0], "--path") || !containsString(fake.calls[0], sitePackages) {
 		t.Fatalf("expected pip-audit --path call, got %#v", fake.calls)
 	}
@@ -499,6 +509,7 @@ func TestRunGoProjectNativeAuditReportsVulnerabilities(t *testing.T) {
 	if audit.Status != plan.StatusHeld || audit.Decision != "hold" || audit.AdvisoryCount != 2 || audit.Vulnerabilities == nil || audit.Vulnerabilities.Total != 2 {
 		t.Fatalf("expected held govulncheck audit, got %#v", audit)
 	}
+	assertNativeAuditVulnerabilityReason(t, audit, "govulncheck", "Go")
 	if len(fake.calls) != 1 || fake.calls[0][0] != "govulncheck" || !containsString(fake.calls[0], "-format=json") || !containsString(fake.calls[0], filepath.Join(root, "...")) {
 		t.Fatalf("expected govulncheck JSON call, got %#v", fake.calls)
 	}
@@ -544,6 +555,7 @@ func TestRunComposerProjectNativeAuditReportsVulnerabilities(t *testing.T) {
 	if audit.Status != plan.StatusHeld || audit.Decision != "hold" || audit.AdvisoryCount != 2 || audit.Vulnerabilities == nil || audit.Vulnerabilities.Total != 2 {
 		t.Fatalf("expected held Composer audit, got %#v", audit)
 	}
+	assertNativeAuditVulnerabilityReason(t, audit, "composer", "Packagist")
 	if len(fake.calls) != 1 || fake.calls[0][0] != "composer" || !containsString(fake.calls[0], "--working-dir") || !containsString(fake.calls[0], root) || !containsString(fake.calls[0], "--locked") {
 		t.Fatalf("expected composer audit call, got %#v", fake.calls)
 	}
@@ -588,6 +600,7 @@ func TestRunBundlerProjectNativeAuditReportsVulnerabilities(t *testing.T) {
 	if audit.Status != plan.StatusHeld || audit.Decision != "hold" || audit.AdvisoryCount != 2 || audit.Vulnerabilities == nil || audit.Vulnerabilities.Total != 2 {
 		t.Fatalf("expected held bundle-audit, got %#v", audit)
 	}
+	assertNativeAuditVulnerabilityReason(t, audit, "bundle-audit", "RubyGems")
 	if len(fake.calls) != 1 || fake.calls[0][0] != "bundle-audit" || !containsString(fake.calls[0], "--gemfile") || !containsString(fake.calls[0], lockfile) {
 		t.Fatalf("expected bundle-audit JSON call, got %#v", fake.calls)
 	}
@@ -631,8 +644,38 @@ func TestRunDotnetProjectNativeAuditReportsVulnerabilities(t *testing.T) {
 	if audit.Status != plan.StatusHeld || audit.Decision != "hold" || audit.AdvisoryCount != 3 || audit.Vulnerabilities == nil || audit.Vulnerabilities.Total != 3 {
 		t.Fatalf("expected held dotnet audit, got %#v", audit)
 	}
+	assertNativeAuditVulnerabilityReason(t, audit, "dotnet", "NuGet")
 	if len(fake.calls) != 1 || fake.calls[0][0] != "dotnet" || !containsString(fake.calls[0], "--include-transitive") || !containsString(fake.calls[0], "--vulnerable") || !containsString(fake.calls[0], target) {
 		t.Fatalf("expected dotnet package list call, got %#v", fake.calls)
+	}
+}
+
+func TestLocalizedNativeAuditReasonUsesReasonCode(t *testing.T) {
+	withDefaultLanguageForTest(t, "ja")
+	audit := nativeAudit{
+		Tool:       "pip-audit",
+		Ecosystem:  "PyPI",
+		Reason:     "pip-audit reported vulnerabilities",
+		ReasonCode: securityreason.NativeAuditVulnerability,
+		ReasonArgs: map[string]string{"tool": "pip-audit", "ecosystem": "PyPI"},
+	}
+	got := localizedNativeAuditReason(audit)
+	want := "pip-audit が PyPI の native audit で脆弱性を検出しました"
+	if got != want {
+		t.Fatalf("expected %q, got %q", want, got)
+	}
+}
+
+func assertNativeAuditVulnerabilityReason(t *testing.T, audit nativeAudit, tool string, ecosystem string) {
+	t.Helper()
+	if audit.ReasonCode != securityreason.NativeAuditVulnerability {
+		t.Fatalf("expected native audit vulnerability reason code, got %#v", audit)
+	}
+	if audit.ReasonArgs["tool"] != tool || audit.ReasonArgs["ecosystem"] != ecosystem {
+		t.Fatalf("expected native audit reason args tool=%q ecosystem=%q, got %#v", tool, ecosystem, audit.ReasonArgs)
+	}
+	if !strings.Contains(audit.Reason, "reported vulnerabilities") {
+		t.Fatalf("expected compatible reason text, got %#v", audit)
 	}
 }
 
@@ -692,11 +735,11 @@ func TestPipxAuditPathsRejectUnsafePackageName(t *testing.T) {
 	miseDir := t.TempDir()
 	t.Setenv("MISE_DATA_DIR", miseDir)
 	makePipxSitePackages(t, miseDir, "frogmouth", "0.9.2")
-	paths := pipxAuditPaths([]securityPackage{{Ecosystem: "PyPI", Package: "../frogmouth", Version: "0.9.2"}})
+	paths := nativeaudit.PipxAuditPaths([]securityPackage{{Ecosystem: "PyPI", Package: "../frogmouth", Version: "0.9.2"}})
 	if len(paths) != 0 {
 		t.Fatalf("expected unsafe package name to be rejected, got %#v", paths)
 	}
-	paths = pipxAuditPaths([]securityPackage{{Ecosystem: "PyPI", Package: "frogmouth", Version: "../0.9.2"}})
+	paths = nativeaudit.PipxAuditPaths([]securityPackage{{Ecosystem: "PyPI", Package: "frogmouth", Version: "../0.9.2"}})
 	if len(paths) != 0 {
 		t.Fatalf("expected unsafe package version to be rejected, got %#v", paths)
 	}

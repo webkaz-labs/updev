@@ -5,16 +5,14 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"regexp"
 	"sort"
-	"strconv"
 	"strings"
 
+	"github.com/webkaz-labs/updev/internal/manualinventory"
 	"github.com/webkaz-labs/updev/internal/plan"
+	"github.com/webkaz-labs/updev/internal/reviewui"
 	"github.com/webkaz-labs/updev/internal/textui"
 )
-
-var manualPlanURLPattern = regexp.MustCompile(`https?://[^)\s;]+`)
 
 const manualPlanDetailActionPrefix = "manual-plan"
 
@@ -108,7 +106,7 @@ func buildInventoryPlanReport(opts inventoryPlanOptions) inventoryPlanReport {
 	candidates := filterManualReviewCandidatesForPlan(manualReviewCandidates(sections), items)
 	status := plan.StatusOK
 	for _, item := range items {
-		if manualPlanActionNeedsReview(item.Action) {
+		if manualinventory.PlanActionNeedsReview(item.Action) {
 			status = plan.StatusDrift
 			break
 		}
@@ -173,246 +171,33 @@ func manualPlanActionPriority(action string) int {
 }
 
 func manualPlanItemFromRow(section toolSection, row toolRow) manualPlanItem {
-	evidence := manualReviewEvidenceFromRow(row)
-	action := manualPlanAction(section, row)
+	manualRow := manualReviewRow(section.Name, row)
+	evidence := manualinventory.EvidenceFromRow(manualRow)
+	action := manualinventory.PlanAction(manualRow)
 	item := manualPlanItem{
 		Provider:          manualProviderName,
 		Kind:              "app",
 		Name:              row.Name,
 		Action:            action,
 		State:             row.State,
-		SuggestedProvider: manualPlanSuggestedProvider(action, row),
-		Confidence:        manualPlanConfidence(action, row),
-		ReasonCode:        manualPlanReasonCode(action),
-		RemediationCode:   manualPlanRemediationCode(action),
+		SuggestedProvider: manualinventory.PlanSuggestedProvider(action, manualRow),
+		Confidence:        manualinventory.PlanConfidence(action, manualRow),
+		ReasonCode:        manualinventory.PlanReasonCode(action),
+		RemediationCode:   manualinventory.PlanRemediationCode(action),
 		Detail:            row.Detail,
-		NextStep:          manualPlanNextStep(action, row),
-		ReviewURL:         manualPlanReviewURL(row),
-		InstallHint:       manualPlanInstallHint(action, row),
-		CommandPreview:    manualPlanCommandPreview(action, row),
+		NextStep:          manualinventory.PlanNextStep(action, manualRow),
+		ReviewURL:         manualinventory.PlanReviewURL(manualRow),
+		InstallHint:       manualinventory.PlanInstallHint(action, manualRow),
+		CommandPreview:    manualinventory.PlanCommandPreview(action, manualRow),
 	}
 	if !manualReviewEvidenceEmpty(evidence) {
 		item.Evidence = []manualReviewEvidence{evidence}
 	}
-	if manualPlanActionNeedsReview(action) {
-		override := manualPlanSuggestedOverride(action, row)
+	if manualinventory.PlanActionNeedsReview(action) {
+		override := manualinventory.PlanSuggestedOverride(action, manualRow)
 		item.SuggestedOverride = &override
 	}
 	return item
-}
-
-func manualPlanAction(section toolSection, row toolRow) string {
-	if row.State == "brew" || strings.Contains(row.Detail, "source: homebrew cask") {
-		return "adopt-brew"
-	}
-	if manualSuggestedManagedBy(row) == "mas" {
-		return "adopt-mas"
-	}
-	if manualRowIsUserLocal(row) {
-		return "ignore-local"
-	}
-	if section.Name == "manual/installed-apps" || row.State == "installed" {
-		return "needs-review"
-	}
-	if manualRowHasVendorSource(row) {
-		return "open-vendor"
-	}
-	return "keep-manual"
-}
-
-func manualPlanSuggestedProvider(action string, row toolRow) string {
-	switch action {
-	case "adopt-brew":
-		return "brew"
-	case "adopt-mas":
-		return "mas"
-	case "open-vendor":
-		return "vendor"
-	case "ignore-local", "needs-review":
-		return manualSuggestedManagedBy(row)
-	default:
-		return ""
-	}
-}
-
-func manualRowHasVendorSource(row toolRow) bool {
-	detail := strings.ToLower(row.Detail)
-	return strings.Contains(detail, "vendor") ||
-		strings.Contains(row.Detail, "ベンダー") ||
-		strings.Contains(row.Detail, "入手先:") ||
-		strings.Contains(detail, "source:")
-}
-
-func manualRowIsUserLocal(row toolRow) bool {
-	path := manualDetailValue(row.Detail, "path")
-	return strings.Contains(path, "/Users/") && strings.Contains(path, "/Applications/")
-}
-
-func manualPlanActionNeedsReview(action string) bool {
-	switch action {
-	case "adopt-brew", "adopt-mas", "ignore-local", "needs-review", "open-vendor":
-		return true
-	default:
-		return false
-	}
-}
-
-func manualPlanConfidence(action string, row toolRow) string {
-	switch action {
-	case "adopt-brew", "adopt-mas":
-		return "high"
-	case "open-vendor":
-		return "medium"
-	case "ignore-local":
-		return "medium"
-	case "needs-review":
-		return manualReviewConfidence(row)
-	default:
-		return ""
-	}
-}
-
-func manualPlanReasonCode(action string) string {
-	switch action {
-	case "adopt-brew":
-		return "manual_app_homebrew_cask_available"
-	case "adopt-mas":
-		return "manual_app_mas_available"
-	case "open-vendor":
-		return "manual_app_vendor_review"
-	case "ignore-local":
-		return "manual_app_user_local"
-	case "needs-review":
-		return "manual_app_live_only"
-	default:
-		return ""
-	}
-}
-
-func manualPlanRemediationCode(action string) string {
-	switch action {
-	case "adopt-brew", "adopt-mas", "needs-review":
-		return "manual_inventory_override"
-	case "open-vendor":
-		return "manual_vendor_review"
-	case "ignore-local":
-		return "manual_inventory_ignore"
-	default:
-		return ""
-	}
-}
-
-func manualPlanReviewURL(row toolRow) string {
-	if url := manualDetailFirstValue(row.Detail, "review_url", "source_url", "url", "homepage"); url != "" {
-		return strings.TrimRight(url, ".,")
-	}
-	match := manualPlanURLPattern.FindString(row.Detail)
-	return strings.TrimRight(match, ".,")
-}
-
-func manualPlanInstallHint(action string, row toolRow) string {
-	switch action {
-	case "adopt-brew":
-		if cask := manualDetailValue(row.Detail, "cask"); cask != "" {
-			return "review Homebrew cask metadata before moving ownership to cask " + cask
-		}
-		return "review Homebrew cask metadata before moving ownership to Homebrew"
-	case "adopt-mas":
-		if masID := manualDetailValue(row.Detail, "mas_id"); masID != "" {
-			return "verify Mac App Store ownership for mas id " + masID + " before adding an override"
-		}
-		return "verify Mac App Store ownership before adding an override"
-	case "open-vendor":
-		if url := manualPlanReviewURL(row); url != "" {
-			return "open the vendor URL for review only; do not run installer commands from inventory output"
-		}
-		return "review the vendor source manually; inventory output must not install external packages"
-	case "ignore-local":
-		return "add a local-only override only after confirming this app is machine-local"
-	case "needs-review":
-		return "accept, edit, or ignore one explicit override after ownership review"
-	default:
-		return ""
-	}
-}
-
-func manualPlanCommandPreview(action string, row toolRow) []string {
-	switch action {
-	case "adopt-brew":
-		if cask := manualDetailValue(row.Detail, "cask"); cask != "" {
-			return []string{"brew info --cask " + strconv.Quote(cask)}
-		}
-	case "adopt-mas":
-		if masID := manualDetailValue(row.Detail, "mas_id"); masID != "" {
-			return []string{"mas lookup " + strconv.Quote(masID)}
-		}
-		return []string{"mas search " + strconv.Quote(row.Name)}
-	case "open-vendor":
-		if url := manualPlanReviewURL(row); url != "" {
-			return []string{"open " + strconv.Quote(url)}
-		}
-	case "ignore-local":
-		return []string{"updev inventory review --provider manual --action ignore --query " + strconv.Quote(row.Name)}
-	case "needs-review":
-		return []string{"updev inventory review --provider manual --query " + strconv.Quote(row.Name)}
-	}
-	return nil
-}
-
-func manualPlanSuggestedOverride(action string, row toolRow) manualReviewOverrideFields {
-	override := manualReviewOverrideFields{
-		Name:    row.Name,
-		Aliases: manualPlanSuggestedAliases(action, row),
-		Detail:  manualPlanInstallHint(action, row),
-	}
-	switch action {
-	case "adopt-brew":
-		override.ManagedBy = "brew"
-	case "adopt-mas":
-		override.ManagedBy = "mas"
-	case "open-vendor":
-		override.ManagedBy = "vendor"
-	case "ignore-local":
-		override.Category = "Ignored"
-		override.Lifecycle = "local-only"
-	case "needs-review":
-		override.ManagedBy = manualSuggestedManagedBy(row)
-		override.Detail = "review installed app ownership and lifecycle"
-	}
-	return override
-}
-
-func manualPlanSuggestedAliases(action string, row toolRow) []string {
-	aliases := manualSuggestedAliases(row)
-	if action == "adopt-brew" {
-		if cask := manualDetailValue(row.Detail, "cask"); cask != "" {
-			aliases = append(aliases, cask)
-		}
-	}
-	return aliases
-}
-
-func manualPlanNextStep(action string, row toolRow) string {
-	switch action {
-	case "adopt-brew":
-		if cask := manualDetailValue(row.Detail, "cask"); cask != "" {
-			return "review Homebrew cask ownership, then keep desired state with cask " + cask + " or add an alias override"
-		}
-		return "review Homebrew cask ownership, then keep desired state or add an alias override"
-	case "adopt-mas":
-		return "review Mac App Store ownership, then add an override with managed_by = \"mas\""
-	case "open-vendor":
-		if url := manualPlanReviewURL(row); url != "" {
-			return "open the vendor source " + url + " for review, then keep manual management or add an ignore/override decision"
-		}
-		return "open the vendor source manually, then keep manual management or add an ignore/override decision"
-	case "ignore-local":
-		return "review whether this user-local app should stay local-only or be ignored by manual inventory"
-	case "needs-review":
-		return "review ownership and lifecycle, then accept/edit/ignore the suggested inventory override"
-	default:
-		return "keep this manual inventory row as documented"
-	}
 }
 
 func filterManualPlanItems(items []manualPlanItem, opts inventoryPlanOptions) []manualPlanItem {
@@ -476,7 +261,7 @@ func manualPlanActionCounts(items []manualPlanItem) map[string]int {
 func manualPlanAttentionCount(items []manualPlanItem) int {
 	count := 0
 	for _, item := range items {
-		if manualPlanActionNeedsReview(item.Action) {
+		if manualinventory.PlanActionNeedsReview(item.Action) {
 			count++
 		}
 	}
@@ -624,7 +409,7 @@ func manualPlanCanBatchEnrich(report inventoryPlanReport) bool {
 }
 
 func manualPlanToolSections(report inventoryPlanReport) []toolSection {
-	return detailRowsToToolSections(manualPlanDetailRows(report), func(row detailBrowserRow) (string, string) {
+	return reviewui.DetailRowsToSections(manualPlanDetailRows(report), func(row detailBrowserRow) (string, string) {
 		status := firstNonEmpty(row.Status, "review")
 		return "manual/" + status, "manual / " + status
 	})
@@ -728,7 +513,7 @@ func manualReviewEvidenceEmpty(evidence manualReviewEvidence) bool {
 
 func manualPlanDetailActions(item manualPlanItem, root string) []detailBrowserAction {
 	actions := []detailBrowserAction{}
-	if item.State == "installed" && manualPlanActionNeedsReview(item.Action) {
+	if item.State == "installed" && manualinventory.PlanActionNeedsReview(item.Action) {
 		actions = append(actions,
 			detailBrowserAction{Value: manualPlanDetailActionValue("accept", item.Name), Label: tr("accept override", "override を採用"), Description: tr("append the suggested manual inventory override", "提案された manual inventory override を追記します")},
 			detailBrowserAction{Value: manualPlanDetailActionValue("ignore", item.Name), Label: tr("ignore local app", "local app として無視"), Description: tr("append a local-only ignore override", "local-only の ignore override を追記します")},
@@ -739,12 +524,12 @@ func manualPlanDetailActions(item manualPlanItem, root string) []detailBrowserAc
 		}
 	}
 	if item.Action == "adopt-brew" {
-		if cask := manualDetailValue(item.Detail, "cask"); cask != "" {
+		if cask := manualinventory.DetailValue(item.Detail, "cask"); cask != "" {
 			actions = append(actions, detailBrowserAction{Value: manualPlanDetailActionValue("review-cask", cask), Label: tr("review cask", "cask を確認"), Description: tr("run brew info --cask for ownership evidence", "ownership evidence として brew info --cask を実行します")})
 		}
 	}
 	if item.Action == "adopt-mas" {
-		if masID := manualDetailValue(item.Detail, "mas_id"); masID != "" {
+		if masID := manualinventory.DetailValue(item.Detail, "mas_id"); masID != "" {
 			actions = append(actions, detailBrowserAction{Value: manualPlanDetailActionValue("review-mas", masID), Label: tr("review App Store", "App Store を確認"), Description: tr("run mas info when mas is available", "mas が使える場合は mas info を実行します")})
 		}
 	}
@@ -804,7 +589,7 @@ func manualPlanDisplayNextSteps(counts map[string]int) []string {
 func manualPlanDisplayNextStep(item manualPlanItem) string {
 	switch item.Action {
 	case "adopt-brew":
-		if cask := manualDetailValue(item.Detail, "cask"); cask != "" {
+		if cask := manualinventory.DetailValue(item.Detail, "cask"); cask != "" {
 			return fmt.Sprintf(tr("review Homebrew cask ownership, then keep desired state with cask %s or add an alias override", "Homebrew cask %s の所有元を確認し、desired state 維持または alias override を追加"), cask)
 		}
 		return tr("review Homebrew cask ownership, then keep desired state or add an alias override", "Homebrew cask の所有元を確認し、desired state 維持または alias override を追加")

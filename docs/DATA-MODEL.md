@@ -29,7 +29,8 @@ dimensions:
 | configured manual inventory sources such as `~/.config/updev/manual-apps.toml` | User-reviewed manual/vendor app desired metadata. These sources are opt-in and portable; public defaults must not assume a repository-local `docs/apps.md`. |
 | future `~/.config/updev/manifests/*` | Language/global package snapshots. |
 | future config such as `~/.config/updev/inventory.toml` | Enabled scan sources, override paths, generated report destinations, provider render settings. |
-| `${XDG_STATE_HOME:-~/.local/state}/updev/` | Local-only trial inventory, snapshots, cached reports, security decisions, raw evidence caches. |
+| `${XDG_CACHE_HOME:-~/.cache}/updev/` | Rebuildable local caches: inventory cache when no state dir is configured, description/metadata compatibility cache, cached update reports, update-safety evidence, and provider/security metadata. |
+| `${XDG_STATE_HOME:-~/.local/state}/updev/` | Future non-rebuildable local state such as accepted trial inventory or snapshots. Do not put rebuildable provider evidence here. |
 | generated app reports | Optional manual/non-provider app report bridge. Markdown reports are generated views, not the canonical input for public defaults. |
 
 For temporary or alternate roots, providers read source files under that root
@@ -186,6 +187,18 @@ Mutation-oriented commands should collect fresh inventory after mutation.
 Machine cache files should be compact JSON unless intended for direct human
 editing. Migration-only cache readers must stay clearly labeled and should not
 become part of the stable public contract.
+
+Rebuildable caches live under `${XDG_CACHE_HOME:-~/.cache}/updev/`.
+Path construction belongs to `internal/updevpath`, not command handlers.
+Current cache subtrees include:
+
+| Cache | Owner | Contents |
+|-------|-------|----------|
+| `inventory-v1.json` | `cmd` through `updevpath.InventoryCacheFile` | Last inventory report when no configured inventory state dir is set. |
+| `reports/` | `cmd` through `updevpath.ReportCacheDir` | Last update/dry-run reports and timestamped update report snapshots. |
+| `update-safety-v1/` | `internal/securitygate` | Provider update-safety evidence keyed by candidate inputs. |
+| `security-metadata-v1/` | provider/security metadata collectors through `updevpath.SecurityMetadataCacheFile` | GitHub repository metadata, registry metadata, and other bounded provider evidence. |
+| legacy description files | `cmd` compatibility readers | `desc_ja.tsv`, `meta.json`, `rows_cache.json`, and Homebrew version cache used to keep list output responsive. |
 
 Update safety evidence uses `update-safety-v1` cache entries. Homebrew
 `brew outdated --json=v2 --greedy` success output is cached for a short TTL to keep

@@ -2,6 +2,16 @@ package backend
 
 import "strings"
 
+type preferenceRuleEntry struct {
+	SourceProvider      string
+	SourceName          string
+	RecommendedProvider string
+	RecommendedName     string
+	Commands            []string
+	Reason              string
+	SourceEvidence      []string
+}
+
 func (registry Registry) PreferenceRecommendation(sourceProvider string, sourceName string) (Recommendation, bool) {
 	for _, rule := range PreferenceRules() {
 		if rule.SourceProvider == sourceProvider && rule.SourceName == sourceName {
@@ -140,38 +150,128 @@ func PreferenceTierFromLabel(label string) PreferenceTier {
 }
 
 func PreferenceRules() []PreferenceRule {
-	miseCoreReason := "stable mise core tool is preferred for CLI developer tools"
-	miseCoreEvidence := []string{"source: mise core backend registry", "source: command name parity with Homebrew formula"}
-	rule := func(sourceProvider string, sourceName string, recommendedName string, commands []string, reason string, evidence []string) PreferenceRule {
-		return PreferenceRule{
-			SourceProvider:      sourceProvider,
-			SourceName:          sourceName,
-			RecommendedProvider: "mise",
-			RecommendedName:     recommendedName,
-			Commands:            commands,
-			Reason:              reason,
-			SourceEvidence:      append([]string(nil), evidence...),
+	rules := make([]PreferenceRule, 0, len(preferenceRuleEntries))
+	for _, entry := range preferenceRuleEntries {
+		recommendedProvider := strings.TrimSpace(entry.RecommendedProvider)
+		if recommendedProvider == "" {
+			recommendedProvider = "mise"
 		}
+		rules = append(rules, PreferenceRule{
+			SourceProvider:      entry.SourceProvider,
+			SourceName:          entry.SourceName,
+			RecommendedProvider: recommendedProvider,
+			RecommendedName:     entry.RecommendedName,
+			Commands:            append([]string(nil), entry.Commands...),
+			Reason:              entry.Reason,
+			SourceEvidence:      append([]string(nil), entry.SourceEvidence...),
+		})
 	}
-	aquaEvidence := func(repo string) []string {
-		return []string{"source: mise aqua backend registry", "upstream: github.com/" + repo}
-	}
-	githubEvidence := func(repo string) []string {
-		return []string{"source: mise github backend", "upstream: github.com/" + repo}
-	}
-	return []PreferenceRule{
-		rule("brew", "bat", "bat", []string{"bat"}, miseCoreReason, miseCoreEvidence),
-		rule("brew", "eza", "eza", []string{"eza"}, miseCoreReason, miseCoreEvidence),
-		rule("brew", "fd", "aqua:sharkdp/fd", []string{"fd"}, "fd has a registry-backed mise/aqua path", aquaEvidence("sharkdp/fd")),
-		rule("brew", "fzf", "fzf", []string{"fzf"}, miseCoreReason, miseCoreEvidence),
-		rule("brew", "ripgrep", "ripgrep", []string{"rg"}, "ripgrep is already a stable mise-managed CLI", miseCoreEvidence),
-		rule("brew", "shellcheck", "shellcheck", []string{"shellcheck"}, miseCoreReason, miseCoreEvidence),
-		rule("brew", "starship", "starship", []string{"starship"}, miseCoreReason, miseCoreEvidence),
-		rule("brew", "zoxide", "zoxide", []string{"zoxide"}, miseCoreReason, miseCoreEvidence),
-		rule("mise", "cargo:fd-find", "aqua:sharkdp/fd", []string{"fd"}, "aqua prebuilt CLI is preferred over a cargo global build", aquaEvidence("sharkdp/fd")),
-		rule("mise", "cargo:git-delta", "aqua:dandavison/delta", []string{"delta"}, "aqua prebuilt CLI is preferred over a cargo global build", aquaEvidence("dandavison/delta")),
-		rule("mise", "cargo:sheldon", "aqua:rossmacarthur/sheldon", []string{"sheldon"}, "aqua prebuilt CLI is preferred over a cargo global build", aquaEvidence("rossmacarthur/sheldon")),
-		rule("mise", "cargo:broot", "github:Canop/broot", []string{"broot"}, "mise GitHub release backend is preferred over a cargo global build when no core or aqua backend is defined", githubEvidence("Canop/broot")),
-		rule("mise", "npm:pnpm", "aqua:pnpm/pnpm", []string{"pnpm"}, "aqua prebuilt CLI avoids npm global package-manager coupling", aquaEvidence("pnpm/pnpm")),
-	}
+	return rules
+}
+
+var preferenceRuleEntries = []preferenceRuleEntry{
+	{
+		SourceProvider:  "brew",
+		SourceName:      "bat",
+		RecommendedName: "bat",
+		Commands:        []string{"bat"},
+		Reason:          "stable mise core tool is preferred for CLI developer tools",
+		SourceEvidence:  []string{"source: mise core backend registry", "source: command name parity with Homebrew formula"},
+	},
+	{
+		SourceProvider:  "brew",
+		SourceName:      "eza",
+		RecommendedName: "eza",
+		Commands:        []string{"eza"},
+		Reason:          "stable mise core tool is preferred for CLI developer tools",
+		SourceEvidence:  []string{"source: mise core backend registry", "source: command name parity with Homebrew formula"},
+	},
+	{
+		SourceProvider:  "brew",
+		SourceName:      "fd",
+		RecommendedName: "aqua:sharkdp/fd",
+		Commands:        []string{"fd"},
+		Reason:          "fd has a registry-backed mise/aqua path",
+		SourceEvidence:  []string{"source: mise aqua backend registry", "upstream: github.com/sharkdp/fd"},
+	},
+	{
+		SourceProvider:  "brew",
+		SourceName:      "fzf",
+		RecommendedName: "fzf",
+		Commands:        []string{"fzf"},
+		Reason:          "stable mise core tool is preferred for CLI developer tools",
+		SourceEvidence:  []string{"source: mise core backend registry", "source: command name parity with Homebrew formula"},
+	},
+	{
+		SourceProvider:  "brew",
+		SourceName:      "ripgrep",
+		RecommendedName: "ripgrep",
+		Commands:        []string{"rg"},
+		Reason:          "ripgrep is already a stable mise-managed CLI",
+		SourceEvidence:  []string{"source: mise core backend registry", "source: command name parity with Homebrew formula"},
+	},
+	{
+		SourceProvider:  "brew",
+		SourceName:      "shellcheck",
+		RecommendedName: "shellcheck",
+		Commands:        []string{"shellcheck"},
+		Reason:          "stable mise core tool is preferred for CLI developer tools",
+		SourceEvidence:  []string{"source: mise core backend registry", "source: command name parity with Homebrew formula"},
+	},
+	{
+		SourceProvider:  "brew",
+		SourceName:      "starship",
+		RecommendedName: "starship",
+		Commands:        []string{"starship"},
+		Reason:          "stable mise core tool is preferred for CLI developer tools",
+		SourceEvidence:  []string{"source: mise core backend registry", "source: command name parity with Homebrew formula"},
+	},
+	{
+		SourceProvider:  "brew",
+		SourceName:      "zoxide",
+		RecommendedName: "zoxide",
+		Commands:        []string{"zoxide"},
+		Reason:          "stable mise core tool is preferred for CLI developer tools",
+		SourceEvidence:  []string{"source: mise core backend registry", "source: command name parity with Homebrew formula"},
+	},
+	{
+		SourceProvider:  "mise",
+		SourceName:      "cargo:fd-find",
+		RecommendedName: "aqua:sharkdp/fd",
+		Commands:        []string{"fd"},
+		Reason:          "aqua prebuilt CLI is preferred over a cargo global build",
+		SourceEvidence:  []string{"source: mise aqua backend registry", "upstream: github.com/sharkdp/fd"},
+	},
+	{
+		SourceProvider:  "mise",
+		SourceName:      "cargo:git-delta",
+		RecommendedName: "aqua:dandavison/delta",
+		Commands:        []string{"delta"},
+		Reason:          "aqua prebuilt CLI is preferred over a cargo global build",
+		SourceEvidence:  []string{"source: mise aqua backend registry", "upstream: github.com/dandavison/delta"},
+	},
+	{
+		SourceProvider:  "mise",
+		SourceName:      "cargo:sheldon",
+		RecommendedName: "aqua:rossmacarthur/sheldon",
+		Commands:        []string{"sheldon"},
+		Reason:          "aqua prebuilt CLI is preferred over a cargo global build",
+		SourceEvidence:  []string{"source: mise aqua backend registry", "upstream: github.com/rossmacarthur/sheldon"},
+	},
+	{
+		SourceProvider:  "mise",
+		SourceName:      "cargo:broot",
+		RecommendedName: "github:Canop/broot",
+		Commands:        []string{"broot"},
+		Reason:          "mise GitHub release backend is preferred over a cargo global build when no core or aqua backend is defined",
+		SourceEvidence:  []string{"source: mise github backend", "upstream: github.com/Canop/broot"},
+	},
+	{
+		SourceProvider:  "mise",
+		SourceName:      "npm:pnpm",
+		RecommendedName: "aqua:pnpm/pnpm",
+		Commands:        []string{"pnpm"},
+		Reason:          "aqua prebuilt CLI avoids npm global package-manager coupling",
+		SourceEvidence:  []string{"source: mise aqua backend registry", "upstream: github.com/pnpm/pnpm"},
+	},
 }

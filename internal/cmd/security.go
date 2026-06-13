@@ -1,14 +1,11 @@
 package cmd
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
 	"net/http"
-	"net/url"
 	"os"
 	"os/exec"
 	"sort"
@@ -17,14 +14,27 @@ import (
 	"sync"
 	"time"
 
+	"github.com/webkaz-labs/updev/internal/legacycache"
+	"github.com/webkaz-labs/updev/internal/nativeaudit"
 	"github.com/webkaz-labs/updev/internal/plan"
+	"github.com/webkaz-labs/updev/internal/registryaudit"
 	"github.com/webkaz-labs/updev/internal/runner"
+	"github.com/webkaz-labs/updev/internal/securityadvisory"
+	"github.com/webkaz-labs/updev/internal/securitygate"
+	"github.com/webkaz-labs/updev/internal/securitypolicy"
 	"github.com/webkaz-labs/updev/internal/textui"
 )
 
 const defaultOSVAPIURL = "https://api.osv.dev/v1/querybatch"
 const defaultCISAKEVURL = "https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json"
 const defaultEPSSURL = "https://api.first.org/data/v1/epss"
+const defaultNPMRegistryURL = "https://registry.npmjs.org"
+const defaultCratesIOAPIURL = "https://crates.io"
+const defaultPyPIAPIURL = "https://pypi.org/pypi"
+
+type npmPosture = registryaudit.NPMPosture
+type cargoPosture = registryaudit.CargoPosture
+type pypiPosture = registryaudit.PyPIPosture
 
 type securityOptions struct {
 	format        string
@@ -109,6 +119,18 @@ type securityReviewSummary struct {
 	Providers  map[string]int `json:"providers,omitempty"`
 }
 
+func npmRegistryURL() string {
+	return configuredEnvString(defaultNPMRegistryURL, "UPDEV_NPM_REGISTRY_URL")
+}
+
+func cratesIOAPIURL() string {
+	return configuredEnvString(defaultCratesIOAPIURL, "UPDEV_CRATES_IO_API_URL")
+}
+
+func pypiAPIURL() string {
+	return configuredEnvString(defaultPyPIAPIURL, "UPDEV_PYPI_API_URL")
+}
+
 type securityReviewCandidate struct {
 	Provider       string   `json:"provider"`
 	Kind           string   `json:"kind,omitempty"`
@@ -174,52 +196,11 @@ type securityPolicyCleanup struct {
 	Applied  bool   `json:"applied,omitempty"`
 }
 
-type securityPolicySummary struct {
-	RuleCount       int `json:"rule_count"`
-	FilteredRules   int `json:"filtered_rules,omitempty"`
-	ActiveRules     int `json:"active_rules"`
-	ExpiredRules    int `json:"expired_rules,omitempty"`
-	InvalidRules    int `json:"invalid_rules,omitempty"`
-	DuplicateRules  int `json:"duplicate_rules,omitempty"`
-	ShadowedRules   int `json:"shadowed_rules,omitempty"`
-	MissingReasons  int `json:"missing_reasons,omitempty"`
-	MissingExpiries int `json:"missing_expiries,omitempty"`
-	BroadRules      int `json:"broad_rules,omitempty"`
-}
+type securityPolicySummary = securitypolicy.Summary
 
-type securityPolicyRuleView struct {
-	Index         int    `json:"index"`
-	Line          int    `json:"line,omitempty"`
-	Provider      string `json:"provider,omitempty"`
-	Kind          string `json:"kind,omitempty"`
-	Name          string `json:"name"`
-	Decision      string `json:"decision"`
-	State         string `json:"state"`
-	Reason        string `json:"reason,omitempty"`
-	Expires       string `json:"expires,omitempty"`
-	Active        bool   `json:"active"`
-	Invalid       bool   `json:"invalid,omitempty"`
-	Expired       bool   `json:"expired,omitempty"`
-	Duplicate     bool   `json:"duplicate,omitempty"`
-	Shadowed      bool   `json:"shadowed,omitempty"`
-	ShadowedBy    int    `json:"shadowed_by,omitempty"`
-	MissingReason bool   `json:"missing_reason,omitempty"`
-	MissingExpiry bool   `json:"missing_expiry,omitempty"`
-	Broad         bool   `json:"broad,omitempty"`
-	Remediation   string `json:"remediation,omitempty"`
-}
+type securityPolicyRuleView = securitypolicy.RuleView
 
-type securityPackage struct {
-	Provider   string `json:"provider"`
-	Name       string `json:"name"`
-	Version    string `json:"version"`
-	Ecosystem  string `json:"ecosystem"`
-	Package    string `json:"package"`
-	Confidence string `json:"confidence"`
-	BinaryName string `json:"binary_name,omitempty"`
-	BinaryPath string `json:"binary_path,omitempty"`
-	PathState  string `json:"path_state,omitempty"`
-}
+type securityPackage = securityadvisory.Package
 
 type securitySkipped struct {
 	Provider string   `json:"provider"`
@@ -230,126 +211,41 @@ type securitySkipped struct {
 	Examples []string `json:"examples,omitempty"`
 }
 
-type securityFinding struct {
-	Provider      string       `json:"provider"`
-	Name          string       `json:"name"`
-	Version       string       `json:"version"`
-	Ecosystem     string       `json:"ecosystem"`
-	Package       string       `json:"package"`
-	VulnID        string       `json:"vuln_id"`
-	Aliases       []string     `json:"aliases,omitempty"`
-	Modified      string       `json:"modified,omitempty"`
-	Severity      string       `json:"severity,omitempty"`
-	KEV           *kevFinding  `json:"kev,omitempty"`
-	EPSS          *epssFinding `json:"epss,omitempty"`
-	FixedVersions []string     `json:"fixed_versions,omitempty"`
-	BinaryName    string       `json:"binary_name,omitempty"`
-	BinaryPath    string       `json:"binary_path,omitempty"`
-	PathState     string       `json:"path_state,omitempty"`
-	Exposure      string       `json:"exposure,omitempty"`
-	Remediation   string       `json:"remediation,omitempty"`
-	Decision      string       `json:"decision"`
-	Confidence    string       `json:"confidence"`
-	Reason        string       `json:"reason,omitempty"`
-	Status        plan.Status  `json:"status"`
-	URL           string       `json:"url,omitempty"`
-}
+type securityFinding = securityadvisory.Finding
 
-type osvBatchRequest struct {
-	Queries []osvQuery `json:"queries"`
-}
+type osvBatchRequest = securityadvisory.OSVBatchRequest
 
-type osvQuery struct {
-	Version string     `json:"version,omitempty"`
-	Package osvPackage `json:"package"`
-}
+type osvQuery = securityadvisory.OSVQuery
 
-type osvPackage struct {
-	Name      string `json:"name"`
-	Ecosystem string `json:"ecosystem"`
-}
+type osvPackage = securityadvisory.OSVPackage
 
-type osvBatchResponse struct {
-	Results []osvResult `json:"results"`
-}
+type osvBatchResponse = securityadvisory.OSVBatchResponse
 
-type osvResult struct {
-	Vulns []osvVuln `json:"vulns,omitempty"`
-}
+type osvResult = securityadvisory.OSVResult
 
-type osvVuln struct {
-	ID       string `json:"id"`
-	Modified string `json:"modified,omitempty"`
-}
+type osvVuln = securityadvisory.OSVVuln
 
-type osvVulnDetail struct {
-	ID       string        `json:"id"`
-	Aliases  []string      `json:"aliases,omitempty"`
-	Severity []osvSeverity `json:"severity,omitempty"`
-	Affected []osvAffected `json:"affected,omitempty"`
-}
+type osvVulnDetail = securityadvisory.OSVVulnDetail
 
-type osvSeverity struct {
-	Type  string `json:"type"`
-	Score string `json:"score"`
-}
+type osvSeverity = securityadvisory.OSVSeverity
 
-type osvAffected struct {
-	Package osvPackage `json:"package"`
-	Ranges  []osvRange `json:"ranges,omitempty"`
-}
+type osvAffected = securityadvisory.OSVAffected
 
-type osvRange struct {
-	Events []osvRangeEvent `json:"events,omitempty"`
-}
+type osvRange = securityadvisory.OSVRange
 
-type osvRangeEvent struct {
-	Fixed string `json:"fixed,omitempty"`
-}
+type osvRangeEvent = securityadvisory.OSVRangeEvent
 
-type kevCatalog struct {
-	Vulnerabilities []kevVulnerability `json:"vulnerabilities"`
-}
+type kevCatalog = securityadvisory.KEVCatalog
 
-type kevVulnerability struct {
-	CVEID                      string `json:"cveID"`
-	VendorProject              string `json:"vendorProject,omitempty"`
-	Product                    string `json:"product,omitempty"`
-	VulnerabilityName          string `json:"vulnerabilityName,omitempty"`
-	DateAdded                  string `json:"dateAdded,omitempty"`
-	DueDate                    string `json:"dueDate,omitempty"`
-	KnownRansomwareCampaignUse string `json:"knownRansomwareCampaignUse,omitempty"`
-	RequiredAction             string `json:"requiredAction,omitempty"`
-}
+type kevVulnerability = securityadvisory.KEVVulnerability
 
-type kevFinding struct {
-	CVEID                      string `json:"cve_id"`
-	VendorProject              string `json:"vendor_project,omitempty"`
-	Product                    string `json:"product,omitempty"`
-	VulnerabilityName          string `json:"vulnerability_name,omitempty"`
-	DateAdded                  string `json:"date_added,omitempty"`
-	DueDate                    string `json:"due_date,omitempty"`
-	KnownRansomwareCampaignUse string `json:"known_ransomware_campaign_use,omitempty"`
-	RequiredAction             string `json:"required_action,omitempty"`
-}
+type kevFinding = securityadvisory.KEVFinding
 
-type epssResponse struct {
-	Data []epssEntry `json:"data"`
-}
+type epssResponse = securityadvisory.EPSSResponse
 
-type epssEntry struct {
-	CVE        string `json:"cve"`
-	EPSS       string `json:"epss"`
-	Percentile string `json:"percentile"`
-	Date       string `json:"date"`
-}
+type epssEntry = securityadvisory.EPSSEntry
 
-type epssFinding struct {
-	CVEID      string  `json:"cve_id"`
-	Score      float64 `json:"score"`
-	Percentile float64 `json:"percentile"`
-	Date       string  `json:"date,omitempty"`
-}
+type epssFinding = securityadvisory.EPSSFinding
 
 func runSecurity(args []string) int {
 	if len(args) == 0 {
@@ -788,7 +684,7 @@ func securityGateStatus(gates []safetyGate) plan.Status {
 func buildSecurityReport(ctx context.Context, opts securityOptions, client *http.Client, commandRunner commandRunner) securityReport {
 	includeVSCode := securityIncludesVSCode(opts)
 	result := collectInventoryCachedWithOptions(ctx, opts.root, opts.refresh, inventoryCacheMaxAge, inventoryOptions{IncludeVSCode: includeVSCode})
-	items := filterSecurityItems(enrichItems(result.Report.Items, loadLegacyCache(), manualAppIndex(opts.root)), opts)
+	items := filterSecurityItems(enrichItems(result.Report.Items, legacycache.Load(), manualAppIndex(opts.root)), opts)
 	packages, skipped := securityScopeFromItems(items)
 	packages = filterSecurityPackages(packages, opts)
 	postureItems := items
@@ -838,19 +734,19 @@ func buildSecurityReport(ctx context.Context, opts securityOptions, client *http
 		var err error
 		switch strings.ToLower(opts.ecosystem) {
 		case "npm":
-			npmPostures, err = npmPosturesFromItems(ctx, client, npmRegistryURL(), postureItems)
+			npmPostures, err = registryaudit.NPMPosturesFromItems(ctx, client, npmRegistryURL(), postureItems)
 			if err != nil {
 				postureWarnings = append(postureWarnings, "npm registry posture failed: "+err.Error())
 			}
 			npmPostures = applySecurityPolicyToNPMPostures(policy, npmPostures)
 		case "crates.io":
-			cargoPostures, err = cargoPosturesFromItems(ctx, client, cratesIOAPIURL(), postureItems)
+			cargoPostures, err = registryaudit.CargoPosturesFromItems(ctx, client, cratesIOAPIURL(), postureItems)
 			if err != nil {
 				postureWarnings = append(postureWarnings, "crates.io posture failed: "+err.Error())
 			}
 			cargoPostures = applySecurityPolicyToCargoPostures(policy, cargoPostures)
 		case "pypi":
-			pypiPostures, err = pypiPosturesFromItems(ctx, client, pypiAPIURL(), postureItems)
+			pypiPostures, err = registryaudit.PyPIPosturesFromItems(ctx, client, pypiAPIURL(), postureItems)
 			if err != nil {
 				postureWarnings = append(postureWarnings, "PyPI posture failed: "+err.Error())
 			}
@@ -958,15 +854,15 @@ func collectSecurityPostures(ctx context.Context, client *http.Client, opts secu
 	}()
 	go func() {
 		defer wg.Done()
-		npmPostures, npmErr = npmPosturesFromItems(ctx, client, npmRegistryURL(), postureItems)
+		npmPostures, npmErr = registryaudit.NPMPosturesFromItems(ctx, client, npmRegistryURL(), postureItems)
 	}()
 	go func() {
 		defer wg.Done()
-		cargoPostures, cargoErr = cargoPosturesFromItems(ctx, client, cratesIOAPIURL(), postureItems)
+		cargoPostures, cargoErr = registryaudit.CargoPosturesFromItems(ctx, client, cratesIOAPIURL(), postureItems)
 	}()
 	go func() {
 		defer wg.Done()
-		pypiPostures, pypiErr = pypiPosturesFromItems(ctx, client, pypiAPIURL(), postureItems)
+		pypiPostures, pypiErr = registryaudit.PyPIPosturesFromItems(ctx, client, pypiAPIURL(), postureItems)
 	}()
 	if includeBrew {
 		wg.Add(1)
@@ -1403,7 +1299,7 @@ func securityPackageBinaryCandidates(pkg securityPackage, npmBinaries map[string
 		}
 		return []string{name}
 	case "crates.io":
-		return cargoBinaryCandidates(name)
+		return nativeaudit.CargoBinaryCandidates(name)
 	default:
 		return nil
 	}
@@ -1425,7 +1321,7 @@ func cargoBinaryCandidates(crate string) []string {
 
 func prioritizeSecurityBinaryCandidates(pkg string, binaries []string) []string {
 	out := append([]string(nil), binaries...)
-	preferred := npmDefaultBinaryName(pkg)
+	preferred := registryaudit.NPMDefaultBinaryName(pkg)
 	for index, binary := range out {
 		if binary != preferred {
 			continue
@@ -1463,381 +1359,51 @@ func securitySkipReason(item plan.Item) string {
 }
 
 func queryOSVBatch(ctx context.Context, client *http.Client, apiURL string, packages []securityPackage) ([]securityFinding, error) {
-	requestBody := osvBatchRequest{Queries: make([]osvQuery, 0, len(packages))}
-	for _, pkg := range packages {
-		requestBody.Queries = append(requestBody.Queries, osvQuery{
-			Version: pkg.Version,
-			Package: osvPackage{
-				Name:      pkg.Package,
-				Ecosystem: pkg.Ecosystem,
-			},
-		})
-	}
-	data, err := json.Marshal(requestBody)
-	if err != nil {
-		return nil, err
-	}
-	requestCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
-	defer cancel()
-	request, err := http.NewRequestWithContext(requestCtx, http.MethodPost, apiURL, bytes.NewReader(data))
-	if err != nil {
-		return nil, err
-	}
-	request.Header.Set("Content-Type", "application/json")
-	response, err := client.Do(request)
-	if err != nil {
-		return nil, err
-	}
-	defer response.Body.Close()
-	body, err := io.ReadAll(io.LimitReader(response.Body, 8*1024*1024))
-	if err != nil {
-		return nil, err
-	}
-	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return nil, fmt.Errorf("osv query failed: HTTP %d: %s", response.StatusCode, truncate(strings.TrimSpace(string(body)), 180))
-	}
-	var batch osvBatchResponse
-	if err := json.Unmarshal(body, &batch); err != nil {
-		return nil, err
-	}
-	if len(batch.Results) != len(packages) {
-		return nil, fmt.Errorf("osv query returned %d results for %d packages", len(batch.Results), len(packages))
-	}
-	findings := []securityFinding{}
-	for i, result := range batch.Results {
-		pkg := packages[i]
-		for _, vuln := range result.Vulns {
-			detail, _ := getOSVVulnDetail(ctx, client, apiURL, vuln.ID)
-			finding := securityFinding{
-				Provider:      pkg.Provider,
-				Name:          pkg.Name,
-				Version:       pkg.Version,
-				Ecosystem:     pkg.Ecosystem,
-				Package:       pkg.Package,
-				VulnID:        vuln.ID,
-				Aliases:       detail.Aliases,
-				Modified:      vuln.Modified,
-				Severity:      primaryOSVSeverity(detail.Severity),
-				FixedVersions: fixedVersionsFromOSVDetail(detail, pkg),
-				BinaryName:    pkg.BinaryName,
-				BinaryPath:    pkg.BinaryPath,
-				PathState:     pkg.PathState,
-				Exposure:      securityExposureFromPackage(pkg),
-				Decision:      "hold",
-				Confidence:    pkg.Confidence,
-				Status:        plan.StatusHeld,
-				URL:           "https://osv.dev/vulnerability/" + vuln.ID,
-			}
-			finding.Remediation = securityFindingRemediation(finding)
-			findings = append(findings, finding)
-		}
-	}
-	return findings, nil
+	return securityadvisory.QueryOSVBatch(ctx, client, apiURL, packages)
+}
+
+func queryGitHubAdvisories(ctx context.Context, client *http.Client, apiBase string, packages []securityPackage) ([]securityFinding, error) {
+	return securityadvisory.QueryGitHubAdvisories(ctx, client, apiBase, githubToken(), packages)
+}
+
+func isGitHubAdvisoryFinding(finding securityFinding) bool {
+	return securityadvisory.IsGitHubAdvisoryFinding(finding)
 }
 
 func appendUniqueSecurityFindings(findings []securityFinding, additions ...securityFinding) []securityFinding {
-	out := make([]securityFinding, 0, len(findings)+len(additions))
-	out = append(out, findings...)
-	for _, addition := range additions {
-		if index, ok := matchingSecurityFindingIndex(out, addition); ok {
-			out[index] = mergeSecurityFindings(out[index], addition)
-		} else {
-			out = append(out, addition)
-		}
-	}
-	return out
-}
-
-func matchingSecurityFindingIndex(findings []securityFinding, candidate securityFinding) (int, bool) {
-	for index, finding := range findings {
-		if !sameSecurityFindingSubject(finding, candidate) {
-			continue
-		}
-		if securityFindingIDOverlap(finding, candidate) {
-			return index, true
-		}
-	}
-	return 0, false
-}
-
-func mergeSecurityFindings(primary securityFinding, secondary securityFinding) securityFinding {
-	primary.Aliases = appendUniqueStrings(primary.Aliases, secondary.Aliases...)
-	primary.FixedVersions = appendUniqueStrings(primary.FixedVersions, secondary.FixedVersions...)
-	sort.Strings(primary.FixedVersions)
-	if primary.Modified == "" {
-		primary.Modified = secondary.Modified
-	}
-	if primary.Severity == "" {
-		primary.Severity = secondary.Severity
-	}
-	if primary.URL == "" {
-		primary.URL = secondary.URL
-	}
-	primary.Remediation = securityFindingRemediation(primary)
-	return primary
-}
-
-func appendUniqueStrings(values []string, additions ...string) []string {
-	out := append([]string{}, values...)
-	seen := map[string]bool{}
-	for _, value := range out {
-		seen[value] = true
-	}
-	for _, value := range additions {
-		if value == "" || seen[value] {
-			continue
-		}
-		seen[value] = true
-		out = append(out, value)
-	}
-	return out
-}
-
-func sameSecurityFindingSubject(left securityFinding, right securityFinding) bool {
-	return strings.EqualFold(left.Provider, right.Provider) &&
-		strings.EqualFold(left.Name, right.Name) &&
-		strings.EqualFold(left.Version, right.Version) &&
-		strings.EqualFold(left.Ecosystem, right.Ecosystem) &&
-		strings.EqualFold(left.Package, right.Package)
-}
-
-func securityFindingIDOverlap(left securityFinding, right securityFinding) bool {
-	leftIDs := securityFindingIDs(left)
-	for id := range securityFindingIDs(right) {
-		if leftIDs[strings.ToUpper(id)] {
-			return true
-		}
-	}
-	return false
-}
-
-func securityFindingIDs(finding securityFinding) map[string]bool {
-	ids := map[string]bool{}
-	for _, id := range append([]string{finding.VulnID}, finding.Aliases...) {
-		id = strings.ToUpper(strings.TrimSpace(id))
-		if id == "" {
-			continue
-		}
-		ids[id] = true
-	}
-	return ids
+	return securityadvisory.AppendUniqueFindings(findings, additions...)
 }
 
 func enrichFindingsWithKEV(ctx context.Context, client *http.Client, kevURL string, findings []securityFinding) ([]securityFinding, error) {
-	if len(findings) == 0 || !findingsHaveCVE(findings) {
-		return findings, nil
-	}
-	kev, err := fetchCISAKEV(ctx, client, kevURL)
-	if err != nil {
-		return findings, err
-	}
-	out := make([]securityFinding, 0, len(findings))
-	for _, finding := range findings {
-		for _, cve := range findingCVEIDs(finding) {
-			match, ok := kev[cve]
-			if !ok {
-				continue
-			}
-			enriched := kevFinding{
-				CVEID:                      match.CVEID,
-				VendorProject:              match.VendorProject,
-				Product:                    match.Product,
-				VulnerabilityName:          match.VulnerabilityName,
-				DateAdded:                  match.DateAdded,
-				DueDate:                    match.DueDate,
-				KnownRansomwareCampaignUse: match.KnownRansomwareCampaignUse,
-				RequiredAction:             match.RequiredAction,
-			}
-			finding.KEV = &enriched
-			finding.Decision = "block"
-			finding.Status = plan.StatusBlocked
-			break
-		}
-		out = append(out, finding)
-	}
-	return out, nil
-}
-
-func fetchCISAKEV(ctx context.Context, client *http.Client, kevURL string) (map[string]kevVulnerability, error) {
-	requestCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
-	defer cancel()
-	request, err := http.NewRequestWithContext(requestCtx, http.MethodGet, kevURL, nil)
-	if err != nil {
-		return nil, err
-	}
-	response, err := client.Do(request)
-	if err != nil {
-		return nil, err
-	}
-	defer response.Body.Close()
-	body, err := io.ReadAll(io.LimitReader(response.Body, 16*1024*1024))
-	if err != nil {
-		return nil, err
-	}
-	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return nil, fmt.Errorf("cisa kev query failed: HTTP %d: %s", response.StatusCode, truncate(strings.TrimSpace(string(body)), 180))
-	}
-	var catalog kevCatalog
-	if err := json.Unmarshal(body, &catalog); err != nil {
-		return nil, err
-	}
-	out := map[string]kevVulnerability{}
-	for _, vulnerability := range catalog.Vulnerabilities {
-		if vulnerability.CVEID != "" {
-			out[vulnerability.CVEID] = vulnerability
-		}
-	}
-	return out, nil
-}
-
-func findingsHaveCVE(findings []securityFinding) bool {
-	for _, finding := range findings {
-		if len(findingCVEIDs(finding)) > 0 {
-			return true
-		}
-	}
-	return false
-}
-
-func findingCVEIDs(finding securityFinding) []string {
-	ids := []string{}
-	if strings.HasPrefix(finding.VulnID, "CVE-") {
-		ids = append(ids, finding.VulnID)
-	}
-	for _, alias := range finding.Aliases {
-		if strings.HasPrefix(alias, "CVE-") {
-			ids = append(ids, alias)
-		}
-	}
-	return ids
+	return securityadvisory.EnrichWithKEV(ctx, client, kevURL, findings)
 }
 
 func enrichFindingsWithEPSS(ctx context.Context, client *http.Client, epssURL string, findings []securityFinding) ([]securityFinding, error) {
-	cves := uniqueFindingCVEIDs(findings)
-	if len(cves) == 0 {
-		return findings, nil
-	}
-	scores, err := fetchEPSS(ctx, client, epssURL, cves)
-	if err != nil {
-		return findings, err
-	}
-	out := make([]securityFinding, 0, len(findings))
-	for _, finding := range findings {
-		for _, cve := range findingCVEIDs(finding) {
-			score, ok := scores[cve]
-			if !ok {
-				continue
-			}
-			finding.EPSS = &score
-			break
-		}
-		out = append(out, finding)
-	}
-	return out, nil
+	return securityadvisory.EnrichWithEPSS(ctx, client, epssURL, findings)
 }
 
-func fetchEPSS(ctx context.Context, client *http.Client, epssURL string, cves []string) (map[string]epssFinding, error) {
-	endpoint, err := url.Parse(epssURL)
-	if err != nil {
-		return nil, err
-	}
-	query := endpoint.Query()
-	query.Set("cve", strings.Join(cves, ","))
-	endpoint.RawQuery = query.Encode()
-	requestCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
-	defer cancel()
-	request, err := http.NewRequestWithContext(requestCtx, http.MethodGet, endpoint.String(), nil)
-	if err != nil {
-		return nil, err
-	}
-	response, err := client.Do(request)
-	if err != nil {
-		return nil, err
-	}
-	defer response.Body.Close()
-	body, err := io.ReadAll(io.LimitReader(response.Body, 8*1024*1024))
-	if err != nil {
-		return nil, err
-	}
-	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return nil, fmt.Errorf("first epss query failed: HTTP %d: %s", response.StatusCode, truncate(strings.TrimSpace(string(body)), 180))
-	}
-	var decoded epssResponse
-	if err := json.Unmarshal(body, &decoded); err != nil {
-		return nil, err
-	}
-	out := map[string]epssFinding{}
-	for _, entry := range decoded.Data {
-		score, err := strconv.ParseFloat(entry.EPSS, 64)
-		if err != nil {
-			continue
-		}
-		percentile, err := strconv.ParseFloat(entry.Percentile, 64)
-		if err != nil {
-			continue
-		}
-		out[entry.CVE] = epssFinding{
-			CVEID:      entry.CVE,
-			Score:      score,
-			Percentile: percentile,
-			Date:       entry.Date,
-		}
-	}
-	return out, nil
+func securityExposureFromPackage(pkg securityPackage) string {
+	return securityadvisory.ExposureFromPackage(pkg)
 }
 
-func uniqueFindingCVEIDs(findings []securityFinding) []string {
-	seen := map[string]bool{}
-	cves := []string{}
-	for _, finding := range findings {
-		for _, cve := range findingCVEIDs(finding) {
-			if seen[cve] {
-				continue
-			}
-			seen[cve] = true
-			cves = append(cves, cve)
-		}
-	}
-	sort.Strings(cves)
-	return cves
+func securityFindingReason(finding securityFinding) string {
+	return securityadvisory.Reason(finding)
 }
 
-func getOSVVulnDetail(ctx context.Context, client *http.Client, apiURL string, id string) (osvVulnDetail, error) {
-	base, _, _ := strings.Cut(apiURL, "/querybatch")
-	if base == "" || base == apiURL {
-		base = strings.TrimRight(apiURL, "/")
-	}
-	requestCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
-	defer cancel()
-	request, err := http.NewRequestWithContext(requestCtx, http.MethodGet, strings.TrimRight(base, "/")+"/vulns/"+id, nil)
-	if err != nil {
-		return osvVulnDetail{}, err
-	}
-	response, err := client.Do(request)
-	if err != nil {
-		return osvVulnDetail{}, err
-	}
-	defer response.Body.Close()
-	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return osvVulnDetail{}, fmt.Errorf("osv detail failed: HTTP %d", response.StatusCode)
-	}
-	var detail osvVulnDetail
-	if err := json.NewDecoder(io.LimitReader(response.Body, 2*1024*1024)).Decode(&detail); err != nil {
-		return osvVulnDetail{}, err
-	}
-	return detail, nil
+func securityFindingRemediation(finding securityFinding) string {
+	return securityadvisory.Remediation(finding)
+}
+
+func sortSecurityFindings(findings []securityFinding) {
+	securityadvisory.SortFindings(findings)
 }
 
 func primaryOSVSeverity(severities []osvSeverity) string {
-	for _, severity := range severities {
-		if severity.Score != "" {
-			if severity.Type != "" {
-				return severity.Type + ":" + severity.Score
-			}
-			return severity.Score
-		}
-	}
-	return ""
+	return securityadvisory.PrimaryOSVSeverity(severities)
+}
+
+func fixedVersionsFromOSVDetail(detail osvVulnDetail, pkg securityPackage) []string {
+	return securityadvisory.FixedVersionsFromOSVDetail(detail, pkg)
 }
 
 func printSecurityText(w io.Writer, report securityReport, color bool) {
@@ -1873,7 +1439,7 @@ func printSecurityText(w io.Writer, report securityReport, color bool) {
 		fmt.Fprintln(w)
 	}
 	if len(report.NPM) > 0 {
-		reviewCount := npmPostureReviewCount(report.NPM)
+		reviewCount := registryaudit.NPMPostureReviewCount(report.NPM)
 		fmt.Fprintf(w, "npm posture: %d packages checked", len(report.NPM))
 		if reviewCount > 0 {
 			fmt.Fprintf(w, ", %d need attention", reviewCount)
@@ -1881,7 +1447,7 @@ func printSecurityText(w io.Writer, report securityReport, color bool) {
 		fmt.Fprintln(w)
 	}
 	if len(report.Cargo) > 0 {
-		reviewCount := cargoPostureReviewCount(report.Cargo)
+		reviewCount := registryaudit.CargoPostureReviewCount(report.Cargo)
 		fmt.Fprintf(w, "cargo posture: %d crates checked", len(report.Cargo))
 		if reviewCount > 0 {
 			fmt.Fprintf(w, ", %d need attention", reviewCount)
@@ -1889,7 +1455,7 @@ func printSecurityText(w io.Writer, report securityReport, color bool) {
 		fmt.Fprintln(w)
 	}
 	if len(report.PyPI) > 0 {
-		reviewCount := pypiPostureReviewCount(report.PyPI)
+		reviewCount := registryaudit.PyPIPostureReviewCount(report.PyPI)
 		fmt.Fprintf(w, "pypi posture: %d packages checked", len(report.PyPI))
 		if reviewCount > 0 {
 			fmt.Fprintf(w, ", %d need attention", reviewCount)
@@ -1950,7 +1516,7 @@ func printSecurityText(w io.Writer, report securityReport, color bool) {
 				audit.Target,
 				string(audit.Status),
 				audit.Decision,
-				localizedSecurityReason(audit.Reason),
+				localizedNativeAuditReason(audit),
 				audit.Error,
 			})
 		}
@@ -2074,7 +1640,7 @@ func printSecurityText(w io.Writer, report securityReport, color bool) {
 				posture.DefaultBranch,
 				posture.PushedAt,
 				posture.Decision,
-				localizedSecurityReason(posture.Reason),
+				localizedGitHubPostureReason(posture),
 			})
 		}
 		textui.PrintTable(w, []textui.Column{
@@ -2103,7 +1669,7 @@ func printSecurityText(w io.Writer, report securityReport, color bool) {
 				posture.Tap,
 				firstNonEmpty(posture.TrustStatus, "-"),
 				posture.Decision,
-				localizedSecurityReason(posture.Reason),
+				localizedHomebrewPostureReason(posture),
 			})
 			if len(rows) == 12 {
 				break
@@ -2138,7 +1704,7 @@ func printSecurityText(w io.Writer, report securityReport, color bool) {
 				posture.Publisher,
 				posture.Version,
 				posture.Decision,
-				localizedSecurityReason(posture.Reason),
+				localizedVSCodePostureReason(posture),
 			})
 			if len(rows) == 12 {
 				break
@@ -2156,7 +1722,7 @@ func printSecurityText(w io.Writer, report securityReport, color bool) {
 		}
 		printNextSteps(w, "vscode posture next steps", nextSteps)
 	}
-	if hasNPMPostureReview(report.NPM) {
+	if reviewCount := registryaudit.NPMPostureReviewCount(report.NPM); reviewCount > 0 {
 		fmt.Fprintln(w, "\nnpm posture")
 		rows := make([][]string, 0, len(report.NPM))
 		nextSteps := []string{}
@@ -2172,7 +1738,7 @@ func printSecurityText(w io.Writer, report securityReport, color bool) {
 				posture.Version,
 				posture.Latest,
 				posture.Decision,
-				localizedSecurityReason(posture.Reason),
+				localizedNPMPostureReason(posture),
 			})
 			if len(rows) == 12 {
 				break
@@ -2185,12 +1751,12 @@ func printSecurityText(w io.Writer, report securityReport, color bool) {
 			{Header: "decision", Min: 8, Max: 10},
 			{Header: "reason", Min: 18, Max: 40},
 		}, rows, color)
-		if remaining := npmPostureReviewCount(report.NPM) - len(rows); remaining > 0 {
+		if remaining := reviewCount - len(rows); remaining > 0 {
 			fmt.Fprintf(w, "  ... %d more review entries\n", remaining)
 		}
 		printNextSteps(w, "npm posture next steps", nextSteps)
 	}
-	if hasCargoPostureReview(report.Cargo) {
+	if reviewCount := registryaudit.CargoPostureReviewCount(report.Cargo); reviewCount > 0 {
 		fmt.Fprintln(w, "\ncargo posture")
 		rows := make([][]string, 0, len(report.Cargo))
 		nextSteps := []string{}
@@ -2206,7 +1772,7 @@ func printSecurityText(w io.Writer, report securityReport, color bool) {
 				posture.Version,
 				posture.Latest,
 				posture.Decision,
-				localizedSecurityReason(posture.Reason),
+				localizedCargoPostureReason(posture),
 			})
 			if len(rows) == 12 {
 				break
@@ -2219,12 +1785,12 @@ func printSecurityText(w io.Writer, report securityReport, color bool) {
 			{Header: "decision", Min: 8, Max: 10},
 			{Header: "reason", Min: 18, Max: 40},
 		}, rows, color)
-		if remaining := cargoPostureReviewCount(report.Cargo) - len(rows); remaining > 0 {
+		if remaining := reviewCount - len(rows); remaining > 0 {
 			fmt.Fprintf(w, "  ... %d more review entries\n", remaining)
 		}
 		printNextSteps(w, "cargo posture next steps", nextSteps)
 	}
-	if hasPyPIPostureReview(report.PyPI) {
+	if reviewCount := registryaudit.PyPIPostureReviewCount(report.PyPI); reviewCount > 0 {
 		fmt.Fprintln(w, "\npypi posture")
 		rows := make([][]string, 0, len(report.PyPI))
 		nextSteps := []string{}
@@ -2240,7 +1806,7 @@ func printSecurityText(w io.Writer, report securityReport, color bool) {
 				posture.Version,
 				posture.Latest,
 				posture.Decision,
-				localizedSecurityReason(posture.Reason),
+				localizedPyPIPostureReason(posture),
 			})
 			if len(rows) == 12 {
 				break
@@ -2253,7 +1819,7 @@ func printSecurityText(w io.Writer, report securityReport, color bool) {
 			{Header: "decision", Min: 8, Max: 10},
 			{Header: "reason", Min: 18, Max: 40},
 		}, rows, color)
-		if remaining := pypiPostureReviewCount(report.PyPI) - len(rows); remaining > 0 {
+		if remaining := reviewCount - len(rows); remaining > 0 {
 			fmt.Fprintf(w, "  ... %d more review entries\n", remaining)
 		}
 		printNextSteps(w, "pypi posture next steps", nextSteps)
@@ -2311,94 +1877,8 @@ func securityPathSummary(binary string, state string) string {
 	}
 }
 
-func securityExposureFromPackage(pkg securityPackage) string {
-	switch strings.TrimSpace(pkg.PathState) {
-	case "on-path":
-		if pkg.BinaryName != "" {
-			return "on-path-binary:" + pkg.BinaryName
-		}
-		return "on-path-binary"
-	case "not-found":
-		if pkg.BinaryName != "" {
-			return "binary-not-found:" + pkg.BinaryName
-		}
-		return "binary-not-found"
-	case "unknown":
-		return "binary-exposure-unknown"
-	default:
-		return ""
-	}
-}
-
-func securityFindingReason(finding securityFinding) string {
-	if finding.Reason != "" {
-		return finding.Reason
-	}
-	if finding.KEV != nil {
-		return "known exploited vulnerability"
-	}
-	if finding.Decision == "hold" {
-		if strings.HasPrefix(finding.Exposure, "on-path-binary") {
-			return "OSV vulnerability match; on-PATH binary exposure"
-		}
-		return "OSV vulnerability match"
-	}
-	return ""
-}
-
-func securityFindingRemediation(finding securityFinding) string {
-	if finding.Decision == "allow" {
-		return ""
-	}
-	actions := []string{}
-	if len(finding.FixedVersions) > 0 {
-		actions = append(actions, "upgrade to a fixed version: "+strings.Join(finding.FixedVersions, ","))
-	} else {
-		actions = append(actions, "review the advisory and wait for a fixed version or replacement")
-	}
-	if strings.HasPrefix(finding.Exposure, "on-path-binary") {
-		actions = append(actions, "remove or disable the on-PATH binary until fixed")
-	}
-	return strings.Join(actions, "; ")
-}
-
-func sortSecurityFindings(findings []securityFinding) {
-	sort.SliceStable(findings, func(i, j int) bool {
-		left := securityFindingPriority(findings[i])
-		right := securityFindingPriority(findings[j])
-		for index := range left {
-			if left[index] != right[index] {
-				return left[index] > right[index]
-			}
-		}
-		return strings.ToLower(findings[i].Name+"\x00"+findings[i].VulnID) < strings.ToLower(findings[j].Name+"\x00"+findings[j].VulnID)
-	})
-}
-
-func securityFindingPriority(finding securityFinding) []int {
-	return []int{
-		securityDecisionPriority(finding.Decision),
-		boolPriority(finding.KEV != nil),
-		int(findingEPSSScore(finding) * 100000),
-		int(securitySeverityScore(finding.Severity) * 10),
-		boolPriority(len(finding.FixedVersions) > 0),
-		securityExposurePriority(finding.Exposure),
-	}
-}
-
 func securityDecisionPriority(decision string) int {
-	switch strings.ToLower(strings.TrimSpace(decision)) {
-	case "block":
-		return 4
-	case "hold":
-		return 3
-	case "review":
-		return 2
-	case "unknown":
-		return 1
-	default:
-		return 0
-	}
+	return securitygate.DecisionPriority(decision)
 }
 
 func boolPriority(value bool) int {
@@ -2406,76 +1886,6 @@ func boolPriority(value bool) int {
 		return 1
 	}
 	return 0
-}
-
-func findingEPSSScore(finding securityFinding) float64 {
-	if finding.EPSS == nil {
-		return 0
-	}
-	return finding.EPSS.Score
-}
-
-func securitySeverityScore(severity string) float64 {
-	severity = strings.TrimSpace(severity)
-	if severity == "" {
-		return 0
-	}
-	if _, after, ok := strings.Cut(severity, ":"); ok {
-		severity = after
-	}
-	switch strings.ToLower(severity) {
-	case "critical":
-		return 9
-	case "high":
-		return 7
-	case "medium", "moderate":
-		return 4
-	case "low":
-		return 0.1
-	}
-	value, err := strconv.ParseFloat(severity, 64)
-	if err != nil {
-		return 0
-	}
-	return value
-}
-
-func securityExposurePriority(exposure string) int {
-	switch {
-	case strings.HasPrefix(exposure, "on-path-binary"):
-		return 3
-	case strings.HasPrefix(exposure, "binary-exposure-unknown"):
-		return 2
-	case strings.HasPrefix(exposure, "binary-not-found"):
-		return 1
-	default:
-		return 0
-	}
-}
-
-func fixedVersionsFromOSVDetail(detail osvVulnDetail, pkg securityPackage) []string {
-	seen := map[string]bool{}
-	versions := []string{}
-	for _, affected := range detail.Affected {
-		if affected.Package.Name != "" && !strings.EqualFold(affected.Package.Name, pkg.Package) {
-			continue
-		}
-		if affected.Package.Ecosystem != "" && !strings.EqualFold(affected.Package.Ecosystem, pkg.Ecosystem) {
-			continue
-		}
-		for _, versionRange := range affected.Ranges {
-			for _, event := range versionRange.Events {
-				fixed := strings.TrimSpace(event.Fixed)
-				if fixed == "" || seen[fixed] {
-					continue
-				}
-				seen[fixed] = true
-				versions = append(versions, fixed)
-			}
-		}
-	}
-	sort.Strings(versions)
-	return versions
 }
 
 func printSecurityGateText(w io.Writer, report securityGateReport) {
@@ -2659,24 +2069,15 @@ func securityPolicyRuleFlags(rule securityPolicyRuleView) string {
 }
 
 func osvAPIURL() string {
-	if value := strings.TrimSpace(os.Getenv("UPDEV_OSV_API_URL")); value != "" {
-		return value
-	}
-	return defaultOSVAPIURL
+	return configuredEnvString(defaultOSVAPIURL, "UPDEV_OSV_API_URL")
 }
 
 func cisaKEVURL() string {
-	if value := strings.TrimSpace(os.Getenv("UPDEV_CISA_KEV_URL")); value != "" {
-		return value
-	}
-	return defaultCISAKEVURL
+	return configuredEnvString(defaultCISAKEVURL, "UPDEV_CISA_KEV_URL")
 }
 
 func epssURL() string {
-	if value := strings.TrimSpace(os.Getenv("UPDEV_EPSS_URL")); value != "" {
-		return value
-	}
-	return defaultEPSSURL
+	return configuredEnvString(defaultEPSSURL, "UPDEV_EPSS_URL")
 }
 
 func epssSummary(epss *epssFinding) string {

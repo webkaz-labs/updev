@@ -5,10 +5,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"os"
-	"strconv"
 	"strings"
 	"time"
+
+	"github.com/webkaz-labs/updev/internal/githubrepo"
+	"github.com/webkaz-labs/updev/internal/mise"
+	"github.com/webkaz-labs/updev/internal/registryaudit"
+	"github.com/webkaz-labs/updev/internal/securitygate"
+	"github.com/webkaz-labs/updev/internal/securityreason"
 )
 
 const miseNativeReleaseAgeSource = "mise-native-minimum-release-age"
@@ -28,7 +32,7 @@ func miseMinimumReleaseAgeGateEvidence(ctx context.Context, commandRunner comman
 	if err := json.Unmarshal([]byte(result.Stdout), &payload); err != nil {
 		return []string{"mise minimum_release_age evidence unavailable: settings JSON parse failed"}
 	}
-	value, source, ok := miseMinimumReleaseAgeFromSettings(payload)
+	value, source, ok := mise.MinimumReleaseAgeFromSettings(payload)
 	if !ok || value == "" {
 		return []string{"mise minimum_release_age inactive"}
 	}
@@ -93,7 +97,7 @@ func enrichMiseSafetyFindings(ctx context.Context, commandRunner commandRunner, 
 				continue
 			}
 			finding.Decision = "review"
-			finding.Reason = "mise backend is unsupported or opaque for updev-owned release-age evidence"
+			setSafetyFindingReason(&finding, securityreason.MiseOpaqueBackendReason())
 			finding.Remediation = "keep the update held until mise native policy evidence or provider metadata can be verified"
 			finding.Confidence = "low"
 			out = append(out, preserveMiseNativeReleaseAgeHold(finding, nativeHold, originalReason))
@@ -148,7 +152,7 @@ func miseCoreGitHubRelease(finding safetyFinding) (string, []string, bool) {
 func applyMiseAquaReleaseAge(ctx context.Context, client *http.Client, finding safetyFinding, minAge time.Duration) safetyFinding {
 	repo := strings.TrimSpace(strings.TrimPrefix(finding.Name, "aqua:"))
 	parts := strings.Split(repo, "/")
-	if len(parts) != 2 || !validGitHubPathPart(parts[0]) || !validGitHubPathPart(parts[1]) {
+	if len(parts) != 2 || !githubrepo.ValidPathPart(parts[0]) || !githubrepo.ValidPathPart(parts[1]) {
 		return miseReviewFinding(finding, "mise aqua backend did not expose a valid GitHub repository", "review the mise aqua backend source before allowing this update")
 	}
 	originalName := finding.Name
@@ -160,13 +164,7 @@ func applyMiseAquaReleaseAge(ctx context.Context, client *http.Client, finding s
 	return enriched
 }
 
-type miseRegistryEntry struct {
-	Short    string   `json:"short"`
-	Backends []string `json:"backends"`
-	Aliases  []string `json:"aliases"`
-}
-
-func miseRegistryIndex(ctx context.Context, commandRunner commandRunner) map[string]miseRegistryEntry {
+func miseRegistryIndex(ctx context.Context, commandRunner commandRunner) map[string]mise.RegistryEntry {
 	if commandRunner == nil {
 		return nil
 	}
@@ -176,30 +174,15 @@ func miseRegistryIndex(ctx context.Context, commandRunner commandRunner) map[str
 	if result.Err != nil || result.Code != 0 || strings.TrimSpace(result.Stdout) == "" {
 		return nil
 	}
-	var entries []miseRegistryEntry
-	if err := json.Unmarshal([]byte(result.Stdout), &entries); err != nil {
-		return nil
-	}
-	index := make(map[string]miseRegistryEntry, len(entries))
-	for _, entry := range entries {
-		if key := strings.TrimSpace(entry.Short); key != "" {
-			index[key] = entry
-		}
-		for _, alias := range entry.Aliases {
-			if key := strings.TrimSpace(alias); key != "" {
-				index[key] = entry
-			}
-		}
-	}
-	return index
+	return mise.RegistryIndexFromJSON(result.Stdout)
 }
 
-func applyMiseRegistryGitHubReleaseAge(ctx context.Context, client *http.Client, registry map[string]miseRegistryEntry, finding safetyFinding, minAge time.Duration) (safetyFinding, bool) {
-	entry, ok := miseRegistryEntryForFinding(registry, finding)
+func applyMiseRegistryGitHubReleaseAge(ctx context.Context, client *http.Client, registry map[string]mise.RegistryEntry, finding safetyFinding, minAge time.Duration) (safetyFinding, bool) {
+	entry, ok := mise.RegistryEntryForTool(registry, finding.Name)
 	if !ok {
 		return finding, false
 	}
-	backend, repo, ok := miseRegistryGitHubBackend(entry)
+	backend, repo, ok := mise.RegistryGitHubBackend(entry)
 	if !ok {
 		return finding, false
 	}
@@ -212,40 +195,43 @@ func applyMiseRegistryGitHubReleaseAge(ctx context.Context, client *http.Client,
 	return enriched, true
 }
 
-func miseRegistryEntryForFinding(registry map[string]miseRegistryEntry, finding safetyFinding) (miseRegistryEntry, bool) {
-	for _, key := range miseRegistryLookupKeys(finding.Name) {
-		if entry, ok := registry[key]; ok {
-			return entry, true
-		}
+func applyMiseRegistryProviderMetadataReleaseAge(ctx context.Context, client *http.Client, registry map[string]mise.RegistryEntry, finding safetyFinding, minAge time.Duration) (safetyFinding, bool) {
+	entry, ok := mise.RegistryEntryForTool(registry, finding.Name)
+	if !ok {
+		return finding, false
 	}
-	return miseRegistryEntry{}, false
+	backend, metadata, ok := mise.RegistryProviderMetadataBackend(entry, mise.ProviderMetadataRegistry())
+	if !ok {
+		return finding, false
+	}
+	originalName := finding.Name
+	finding.Kind = "tool"
+	finding.Evidence = appendEvidence(finding.Evidence, "mise registry backend "+backend)
+	finding.Evidence = appendEvidence(finding.Evidence, "provider metadata "+metadata.ID)
+	switch metadata.ResolverType {
+	case mise.ResolverVendorReleaseNotes:
+		enriched := applyMiseVendorReleaseNotesAge(ctx, client, metadata, finding, minAge)
+		enriched.Name = originalName
+		return enriched, true
+	default:
+		finding.Name = originalName
+		return miseReviewFinding(finding, "provider metadata resolver is unsupported for mise backend", "keep the candidate held until updev can resolve provider metadata for this backend"), true
+	}
 }
 
-func miseRegistryLookupKeys(name string) []string {
-	name = strings.TrimSpace(name)
-	if name == "" {
-		return nil
+func applyMiseVendorReleaseNotesAge(ctx context.Context, client *http.Client, metadata mise.ProviderMetadataEntry, finding safetyFinding, minAge time.Duration) safetyFinding {
+	version := miseCandidateVersion(finding)
+	if version == "" {
+		return miseReviewFinding(finding, "mise provider metadata candidate version is empty", "retry after mise reports a concrete candidate version")
 	}
-	keys := []string{name}
-	if _, suffix, ok := strings.Cut(name, ":"); ok && suffix != "" {
-		keys = appendUniqueString(keys, suffix)
+	releaseDate, err := mise.FetchVendorReleaseNoteDate(ctx, client, metadata, version)
+	finding.URL = mise.ProviderMetadataURL(metadata)
+	finding.SupportURL = metadata.SupportURL
+	finding.Evidence = appendEvidence(finding.Evidence, metadata.Evidence)
+	if err != nil {
+		return miseReviewFinding(finding, "vendor release notes metadata unavailable before mise update: "+err.Error(), "retry when vendor release notes are reachable or review the upstream release manually before allowing")
 	}
-	return keys
-}
-
-func miseRegistryGitHubBackend(entry miseRegistryEntry) (string, string, bool) {
-	for _, backend := range entry.Backends {
-		rawRepo, ok := strings.CutPrefix(strings.TrimSpace(backend), "aqua:")
-		if !ok {
-			continue
-		}
-		parts := strings.Split(rawRepo, "/")
-		if len(parts) != 2 || !validGitHubPathPart(parts[0]) || !validGitHubPathPart(parts[1]) {
-			continue
-		}
-		return backend, parts[0] + "/" + parts[1], true
-	}
-	return "", "", false
+	return applyMiseReleaseAgeFromTime(finding, releaseDate.Format(time.RFC3339), minAge, metadata.Evidence)
 }
 
 func preserveMiseNativeReleaseAgeHold(finding safetyFinding, nativeHold bool, reason string) safetyFinding {
@@ -254,7 +240,7 @@ func preserveMiseNativeReleaseAgeHold(finding safetyFinding, nativeHold bool, re
 	}
 	finding.Source = miseNativeReleaseAgeSource
 	finding.Decision = "hold"
-	finding.Reason = firstNonEmpty(reason, "mise minimum_release_age held this candidate")
+	setSafetyFindingReason(&finding, securityreason.MiseMinimumAgeHeldReason(firstNonEmpty(reason, "mise minimum_release_age held this candidate")))
 	finding.Remediation = "wait until mise minimum_release_age allows this candidate, or add a temporary policy allow after review"
 	if finding.Confidence == "" || finding.Confidence == "low" {
 		finding.Confidence = "medium"
@@ -288,7 +274,7 @@ func applyMiseNPMReleaseAge(ctx context.Context, client *http.Client, registryBa
 	if pkg == "" {
 		return miseReviewFinding(finding, "mise npm backend package name is empty", "review the mise entry before allowing this update")
 	}
-	metadata, err := fetchNPMMetadata(ctx, client, registryBase, pkg)
+	metadata, err := registryaudit.FetchNPMMetadata(ctx, client, registryBase, pkg)
 	if err != nil {
 		finding.Evidence = appendEvidence(finding.Evidence, "npm registry metadata")
 		return miseReviewFinding(finding, "npm registry metadata unavailable before mise update: "+err.Error(), "retry when the registry is reachable or review manually before allowing")
@@ -297,7 +283,7 @@ func applyMiseNPMReleaseAge(ctx context.Context, client *http.Client, registryBa
 	versionInfo := metadata.Versions[version]
 	deprecated := firstNonEmpty(versionInfo.Deprecated, metadata.Deprecated)
 	finding.Kind = "npm"
-	finding.RepositoryURL = normalizeNPMRepositoryURL(firstNonEmpty(versionInfo.Repository.URL, metadata.Repository.URL))
+	finding.RepositoryURL = registryaudit.NormalizeNPMRepositoryURL(firstNonEmpty(versionInfo.Repository.URL, metadata.Repository.URL))
 	finding.URL = "https://www.npmjs.com/package/" + pkg
 	finding.Evidence = appendEvidence(finding.Evidence, "npm registry metadata")
 	switch {
@@ -321,13 +307,13 @@ func applyMiseCargoReleaseAge(ctx context.Context, client *http.Client, apiBase 
 	if crate == "" || strings.ContainsAny(crate, " \t\n\r/") {
 		return miseReviewFinding(finding, "mise cargo backend crate name is invalid", "review the mise entry before allowing this update")
 	}
-	metadata, err := fetchCratesIOMetadata(ctx, client, apiBase, crate)
+	metadata, err := registryaudit.FetchCratesIOMetadata(ctx, client, apiBase, crate)
 	if err != nil {
 		finding.Evidence = appendEvidence(finding.Evidence, "crates.io metadata")
 		return miseReviewFinding(finding, "crates.io metadata unavailable before mise update: "+err.Error(), "retry when crates.io is reachable or review manually before allowing")
 	}
 	version := miseCandidateVersion(finding)
-	versionInfo, versionFound := cratesIOVersionByNumber(metadata.Versions, version)
+	versionInfo, versionFound := registryaudit.CratesIOVersionByNumber(metadata.Versions, version)
 	finding.Kind = "cargo"
 	finding.RepositoryURL = metadata.Crate.Repository
 	finding.URL = "https://crates.io/crates/" + crate
@@ -351,15 +337,15 @@ func applyMisePyPIReleaseAge(ctx context.Context, client *http.Client, apiBase s
 	if pkg == "" || strings.ContainsAny(pkg, " \t\n\r/") {
 		return miseReviewFinding(finding, "mise pipx backend package name is invalid", "review the mise entry before allowing this update")
 	}
-	metadata, err := fetchPyPIMetadata(ctx, client, apiBase, pkg)
+	metadata, err := registryaudit.FetchPyPIMetadata(ctx, client, apiBase, pkg)
 	if err != nil {
 		finding.Evidence = appendEvidence(finding.Evidence, "PyPI metadata")
 		return miseReviewFinding(finding, "PyPI metadata unavailable before mise update: "+err.Error(), "retry when PyPI is reachable or review manually before allowing")
 	}
 	version := miseCandidateVersion(finding)
-	release, releaseFound := pypiReleaseForVersion(metadata.Releases, version)
+	release, releaseFound := registryaudit.PyPIReleaseForVersion(metadata.Releases, version)
 	finding.Kind = "pipx"
-	finding.RepositoryURL = pypiRepositoryURL(metadata.Info.ProjectURLs)
+	finding.RepositoryURL = registryaudit.PyPIRepositoryURL(metadata.Info.ProjectURLs)
 	finding.URL = "https://pypi.org/project/" + pkg
 	finding.Evidence = appendEvidence(finding.Evidence, "PyPI metadata")
 	switch {
@@ -386,18 +372,15 @@ func applyMiseReleaseAgeFromTime(finding safetyFinding, rawTime string, minAge t
 		finding.Evidence = appendEvidence(finding.Evidence, evidence)
 		return miseReviewFinding(finding, "candidate release date unavailable before mise update: "+err.Error(), "retry when provider metadata includes a release date or review manually before allowing")
 	}
-	finding.ReleaseDate = releasedAt.Format(time.RFC3339)
+	finding = securitygate.AnnotateReleaseDate(finding, releasedAt, evidence)
 	finding.PublishedDate = finding.ReleaseDate
-	finding.Evidence = appendEvidence(finding.Evidence, evidence)
 	if minAge <= 0 {
 		return allowMiseFinding(finding, "mise candidate accepted because release-age gate is disabled", "")
 	}
-	age := time.Since(releasedAt)
-	finding.ReleaseAgeDays = int(age.Hours() / 24)
-	finding.MinReleaseAgeDays = int(minAge.Hours() / 24)
+	finding, age := securitygate.AnnotateReleaseAge(finding, releasedAt, minAge, "")
 	if age < minAge {
 		finding.Decision = "hold"
-		finding.Reason = fmt.Sprintf("mise candidate release is too new: age %d days, minimum %d days", finding.ReleaseAgeDays, finding.MinReleaseAgeDays)
+		setSafetyFindingReason(&finding, securityreason.MiseReleaseTooNewReason(finding.ReleaseAgeDays, finding.MinReleaseAgeDays))
 		finding.Remediation = "wait until the release reaches the minimum age or allow temporarily by policy after review"
 		finding.Confidence = "medium"
 		return finding
@@ -407,7 +390,7 @@ func applyMiseReleaseAgeFromTime(finding safetyFinding, rawTime string, minAge t
 
 func allowMiseFinding(finding safetyFinding, reason string, evidence string) safetyFinding {
 	finding.Decision = "allow"
-	finding.Reason = reason
+	setSafetyFindingReasonText(&finding, reason)
 	finding.Remediation = ""
 	if finding.Confidence == "" || finding.Confidence == "low" {
 		finding.Confidence = "medium"
@@ -420,7 +403,7 @@ func allowMiseFinding(finding safetyFinding, reason string, evidence string) saf
 
 func miseReviewFinding(finding safetyFinding, reason string, remediation string) safetyFinding {
 	finding.Decision = "review"
-	finding.Reason = reason
+	setSafetyFindingReasonText(&finding, reason)
 	finding.Remediation = remediation
 	if finding.Confidence == "" {
 		finding.Confidence = "low"
@@ -436,7 +419,7 @@ func miseGitHubRepository(name string) (string, bool) {
 	repo := strings.TrimSpace(strings.TrimPrefix(name, "github:"))
 	repo = strings.TrimSuffix(repo, ".git")
 	parts := strings.Split(repo, "/")
-	if len(parts) != 2 || !validGitHubPathPart(parts[0]) || !validGitHubPathPart(parts[1]) {
+	if len(parts) != 2 || !githubrepo.ValidPathPart(parts[0]) || !githubrepo.ValidPathPart(parts[1]) {
 		return "", false
 	}
 	return parts[0] + "/" + parts[1], true
@@ -481,15 +464,6 @@ func minMiseReleaseAge() time.Duration {
 }
 
 func minMiseReleaseAgeWithConfig(config updevConfig) time.Duration {
-	days := 3
-	if config.Security.Mise.MinReleaseAgeDays != nil && *config.Security.Mise.MinReleaseAgeDays >= 0 {
-		days = *config.Security.Mise.MinReleaseAgeDays
-	}
-	if value := strings.TrimSpace(os.Getenv("UPDEV_MISE_MIN_RELEASE_AGE_DAYS")); value != "" {
-		parsed, err := strconv.Atoi(value)
-		if err == nil && parsed >= 0 {
-			days = parsed
-		}
-	}
+	days := configuredNonNegativeInt(3, config.Security.Mise.MinReleaseAgeDays, "UPDEV_MISE_MIN_RELEASE_AGE_DAYS")
 	return time.Duration(days) * 24 * time.Hour
 }

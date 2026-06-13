@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 
@@ -57,6 +58,71 @@ func TestFilteredSectionsSearchesSectionAndRowFields(t *testing.T) {
 	}
 }
 
+func TestTakeActionClearsOnlyAction(t *testing.T) {
+	state := State{Selected: 2, Offset: 1, Query: "git", Expanded: map[int]bool{2: true}, Action: "open"}
+	action := TakeAction(&state)
+	if action != "open" {
+		t.Fatalf("expected action to be returned, got %q", action)
+	}
+	if state.Action != "" {
+		t.Fatalf("expected action to be cleared, got %q", state.Action)
+	}
+	if state.Selected != 2 || state.Offset != 1 || state.Query != "git" || !state.Expanded[2] {
+		t.Fatalf("expected navigation state to be preserved, got %#v", state)
+	}
+	if action := TakeAction(nil); action != "" {
+		t.Fatalf("expected nil state to return empty action, got %q", action)
+	}
+}
+
+func TestMergeActionsDeduplicatesByValue(t *testing.T) {
+	left := []Action{{Value: "backend", Label: "backend"}, {Value: "", Label: "empty"}}
+	right := []Action{{Value: "backend", Label: "duplicate"}, {Value: "security", Label: "security"}}
+
+	got := MergeActions(left, right)
+	if len(got) != 3 {
+		t.Fatalf("expected 3 actions including existing empty value, got %#v", got)
+	}
+	if got[0].Label != "backend" || got[1].Label != "empty" || got[2].Value != "security" {
+		t.Fatalf("unexpected merged actions: %#v", got)
+	}
+}
+
+func TestRememberStateIgnoresMissingCacheOrKey(t *testing.T) {
+	state := State{Selected: 1, Action: "stale"}
+	RememberState(nil, "inventory", state)
+
+	states := map[string]State{}
+	RememberState(states, "", state)
+	if len(states) != 0 {
+		t.Fatalf("expected empty key to be ignored, got %#v", states)
+	}
+
+	RememberState(states, "inventory", state)
+	if got := states["inventory"]; got.Selected != 1 || got.Action != "stale" {
+		t.Fatalf("expected state to be remembered, got %#v", got)
+	}
+}
+
+func TestTakeActionAndRememberClearsCachedAction(t *testing.T) {
+	state := State{Selected: 2, Offset: 1, Query: "git", Expanded: map[int]bool{2: true}, Action: "open"}
+	states := map[string]State{}
+	action := TakeActionAndRemember(states, "inventory", &state)
+	if action != "open" {
+		t.Fatalf("expected action to be returned, got %q", action)
+	}
+	if state.Action != "" {
+		t.Fatalf("expected source action to be cleared, got %q", state.Action)
+	}
+	got := states["inventory"]
+	if got.Action != "" || got.Selected != 2 || got.Offset != 1 || got.Query != "git" || !got.Expanded[2] {
+		t.Fatalf("expected cached navigation state without stale action, got %#v", got)
+	}
+	if action := TakeActionAndRemember(states, "nil", nil); action != "" {
+		t.Fatalf("expected nil state to return empty action, got %q", action)
+	}
+}
+
 func TestExpandedLinesUseLabelsAndFallback(t *testing.T) {
 	lines := ExpandedLines(Row{}, Labels{NoExtraDetail: "none"})
 	if len(lines) != 1 || lines[0] != "none" {
@@ -101,6 +167,103 @@ func TestExpandedLinesExposeRowActions(t *testing.T) {
 	for _, want := range []string{"actions", "action 1 [press a or 1]: open backend review", "inspect provider ownership"} {
 		if !strings.Contains(joined, want) {
 			t.Fatalf("expected expanded action line %q in %#v", want, lines)
+		}
+	}
+}
+
+func TestDetailRowsToSectionsGroupsAndPreservesDetails(t *testing.T) {
+	sections := DetailRowsToSections([]DetailRow{{
+		Title:   "git",
+		Status:  "drift",
+		Summary: "backend candidate",
+		Detail:  "repository: https://github.com/git/git",
+		Metadata: []string{
+			"reason: Homebrew formula upstream is a GitHub repository",
+		},
+		Actions: []DetailAction{{
+			Value:       "backend\tgit",
+			Label:       "backend 整理を開く",
+			Description: "review provider ownership",
+		}},
+	}}, func(row DetailRow) (string, string) {
+		return "backend/" + row.Status, "backend / " + row.Status
+	})
+	if len(sections) != 1 || sections[0].Name != "backend/drift" || sections[0].Title != "backend / drift" {
+		t.Fatalf("expected grouped backend section, got %#v", sections)
+	}
+	if len(sections[0].Rows) != 1 {
+		t.Fatalf("expected one row, got %#v", sections)
+	}
+	row := sections[0].Rows[0]
+	if row.Name != "git" || row.State != "drift" {
+		t.Fatalf("expected converted row identity, got %#v", row)
+	}
+	for _, want := range []string{
+		"summary: backend candidate",
+		"repository: https://github.com/git/git",
+		"reason: Homebrew formula upstream is a GitHub repository",
+	} {
+		if !strings.Contains(row.Detail, want) {
+			t.Fatalf("expected detail to contain %q:\n%s", want, row.Detail)
+		}
+	}
+	if len(row.Actions) != 1 || row.Actions[0].Value != "backend\tgit" || row.Actions[0].Label != "backend 整理を開く" {
+		t.Fatalf("expected converted action, got %#v", row.Actions)
+	}
+}
+
+func TestConfirmModelUsesInjectedActionsAndLabels(t *testing.T) {
+	model := NewConfirmModel("confirm", "Apply?", "details", ConfirmActions{
+		Apply: "write",
+		Back:  "return",
+		Exit:  "quit",
+	}, ConfirmLabels{
+		Controls: "custom controls",
+		Warning:  "custom warning",
+	}, false)
+	updated, _ := model.Update(tea.KeyPressMsg(tea.Key{Text: "a", Code: 'a'}))
+	model = updated.(ConfirmModel)
+	if model.Action != "write" {
+		t.Fatalf("expected injected apply action, got %#v", model)
+	}
+	view := model.View().Content
+	for _, want := range []string{"custom controls", "Apply?", "details", "custom warning"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("expected confirm view to contain %q:\n%s", want, view)
+		}
+	}
+}
+
+func TestTextInputModelEditsAndUsesInjectedActions(t *testing.T) {
+	model := NewTextInputModel("query", "description", "placeholder", "", TextInputActions{
+		Submit: "search",
+		Back:   "return",
+		Exit:   "quit",
+	}, TextInputLabels{
+		Controls: "custom input controls",
+		Input:    "filter:",
+	}, false)
+	updated, _ := model.Update(tea.KeyPressMsg(tea.Key{Text: "g", Code: 'g'}))
+	model = updated.(TextInputModel)
+	updated, _ = model.Update(tea.KeyPressMsg(tea.Key{Text: "o", Code: 'o'}))
+	model = updated.(TextInputModel)
+	if model.Value != "go" {
+		t.Fatalf("expected typed value, got %#v", model)
+	}
+	updated, _ = model.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyBackspace}))
+	model = updated.(TextInputModel)
+	if model.Value != "g" || model.Action != "" {
+		t.Fatalf("expected backspace to edit without leaving, got %#v", model)
+	}
+	updated, _ = model.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyEnter}))
+	model = updated.(TextInputModel)
+	if model.Action != "search" {
+		t.Fatalf("expected injected submit action, got %#v", model)
+	}
+	view := model.View().Content
+	for _, want := range []string{"custom input controls", "description", "filter:", "g"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("expected text input view to contain %q:\n%s", want, view)
 		}
 	}
 }
@@ -391,6 +554,44 @@ func TestExpandedLinesUseRequestedWidth(t *testing.T) {
 	for _, line := range narrow {
 		if textui.DisplayWidth(line) > narrowWidth {
 			t.Fatalf("expected narrow line width <= %d, got %d for %q in %#v", narrowWidth, textui.DisplayWidth(line), line, narrow)
+		}
+	}
+}
+
+func TestWriteFlowHelpersBuildStableStateAndDescription(t *testing.T) {
+	action := "security\tallow\tbrew\tcask\tdemo"
+	if !IsWriteStateKey(WriteReasonStateKey(action)) || !IsWriteReasonStateKey(WriteReasonStateKey(action)) {
+		t.Fatalf("expected reason state key to be recognized")
+	}
+	if !IsWriteStateKey(WriteExpiryStateKey(action)) || !IsWriteExpiryStateKey(WriteExpiryStateKey(action)) {
+		t.Fatalf("expected expiry state key to be recognized")
+	}
+	if !IsWriteStateKey(WriteConfirmStateKey(action)) || IsWriteReasonStateKey(WriteConfirmStateKey(action)) || IsWriteExpiryStateKey(WriteConfirmStateKey(action)) {
+		t.Fatalf("expected confirm state key to be write-only")
+	}
+	now := time.Date(2026, 6, 13, 0, 0, 0, 0, time.UTC)
+	if got := DefaultWriteExpiry("", now); got != "2026-06-20" {
+		t.Fatalf("expected seven-day default expiry, got %q", got)
+	}
+	flow := NewWriteFlow(action, "", "dashboard", WriteActionSpec{DefaultReason: "default", DefaultExpires: "2026-06-20"})
+	if flow.Action != action || flow.ReturnAction != "dashboard" || flow.Reason != "default" || flow.Expires != "2026-06-20" {
+		t.Fatalf("unexpected write flow defaults: %#v", flow)
+	}
+	if !flow.AcceptReason(" reviewed vendor ") || flow.Reason != "reviewed vendor" {
+		t.Fatalf("expected trimmed non-empty reason, got %#v", flow)
+	}
+	if flow.AcceptReason(" ") {
+		t.Fatalf("expected blank reason to be rejected")
+	}
+	if !flow.AcceptExpiry("2026-06-21", now, func(value string, _ time.Time) (string, error) {
+		return strings.TrimSpace(value), nil
+	}) || flow.Expires != "2026-06-21" {
+		t.Fatalf("expected validated expiry, got %#v", flow)
+	}
+	description := flow.ConfirmDescription(WriteActionSpec{Description: "write local policy"}, "expires: ", "reason: ")
+	for _, want := range []string{"write local policy", "expires: 2026-06-21", "reason: reviewed vendor"} {
+		if !strings.Contains(description, want) {
+			t.Fatalf("expected description to contain %q, got %q", want, description)
 		}
 	}
 }

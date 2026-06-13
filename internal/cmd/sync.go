@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/webkaz-labs/updev/internal/inventoryannotate"
 	"github.com/webkaz-labs/updev/internal/plan"
 	"github.com/webkaz-labs/updev/internal/textui"
 )
@@ -106,7 +107,7 @@ func buildSyncReport(ctx context.Context, opts syncOptions) syncReport {
 		Inventory:     inventory,
 	}
 	if result.Cached && !result.CreatedAt.IsZero() {
-		report.CacheAge = friendlyAge(time.Since(result.CreatedAt))
+		report.CacheAge = textui.FriendlyAge(time.Since(result.CreatedAt))
 	}
 	return report
 }
@@ -172,7 +173,7 @@ func syncReasonForItemWithManual(item plan.Item, related map[string]plan.Item, m
 		if _, ok := related[syncEntryKey(item)]; ok {
 			return "provider-mismatch"
 		}
-		if itemHasProfileMismatch(item) {
+		if inventoryannotate.ItemHasProfileMismatch(item) {
 			return "profile-mismatch"
 		}
 		if syncItemIsManualCask(item, manualIndex) {

@@ -25,13 +25,13 @@ type miseManifestFixOptions struct {
 }
 
 type miseManifestFixReport struct {
-	SchemaVersion         int                           `json:"schema_version"`
-	Status                plan.Status                   `json:"status"`
-	Root                  string                        `json:"root"`
-	DryRun                bool                          `json:"dry_run"`
-	MiseMinimumReleaseAge miseMinimumReleaseAgeEvidence `json:"mise_minimum_release_age"`
-	Actions               []miseManifestFixAction       `json:"actions"`
-	Error                 string                        `json:"error,omitempty"`
+	SchemaVersion         int                            `json:"schema_version"`
+	Status                plan.Status                    `json:"status"`
+	Root                  string                         `json:"root"`
+	DryRun                bool                           `json:"dry_run"`
+	MiseMinimumReleaseAge mise.MinimumReleaseAgeEvidence `json:"mise_minimum_release_age"`
+	Actions               []miseManifestFixAction        `json:"actions"`
+	Error                 string                         `json:"error,omitempty"`
 }
 
 type miseManifestFixAction struct {
@@ -116,7 +116,7 @@ func buildMiseManifestFixReport(ctx context.Context, opts miseManifestFixOptions
 		DryRun:        !opts.apply,
 		Actions:       []miseManifestFixAction{},
 	}
-	report.MiseMinimumReleaseAge = detectMiseMinimumReleaseAge(ctx, commandRunner, opts.root)
+	report.MiseMinimumReleaseAge = mise.DetectMinimumReleaseAge(ctx, commandRunner, opts.root)
 	issues, err := mise.ManifestIssues(opts.root)
 	if err != nil {
 		report.Status = plan.StatusError
@@ -137,10 +137,10 @@ func buildMiseManifestFixReport(ctx context.Context, opts miseManifestFixOptions
 			Line:                  issue.Line,
 			Current:               issue.Version,
 			Command:               []string{"mise", "latest", issue.Tool},
-			AgePolicyActive:       boolValue(report.MiseMinimumReleaseAge.Active),
+			AgePolicyActive:       mise.BoolValue(report.MiseMinimumReleaseAge.Active),
 			AgePolicyValue:        report.MiseMinimumReleaseAge.Value,
 			AgePolicySource:       report.MiseMinimumReleaseAge.Source,
-			CommandShapeSupported: boolValue(report.MiseMinimumReleaseAge.CommandShapeSupported),
+			CommandShapeSupported: mise.BoolValue(report.MiseMinimumReleaseAge.CommandShapeSupported),
 			Status:                plan.StatusUnavailable,
 		}
 		resolved, reason := resolveMiseLatestVersion(ctx, commandRunner, issue.Tool)
@@ -372,7 +372,7 @@ func printMiseManifestFixText(w io.Writer, report miseManifestFixReport, color b
 	}, rows, color)
 }
 
-func miseMinimumReleaseAgeText(evidence miseMinimumReleaseAgeEvidence) string {
+func miseMinimumReleaseAgeText(evidence mise.MinimumReleaseAgeEvidence) string {
 	shape := "latest flag support unknown"
 	if evidence.CommandShapeSupported != nil && *evidence.CommandShapeSupported {
 		shape = "latest flag supported"

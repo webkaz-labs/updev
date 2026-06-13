@@ -31,7 +31,7 @@ history in git log, and keep the current/next release target in
 - Documentation source-of-truth guidance, canonical `docs/agent/` usage/skill
   files, tag-specific release notes, and focused `docs-check` drift coverage are
   implemented.
-- `updev v0.6.1` is the current preview contract: it keeps the `v0.6.0`
+- `updev v0.6.2` is the current preview contract: it keeps the `v0.6.0`
   mise/Homebrew provider gate scope, then adds the first scalability refactor
   slice, Homebrew trust detail actions, and public export drift checks.
 - `updev brewfile ...` and `brewfile` remain compatibility or low-level
@@ -39,22 +39,24 @@ history in git log, and keep the current/next release target in
 
 ## Near-Term Order
 
-1. Release and dogfood `updev v0.6.1`; keep macOS/Homebrew/mise as the supported
+1. Release and dogfood `updev v0.6.2`; keep macOS/Homebrew/mise as the supported
    preview path while Linux/Windows binaries stay experimental.
-2. Start the scalability refactor track in
+2. Continue the scalability refactor track in
    [ARCHITECTURE.md](ARCHITECTURE.md#scalability-audit-and-refactor-plan)
-   before adding broad provider surfaces: package extraction, curated backend
-   seed migration, direct subprocess policy enforcement, common
-   `internal/securitygate` report model, continued `internal/updevpath`
-   adoption for provider/platform paths, and test file splits.
+   before adding broad provider surfaces. The first `v0.6.2` slice moved
+   backend recommendations, common path/cache/gate helpers, inventory
+   annotations, manual inventory internals, update/security reasons, provider
+   command plans, TTY helpers, and compact text helpers out of command-local
+   code. Future slices should keep shrinking command handlers only where the
+   target package can own the full domain behavior without importing TUI/report
+   types.
 3. Add `updev skill` / `updev help agent` only if the canonical `docs/agent/`
    files can be embedded without duplicating command reference in code.
 4. Add Linux read-only manual inventory evidence after cross-platform fixtures
    exist. Stable support should remain macOS/Homebrew/mise until real
    Linux/Windows dogfood exists.
-5. Decide whether provider contract drift checks should only report/fail
-   locally and in CI, or also open/update GitHub issues automatically when the
-   public repository has credentials and an explicit opt-in.
+5. Add explicit opt-in public-repository issue automation for provider contract
+   drift after credentials and repository ownership boundaries are documented.
 6. Continue hardening portable structured manual inventory sources and optional
    agent-assisted enrichment: agent output is structured draft metadata, not
    desired state, until the user accepts or edits it from CLI/TUI review.
@@ -72,11 +74,9 @@ history in git log, and keep the current/next release target in
 12. Continue scanner hardening after OSV-Scanner, gitleaks, zizmor, Trivy, and
    Grype. Keep Syft and Prowler explicit future commands, not default package
    update gates.
-13. Add provider contract drift checks for local and CI runs. These checks
-   should sample supported provider command shapes, detect upstream CLI/API or
-   security-feed schema changes, mark affected provider versions unsupported
-   when compatibility is unknown, and open/update documentation and GitHub
-   issues for agent follow-up.
+13. Extend provider contract drift checks beyond local/CI reporting only when
+   issue automation has explicit public-repository credentials and opt-in
+   posting policy.
 14. Add pending-update gates for VS Code and future providers as their update
    flows move into Go, using the same updev-owned gate vocabulary.
 15. Add policy ergonomics: guided add/edit/list helpers, diagnostic indexes, and

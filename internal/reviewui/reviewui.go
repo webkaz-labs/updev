@@ -60,12 +60,59 @@ type Action struct {
 	BadgeStatus string
 }
 
+func MergeActions(left []Action, right []Action) []Action {
+	if len(left) == 0 {
+		return right
+	}
+	if len(right) == 0 {
+		return left
+	}
+	out := append([]Action{}, left...)
+	seen := map[string]bool{}
+	for _, action := range out {
+		seen[action.Value] = true
+	}
+	for _, action := range right {
+		if strings.TrimSpace(action.Value) == "" || seen[action.Value] {
+			continue
+		}
+		seen[action.Value] = true
+		out = append(out, action)
+	}
+	return out
+}
+
 type State struct {
 	Selected int
 	Offset   int
 	Query    string
 	Expanded map[int]bool
 	Action   string
+}
+
+func TakeAction(state *State) string {
+	if state == nil {
+		return ""
+	}
+	action := state.Action
+	state.Action = ""
+	return action
+}
+
+func RememberState(states map[string]State, key string, state State) {
+	if states == nil || key == "" {
+		return
+	}
+	states[key] = state
+}
+
+func TakeActionAndRemember(states map[string]State, key string, state *State) string {
+	if state == nil {
+		return ""
+	}
+	action := TakeAction(state)
+	RememberState(states, key, *state)
+	return action
 }
 
 type Labels struct {

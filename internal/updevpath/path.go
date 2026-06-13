@@ -38,6 +38,16 @@ func CacheHome() string {
 	return ""
 }
 
+func DataHome() string {
+	if value := strings.TrimSpace(os.Getenv("XDG_DATA_HOME")); value != "" {
+		return value
+	}
+	if home := HomeDir(); home != "" {
+		return filepath.Join(home, ".local", "share")
+	}
+	return ""
+}
+
 func ConfigFile() string {
 	if value := strings.TrimSpace(os.Getenv("UPDEV_CONFIG")); value != "" {
 		return value
@@ -72,6 +82,37 @@ func CacheDir() string {
 	return ""
 }
 
+func ReportCacheDir() string {
+	return CacheSubdir("reports")
+}
+
+func SecurityMetadataCacheFile(kind string, key string) string {
+	if strings.TrimSpace(kind) == "" || strings.TrimSpace(key) == "" {
+		return ""
+	}
+	return CacheFile("security-metadata-v1", kind, key+".json")
+}
+
+func CacheSubdir(parts ...string) string {
+	dir := CacheDir()
+	if dir == "" {
+		return ""
+	}
+	cleaned := cleanPathParts(parts...)
+	if len(cleaned) == 0 {
+		return dir
+	}
+	return filepath.Join(append([]string{dir}, cleaned...)...)
+}
+
+func CacheFile(parts ...string) string {
+	cleaned := cleanPathParts(parts...)
+	if len(cleaned) == 0 {
+		return ""
+	}
+	return CacheSubdir(cleaned...)
+}
+
 func InventoryCacheFile(root string, configuredStateDir *string) string {
 	if configuredStateDir != nil {
 		if path := Resolve(root, *configuredStateDir); path != "" {
@@ -82,6 +123,20 @@ func InventoryCacheFile(root string, configuredStateDir *string) string {
 		return filepath.Join(dir, "inventory-v1.json")
 	}
 	return ""
+}
+
+func HomeOrRootBrewfile(root string) string {
+	if home := HomeDir(); home != "" {
+		path := filepath.Join(home, "Brewfile")
+		if _, err := os.Stat(path); err == nil {
+			return path
+		}
+	}
+	return RootBrewfileTemplate(root)
+}
+
+func RootBrewfileTemplate(root string) string {
+	return filepath.Join(root, "Brewfile.tmpl")
 }
 
 func DefaultRoot(configured string) string {
@@ -137,4 +192,16 @@ func ResolveConfigRelative(path string, configFile string) string {
 		return filepath.Clean(path)
 	}
 	return filepath.Join(filepath.Dir(configFile), path)
+}
+
+func cleanPathParts(parts ...string) []string {
+	cleaned := make([]string, 0, len(parts))
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			return nil
+		}
+		cleaned = append(cleaned, part)
+	}
+	return cleaned
 }

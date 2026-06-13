@@ -6,11 +6,11 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"strconv"
 	"strings"
 	"time"
 
 	"github.com/webkaz-labs/updev/internal/brew"
+	"github.com/webkaz-labs/updev/internal/inventoryannotate"
 	"github.com/webkaz-labs/updev/internal/mise"
 	"github.com/webkaz-labs/updev/internal/plan"
 	"github.com/webkaz-labs/updev/internal/provider"
@@ -50,8 +50,8 @@ func collectInventoryWithOptions(ctx context.Context, root string, local runner.
 		mise.Provider{Root: root, Runner: local, UseNativeDesired: shouldUseNativeMiseDesired(root)},
 	})
 	report.Root = root
-	annotateProfileScopedExtras(&report, root)
-	annotateMiseManifestIssues(&report, root)
+	inventoryannotate.AnnotateProfileScopedExtras(&report, root)
+	inventoryannotate.AnnotateMiseManifestIssues(&report, root)
 	sortReport(&report)
 	return report
 }
@@ -84,7 +84,7 @@ func collectInventoryCached(ctx context.Context, root string, refresh bool, maxA
 func collectInventoryCachedWithOptions(ctx context.Context, root string, refresh bool, maxAge time.Duration, opts inventoryOptions) inventoryResult {
 	if !refresh {
 		if entry, ok := loadInventoryCache(root, maxAge, opts); ok {
-			annotateMiseManifestIssues(&entry.Report, root)
+			inventoryannotate.AnnotateMiseManifestIssues(&entry.Report, root)
 			sortReport(&entry.Report)
 			return inventoryResult{Report: entry.Report, Cached: true, CreatedAt: entry.CreatedAt}
 		}
@@ -138,41 +138,6 @@ func inventoryCachePath(root string) string {
 
 func resolveUpdevConfigPath(root string, path string) string {
 	return updevpath.Resolve(root, path)
-}
-
-func annotateMiseManifestIssues(report *plan.Report, root string) {
-	items := report.Items[:0]
-	for _, item := range report.Items {
-		if item.Provider == "mise" && item.Kind == "manifest" {
-			continue
-		}
-		items = append(items, item)
-	}
-	report.Items = items
-	issues, err := mise.ManifestIssues(root)
-	if err != nil || len(issues) == 0 {
-		return
-	}
-	for _, issue := range issues {
-		report.Items = append(report.Items, plan.Item{
-			Provider: "mise",
-			Kind:     "manifest",
-			Name:     issue.Tool,
-			Category: issue.Backend,
-			Version:  issue.Version,
-			Desired:  true,
-			Live:     true,
-			Status:   plan.StatusBlocked,
-			Detail:   miseManifestIssueDetail(issue),
-		})
-	}
-	if report.Status != plan.StatusError {
-		report.Status = plan.StatusDrift
-	}
-}
-
-func miseManifestIssueDetail(issue mise.ManifestIssue) string {
-	return issue.Path + ":" + strconv.Itoa(issue.Line) + ": " + issue.Reason
 }
 
 func sortReport(report *plan.Report) {

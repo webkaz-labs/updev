@@ -61,3 +61,31 @@ func TestLoadCacheRejectsStaleEntry(t *testing.T) {
 		t.Fatal("expected stale cache to be rejected")
 	}
 }
+
+func TestSaveAndLoadMetadataCache(t *testing.T) {
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	key := CacheKey("npm", "package")
+	type metadata struct {
+		Version string `json:"version"`
+	}
+	SaveMetadataCache("npm", key, metadata{Version: "1.2.3"})
+
+	var got metadata
+	if ok := LoadMetadataCache("npm", key, RegistryMetadataCacheMaxAge, &got); !ok {
+		t.Fatal("expected metadata cache entry")
+	}
+	if got.Version != "1.2.3" {
+		t.Fatalf("unexpected metadata cache payload: %#v", got)
+	}
+}
+
+func TestLoadMetadataCacheRejectsKindMismatch(t *testing.T) {
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	key := CacheKey("registry")
+	SaveMetadataCache("npm", key, map[string]string{"version": "1.2.3"})
+
+	var got map[string]string
+	if ok := LoadMetadataCache("pypi", key, RegistryMetadataCacheMaxAge, &got); ok {
+		t.Fatalf("expected kind mismatch to be rejected, got %#v", got)
+	}
+}

@@ -52,6 +52,7 @@ require_grep 'run: go build \./\.\.\.' ".github/workflows/ci.yml"
 require_grep 'depends = \["test", "vet", "mod-verify", "build"\]' "mise.toml"
 
 "$root/scripts/check-direct-subprocesses.sh" || failures=$((failures + 1))
+"$root/scripts/check-source-structure.sh" || failures=$((failures + 1))
 
 while IFS=$'\t' read -r md_rel link; do
   target="${link%%#*}"

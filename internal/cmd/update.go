@@ -12,14 +12,18 @@ import (
 	"strings"
 	"sync"
 	"time"
-	"unicode"
 
 	"github.com/webkaz-labs/updev/internal/brewfile"
 	"github.com/webkaz-labs/updev/internal/i18n"
+	"github.com/webkaz-labs/updev/internal/inventoryannotate"
 	"github.com/webkaz-labs/updev/internal/mise"
 	"github.com/webkaz-labs/updev/internal/plan"
 	"github.com/webkaz-labs/updev/internal/runner"
+	"github.com/webkaz-labs/updev/internal/securityreason"
 	"github.com/webkaz-labs/updev/internal/textui"
+	"github.com/webkaz-labs/updev/internal/updatelog"
+	"github.com/webkaz-labs/updev/internal/updatereason"
+	"github.com/webkaz-labs/updev/internal/updevpath"
 )
 
 type updateOptions struct {
@@ -36,15 +40,69 @@ type updateOptions struct {
 }
 
 type updateStep struct {
-	Name         string      `json:"name"`
-	Command      []string    `json:"command"`
-	Status       plan.Status `json:"status"`
-	Stdout       string      `json:"stdout,omitempty"`
-	Stderr       string      `json:"stderr,omitempty"`
-	Reason       string      `json:"reason,omitempty"`
-	Skipped      bool        `json:"skipped,omitempty"`
-	Updated      []string    `json:"updated,omitempty"`
-	SkippedItems []string    `json:"skipped_items,omitempty"`
+	Name         string            `json:"name"`
+	Command      []string          `json:"command"`
+	Commands     []updateCommand   `json:"commands,omitempty"`
+	Status       plan.Status       `json:"status"`
+	Stdout       string            `json:"stdout,omitempty"`
+	Stderr       string            `json:"stderr,omitempty"`
+	Reason       string            `json:"reason,omitempty"`
+	ReasonCode   string            `json:"reason_code,omitempty"`
+	ReasonArgs   map[string]string `json:"reason_args,omitempty"`
+	Skipped      bool              `json:"skipped,omitempty"`
+	Updated      []string          `json:"updated,omitempty"`
+	SkippedItems []string          `json:"skipped_items,omitempty"`
+}
+
+type updateCommand struct {
+	Command []string `json:"command"`
+}
+
+func setUpdateStepReason(step *updateStep, reason updatereason.Reason) {
+	if step == nil {
+		return
+	}
+	step.Reason = reason.Text
+	step.ReasonCode = reason.Code
+	step.ReasonArgs = reason.Args
+}
+
+func setUpdateStepReasonText(step *updateStep, reason string) {
+	setUpdateStepReason(step, updatereason.Infer(reason))
+}
+
+func localizedUpdateStepReasonForStep(step updateStep) string {
+	reason := updatereason.Reason{
+		Code: step.ReasonCode,
+		Text: step.Reason,
+		Args: step.ReasonArgs,
+	}
+	if reason.Code == "" {
+		reason = updatereason.Infer(step.Reason)
+	}
+	if defaultLanguage() == "ja" {
+		switch reason.Code {
+		case updatereason.MiseBumpCandidateChangedApply, updatereason.MiseBumpCandidateChangedPreview:
+			reason.Args = cloneStringMap(reason.Args)
+			reason.Args["detail"] = localizedMiseBumpCandidateChange(reason.Args["detail"])
+		}
+		localized := updatereason.LocalizeJapanese(reason)
+		if localized != "" {
+			return localized
+		}
+	}
+	return reason.Text
+}
+
+func cloneStringMap(values map[string]string) map[string]string {
+	if len(values) == 0 {
+		return map[string]string{}
+	}
+	out := make(map[string]string, len(values))
+	for key, value := range values {
+		out[key] = value
+	}
+	return out
 }
 
 type updateReport struct {
@@ -314,11 +372,20 @@ func updateSteps() []updateStep {
 	return []updateStep{
 		{
 			Name:    "brew",
-			Command: []string{"bash", "-lc", "brew update && brew upgrade --greedy && brew cleanup"},
+			Command: []string{"brew", "upgrade", "--greedy"},
+			Commands: []updateCommand{
+				{Command: brewMetadataUpdateCommand()},
+				{Command: []string{"brew", "upgrade", "--greedy"}},
+				{Command: []string{"brew", "cleanup"}},
+			},
 		},
 		{
 			Name:    "mise",
-			Command: []string{"zsh", "-c", "source ~/.zshenv && mise upgrade && mise prune"},
+			Command: []string{"mise", "upgrade"},
+			Commands: []updateCommand{
+				{Command: []string{"mise", "upgrade"}},
+				{Command: []string{"mise", "prune"}},
+			},
 		},
 	}
 }
@@ -373,7 +440,7 @@ func updateProviderStdoutWriterForTerminal(stdinTTY bool, stdoutTTY bool) io.Wri
 func runUpdateStepWithWriters(ctx context.Context, commandRunner commandRunner, step updateStep, dryRun bool, holdReason string, stdout io.Writer, stderr io.Writer) updateStep {
 	if holdReason != "" {
 		step.Status = plan.StatusHeld
-		step.Reason = holdReason
+		setUpdateStepReasonText(&step, holdReason)
 		step.Skipped = true
 		step.SkippedItems = append(step.SkippedItems, holdReason)
 		return step
@@ -385,29 +452,18 @@ func runUpdateStepWithWriters(ctx context.Context, commandRunner commandRunner, 
 		if len(preSkipped) > 0 {
 			step.Status = plan.StatusHeld
 			step.Skipped = true
-			step.Reason = firstNonEmpty(preReason, tr("strict safety would apply safe candidates and hold unsafe candidates", "strict safety は safe 候補だけを適用し unsafe 候補を hold します"))
+			if preReason == "" {
+				setUpdateStepReason(&step, updatereason.StrictDryRunPartialReason())
+			}
 		}
 		return step
 	}
-	result := runner.Result{}
-	if stdout != nil || stderr != nil {
-		if step.Name == "mise" {
-			result = runMiseCommand(ctx, commandRunner, stdout, stderr, step.Command[0], step.Command[1:]...)
-		} else if streamingRunner, ok := commandRunner.(streamingCommandRunner); ok {
-			result = streamingRunner.RunStreaming(ctx, stdout, stderr, step.Command[0], step.Command[1:]...)
-		} else {
-			result = commandRunner.Run(ctx, step.Command[0], step.Command[1:]...)
-		}
-	} else if step.Name == "mise" {
-		result = runMiseCommand(ctx, commandRunner, nil, nil, step.Command[0], step.Command[1:]...)
-	} else {
-		result = commandRunner.Run(ctx, step.Command[0], step.Command[1:]...)
-	}
+	result := runUpdateStepCommands(ctx, commandRunner, step, stdout, stderr)
 	step.Stdout = result.Stdout
 	step.Stderr = result.Stderr
-	updated, skipped := summarizeUpdateStepLog(step)
-	step.Updated = updated
-	step.SkippedItems = append(preSkipped, skipped...)
+	summary := updatelog.Summarize(step.Stdout, step.Stderr)
+	step.Updated = summary.Updated
+	step.SkippedItems = append(preSkipped, summary.Skipped...)
 	if result.Code != 0 || result.Err != nil {
 		step.Status = plan.StatusError
 		return step
@@ -415,11 +471,54 @@ func runUpdateStepWithWriters(ctx context.Context, commandRunner commandRunner, 
 	if len(preSkipped) > 0 {
 		step.Status = plan.StatusHeld
 		step.Skipped = len(step.Updated) == 0
-		step.Reason = firstNonEmpty(preReason, tr("strict safety applied safe candidates and held unsafe candidates", "strict safety は safe 候補を適用し unsafe 候補を hold しました"))
+		if preReason == "" {
+			setUpdateStepReason(&step, updatereason.StrictAppliedPartialReason())
+		}
 		return step
 	}
 	step.Status = plan.StatusOK
 	return step
+}
+
+func runUpdateStepCommands(ctx context.Context, commandRunner commandRunner, step updateStep, stdout io.Writer, stderr io.Writer) runner.Result {
+	commands := updateStepCommands(step)
+	var combined runner.Result
+	for _, command := range commands {
+		result := runUpdateStepCommand(ctx, commandRunner, step, command.Command, stdout, stderr)
+		combined.Stdout = strings.TrimSpace(strings.Join(nonEmptyStrings(combined.Stdout, result.Stdout), "\n"))
+		combined.Stderr = strings.TrimSpace(strings.Join(nonEmptyStrings(combined.Stderr, result.Stderr), "\n"))
+		if result.Code != 0 || result.Err != nil {
+			combined.Code = result.Code
+			combined.Err = result.Err
+			return combined
+		}
+	}
+	return combined
+}
+
+func updateStepCommands(step updateStep) []updateCommand {
+	if len(step.Commands) > 0 {
+		return step.Commands
+	}
+	if len(step.Command) == 0 {
+		return nil
+	}
+	return []updateCommand{{Command: step.Command}}
+}
+
+func runUpdateStepCommand(ctx context.Context, commandRunner commandRunner, step updateStep, command []string, stdout io.Writer, stderr io.Writer) runner.Result {
+	if len(command) == 0 {
+		return runner.Result{}
+	}
+	if step.Name == "mise" {
+		return runMiseCommand(ctx, commandRunner, stdout, stderr, command[0], command[1:]...)
+	}
+	if stdout != nil || stderr != nil {
+		if streamingRunner, ok := commandRunner.(streamingCommandRunner); ok {
+			return streamingRunner.RunStreaming(ctx, stdout, stderr, command[0], command[1:]...)
+		}
+	}
+	return commandRunner.Run(ctx, command[0], command[1:]...)
 }
 
 func runStrictBrewRefreshIfNoCandidates(ctx context.Context, commandRunner commandRunner, step updateStep, opts updateOptions, policy securityPolicy, gates []safetyGate, stream bool) (updateStep, safetyGate, bool) {
@@ -432,25 +531,29 @@ func runStrictBrewRefreshIfNoCandidates(ctx context.Context, commandRunner comma
 	}
 	refreshStep := updateStep{
 		Name:    "brew",
-		Command: []string{"bash", "-lc", "brew update"},
-		Reason:  "strict safety refreshed Homebrew metadata before rechecking package candidates",
+		Command: brewMetadataUpdateCommand(),
+		Commands: []updateCommand{
+			{Command: brewMetadataUpdateCommand()},
+		},
 	}
+	setUpdateStepReason(&refreshStep, updatereason.StrictBrewRefreshDoneReason())
 	if stream {
 		fmt.Fprintf(updateProviderProgressWriter(), tr("running %s update...\n", "%s update を実行中...\n"), refreshStep.Name)
 	}
 	refreshStep = runUpdateStepWithOutput(ctx, commandRunner, refreshStep, false, "", stream)
 	if refreshStep.Status == plan.StatusError {
+		setUpdateStepReason(&refreshStep, updatereason.StrictBrewRefreshFailedReason(miseOutdatedResultDetail(runner.Result{Stdout: refreshStep.Stdout, Stderr: refreshStep.Stderr}, "brew update failed")))
 		return refreshStep, gate, true
 	}
 	refreshedGate := collectBrewUpdateSafetyFreshWithPolicy(ctx, commandRunner, opts.root, policy)
 	if refreshedGate.Status == plan.StatusError {
 		refreshStep.Status = plan.StatusError
-		refreshStep.Reason = "Homebrew safety gate failed after metadata refresh: " + refreshedGate.Error
+		setUpdateStepReason(&refreshStep, updatereason.StrictBrewRefreshFailedReason(refreshedGate.Error))
 		return refreshStep, refreshedGate, true
 	}
 	if len(refreshedGate.Findings) == 0 {
 		refreshStep.Status = plan.StatusOK
-		refreshStep.Reason = "strict safety refreshed Homebrew metadata; no package candidates found"
+		setUpdateStepReason(&refreshStep, updatereason.StrictBrewNoCandidatesReason())
 		return refreshStep, refreshedGate, true
 	}
 	scoped, holdReason := updateStepWithStrictSafety(updateSteps()[0], opts, []safetyGate{refreshedGate})
@@ -486,22 +589,25 @@ func updateStepWithStrictSafety(step updateStep, opts updateOptions, gates []saf
 		return step, ""
 	}
 	if gate.Status == plan.StatusError {
-		return step, "security=strict held update because safety gate failed: " + gate.Error
+		reason := updatereason.StrictGateFailedReason(gate.Error)
+		return step, reason.Text
 	}
 	safe, unsafe := splitUpdateSafetyFindings(gate.Findings)
 	if step.Name == "brew" && len(safe) == 0 && len(unsafe) == 0 {
-		step.Command = []string{"bash", "-lc", "brew update"}
-		step.Reason = "strict safety refreshes Homebrew metadata only before rechecking package candidates"
+		step.Command = brewMetadataUpdateCommand()
+		step.Commands = []updateCommand{{Command: brewMetadataUpdateCommand()}}
+		setUpdateStepReason(&step, updatereason.StrictBrewRefreshOnlyReason())
 		return step, ""
 	}
 	if len(safe) == 0 && gate.Status == plan.StatusHeld {
 		if step.Name == "brew" && len(unsafe) > 0 {
-			step.Command = []string{"bash", "-lc", "brew update"}
-			step.Reason = fmt.Sprintf("strict safety refreshed Homebrew metadata and held %d Homebrew candidates requiring review", len(unsafe))
+			step.Command = brewMetadataUpdateCommand()
+			step.Commands = []updateCommand{{Command: brewMetadataUpdateCommand()}}
+			setUpdateStepReason(&step, updatereason.StrictBrewHeldReason(len(unsafe)))
 			step.SkippedItems = updateSafetySkippedSummaries(unsafe)
 			return step, ""
 		}
-		return step, "security=strict held update because safety gate requires review"
+		return step, updatereason.StrictGateReviewReason().Text
 	}
 	if len(safe) == 0 {
 		return step, ""
@@ -510,24 +616,26 @@ func updateStepWithStrictSafety(step updateStep, opts updateOptions, gates []saf
 	case "mise":
 		command := scopedMiseUpgradeCommand(opts.root, safe)
 		if len(command) == 0 {
-			return step, "security=strict held mise update because no scoped safe candidates were found"
+			return step, updatereason.StrictMiseNoSafeReason().Text
 		}
 		step.Command = command
+		step.Commands = scopedMiseUpgradeCommands(opts.root, safe)
 		if len(unsafe) > 0 {
-			step.Reason = fmt.Sprintf("strict safety will apply %d safe mise candidates and hold %d unsafe candidates", len(safe), len(unsafe))
+			setUpdateStepReason(&step, updatereason.StrictMisePartialReason(len(safe), len(unsafe)))
 		}
 	case "brew":
 		command := scopedBrewUpgradeCommand(safe)
 		if len(command) == 0 {
-			return step, "security=strict held brew update because no scoped safe candidates were found"
+			return step, updatereason.StrictBrewNoSafeReason().Text
 		}
 		step.Command = command
+		step.Commands = scopedBrewUpgradeCommands(safe)
 		if len(unsafe) > 0 {
-			step.Reason = fmt.Sprintf("strict safety will apply %d safe Homebrew candidates and hold %d unsafe candidates; Homebrew cannot generally install an older intermediate release", len(safe), len(unsafe))
+			setUpdateStepReason(&step, updatereason.StrictBrewPartialReason(len(safe), len(unsafe)))
 		}
 	default:
 		if gate.Status == plan.StatusHeld {
-			return step, "security=strict held update because safety gate requires review"
+			return step, updatereason.StrictGateReviewReason().Text
 		}
 		return step, ""
 	}
@@ -562,6 +670,21 @@ func scopedMiseUpgradeCommand(root string, findings []safetyFinding) []string {
 	if len(tools) == 0 {
 		return nil
 	}
+	return scopedMiseUpgradeCommandForTools(root, tools)
+}
+
+func scopedMiseUpgradeCommands(root string, findings []safetyFinding) []updateCommand {
+	command := scopedMiseUpgradeCommand(root, findings)
+	if len(command) == 0 {
+		return nil
+	}
+	return []updateCommand{
+		{Command: command},
+		{Command: []string{"mise", "prune"}},
+	}
+}
+
+func scopedMiseUpgradeCommandForTools(root string, tools []string) []string {
 	miseCommand := []string{"mise", "upgrade", "--yes"}
 	if age := miseMinimumReleaseAgeFlagValue(); age != "" {
 		miseCommand = append(miseCommand, "--minimum-release-age", age)
@@ -570,7 +693,7 @@ func scopedMiseUpgradeCommand(root string, findings []safetyFinding) []string {
 		miseCommand = append(miseCommand, "--cd", root)
 	}
 	miseCommand = append(miseCommand, tools...)
-	return []string{"zsh", "-c", "source ~/.zshenv && " + joinCommand(miseCommand) + " && mise prune"}
+	return miseCommand
 }
 
 func miseGitHubTokenEnv() []string {
@@ -613,8 +736,23 @@ func scopedBrewUpgradeCommand(findings []safetyFinding) []string {
 	if len(names) == 0 {
 		return nil
 	}
-	upgrade := append([]string{"brew", "upgrade", "--greedy"}, names...)
-	return []string{"bash", "-lc", "HOMEBREW_NO_AUTO_UPDATE=1 " + joinCommand(upgrade) + " && HOMEBREW_NO_AUTO_UPDATE=1 brew cleanup && brew update"}
+	return append([]string{"env", "HOMEBREW_NO_AUTO_UPDATE=1", "brew", "upgrade", "--greedy"}, names...)
+}
+
+func scopedBrewUpgradeCommands(findings []safetyFinding) []updateCommand {
+	command := scopedBrewUpgradeCommand(findings)
+	if len(command) == 0 {
+		return nil
+	}
+	return []updateCommand{
+		{Command: command},
+		{Command: []string{"env", "HOMEBREW_NO_AUTO_UPDATE=1", "brew", "cleanup"}},
+		{Command: brewMetadataUpdateCommand()},
+	}
+}
+
+func brewMetadataUpdateCommand() []string {
+	return []string{"brew", "update"}
 }
 
 func updateSafetyFindingNames(findings []safetyFinding) []string {
@@ -688,25 +826,25 @@ func runMiseBumpUpdateStep(ctx context.Context, commandRunner commandRunner, opt
 	case "manual":
 		step.Status = plan.StatusDrift
 		step.Skipped = true
-		step.Reason = fmt.Sprintf("mise bump candidates available; mode=manual requires item review")
+		setUpdateStepReason(&step, updatereason.MiseBumpManualReason())
 		for _, finding := range safe {
 			step.SkippedItems = append(step.SkippedItems, miseBumpFindingSummary(finding))
 		}
 		if len(safe) == 0 && len(unsafe) > 0 {
 			step.Status = plan.StatusHeld
-			step.Reason = "mise bump candidates require review"
+			setUpdateStepReason(&step, updatereason.MiseBumpReviewReason())
 		}
 		return step, true
 	case "safe":
 		step.Status = plan.StatusDrift
 		step.Skipped = true
-		step.Reason = fmt.Sprintf("mise bump candidates available; %d safe candidates can be applied after confirmation", len(safe))
+		setUpdateStepReason(&step, updatereason.MiseBumpSafeManualReason(len(safe)))
 		for _, finding := range safe {
 			step.SkippedItems = append(step.SkippedItems, miseBumpFindingSummary(finding))
 		}
 		if len(safe) == 0 && len(unsafe) > 0 {
 			step.Status = plan.StatusHeld
-			step.Reason = "mise bump candidates require review"
+			setUpdateStepReason(&step, updatereason.MiseBumpReviewReason())
 		}
 		return step, true
 	case "auto":
@@ -716,28 +854,30 @@ func runMiseBumpUpdateStep(ctx context.Context, commandRunner commandRunner, opt
 	if len(safe) == 0 {
 		step.Status = plan.StatusHeld
 		step.Skipped = true
-		step.Reason = "mise bump candidates require review; no safe auto candidates"
+		setUpdateStepReason(&step, updatereason.MiseBumpReviewNoSafeAutoReason())
 		return step, true
 	}
 	if opts.dryRun {
 		step.Status = plan.StatusDrift
-		step.Reason = fmt.Sprintf("mise bump auto would apply %d safe candidates", len(safe))
+		setUpdateStepReason(&step, updatereason.MiseBumpAutoWouldApplyReason(len(safe)))
 		for _, finding := range safe {
 			step.Updated = append(step.Updated, "would bump "+miseBumpFindingSummary(finding))
 		}
 		if len(unsafe) > 0 {
 			step.Status = plan.StatusHeld
-			step.Reason = fmt.Sprintf("mise bump auto would apply %d safe candidates; %d candidates require review", len(safe), len(unsafe))
+			setUpdateStepReason(&step, updatereason.MiseBumpAutoWouldApplyWithReviewReason(len(safe), len(unsafe)))
 		}
 		return step, true
 	}
 	if err := validateMiseBumpPlannedCandidates(ctx, commandRunner, opts.root, safe); err != nil {
 		step.Status = plan.StatusHeld
 		step.Skipped = true
-		step.Reason = "mise bump candidate set changed before apply: " + err.Error()
+		setUpdateStepReason(&step, updatereason.MiseBumpCandidateChangedApplyReason(err.Error()))
 		return step, true
 	}
 	reviewCount := len(unsafe)
+	step.Command = miseBumpCommandForFindings(opts.root, true, false, safe)
+	step.Commands = append(step.Commands, updateCommand{Command: step.Command})
 	preflight := runMiseBumpCommand(ctx, commandRunner, opts.root, true, false, safe, nil, nil)
 	step.Stdout = preflight.Stdout
 	step.Stderr = preflight.Stderr
@@ -752,9 +892,10 @@ func runMiseBumpUpdateStep(ctx context.Context, commandRunner commandRunner, opt
 		if len(safe) == 0 {
 			step.Status = plan.StatusHeld
 			step.Skipped = true
-			step.Reason = "mise bump auto found only dependency-blocked candidates"
+			setUpdateStepReason(&step, updatereason.MiseBumpDependencyBlockedOnlyReason())
 			return step, true
 		}
+		step.Commands = append(step.Commands, updateCommand{Command: step.Command})
 		preflight = runMiseBumpCommand(ctx, commandRunner, opts.root, true, false, safe, nil, nil)
 		step.Stdout = strings.TrimSpace(strings.Join(nonEmptyStrings(step.Stdout, preflight.Stdout), "\n"))
 		step.Stderr = strings.TrimSpace(strings.Join(nonEmptyStrings(step.Stderr, preflight.Stderr), "\n"))
@@ -762,7 +903,7 @@ func runMiseBumpUpdateStep(ctx context.Context, commandRunner commandRunner, opt
 	if preflight.Code != 0 || preflight.Err != nil {
 		step.Status = plan.StatusHeld
 		step.Skipped = true
-		step.Reason = "mise bump dry-run preflight failed: " + miseOutdatedResultDetail(preflight, "preflight failed")
+		setUpdateStepReason(&step, updatereason.MiseBumpPreflightFailedReason(miseOutdatedResultDetail(preflight, "preflight failed")))
 		return step, true
 	}
 	var stdout io.Writer
@@ -776,17 +917,18 @@ func runMiseBumpUpdateStep(ctx context.Context, commandRunner commandRunner, opt
 	step.Stdout = strings.TrimSpace(strings.Join(nonEmptyStrings(preflight.Stdout, result.Stdout), "\n"))
 	step.Stderr = strings.TrimSpace(strings.Join(nonEmptyStrings(preflight.Stderr, result.Stderr), "\n"))
 	step.Command = miseBumpCommandForFindings(opts.root, false, true, safe)
+	step.Commands = append(step.Commands, updateCommand{Command: step.Command})
 	if result.Code != 0 || result.Err != nil {
-		updated, skipped := summarizeUpdateStepLog(updateStep{Stdout: result.Stdout, Stderr: result.Stderr})
-		step.Updated = appendUniqueUpdateSummaries(step.Updated, updated...)
-		step.SkippedItems = appendUniqueSkippedSummaries(step.SkippedItems, skipped...)
+		summary := updatelog.Summarize(result.Stdout, result.Stderr)
+		step.Updated = updatelog.AppendUniqueUpdated(step.Updated, summary.Updated...)
+		step.SkippedItems = updatelog.AppendUniqueSkipped(step.SkippedItems, summary.Skipped...)
 		step.Status = plan.StatusError
-		step.Reason = "mise bump failed: " + miseOutdatedResultDetail(result, "mise upgrade --bump failed")
+		setUpdateStepReason(&step, updatereason.MiseBumpFailedReason(miseOutdatedResultDetail(result, "mise upgrade --bump failed")))
 		return step, true
 	}
 	if reviewCount > 0 {
 		step.Status = plan.StatusHeld
-		step.Reason = fmt.Sprintf("mise bump applied %d safe candidates; %d candidates require review", len(safe), reviewCount)
+		setUpdateStepReason(&step, updatereason.MiseBumpAppliedWithReviewReason(len(safe), reviewCount))
 	} else {
 		step.Status = plan.StatusOK
 	}
@@ -820,6 +962,19 @@ func miseBumpCommandForFindings(root string, dryRun bool, yes bool, findings []s
 		return command
 	}
 	return append([]string{"env", "MISE_MINIMUM_RELEASE_AGE=0d"}, command...)
+}
+
+func miseBumpApplyCommands(root string, findings []safetyFinding) []updateCommand {
+	preflight := miseBumpCommandForFindings(root, true, false, findings)
+	apply := miseBumpCommandForFindings(root, false, true, findings)
+	commands := []updateCommand{}
+	if len(preflight) > 0 {
+		commands = append(commands, updateCommand{Command: preflight})
+	}
+	if len(apply) > 0 {
+		commands = append(commands, updateCommand{Command: apply})
+	}
+	return commands
 }
 
 func miseBumpNeedsReleaseAgeBypass(findings []safetyFinding) bool {
@@ -920,16 +1075,10 @@ func npmUserConfigCandidatePaths() []string {
 		add(configured)
 		return paths
 	}
-	if home := strings.TrimSpace(os.Getenv("HOME")); home != "" {
+	if home := updevpath.HomeDir(); home != "" {
 		add(filepath.Join(home, ".npmrc"))
 	}
-	xdgConfig := strings.TrimSpace(os.Getenv("XDG_CONFIG_HOME"))
-	if xdgConfig == "" {
-		if home := strings.TrimSpace(os.Getenv("HOME")); home != "" {
-			xdgConfig = filepath.Join(home, ".config")
-		}
-	}
-	if xdgConfig != "" {
+	if xdgConfig := updevpath.ConfigHome(); xdgConfig != "" {
 		add(filepath.Join(xdgConfig, "npm", "npmrc"))
 	}
 	return paths
@@ -1056,239 +1205,6 @@ func nonEmptyStrings(values ...string) []string {
 	return out
 }
 
-func summarizeUpdateStepLog(step updateStep) ([]string, []string) {
-	updated := []string{}
-	skipped := []string{}
-	for _, raw := range strings.Split(strings.Join([]string{step.Stdout, step.Stderr}, "\n"), "\n") {
-		line := normalizeUpdateLogLine(raw)
-		if line == "" {
-			continue
-		}
-		if updateLogLineIsProgress(line) {
-			continue
-		}
-		if updateLogLineIsSkipped(line) {
-			if updateLogLineIsGenericSkipped(line) {
-				continue
-			}
-			skipped = appendCappedUniqueSummary(skipped, normalizeSkippedSummaryItem(line))
-			continue
-		}
-		if updateLogLineIsUpdated(line) {
-			updated = appendCappedUniqueUpdateSummary(updated, line)
-		}
-	}
-	return updated, skipped
-}
-
-func normalizeUpdateLogLine(line string) string {
-	line = strings.TrimSpace(line)
-	line = strings.TrimPrefix(line, "==>")
-	line = strings.TrimSpace(line)
-	line = strings.TrimPrefix(line, "🍺")
-	line = strings.TrimSpace(line)
-	return line
-}
-
-func updateLogLineIsUpdated(line string) bool {
-	lower := strings.ToLower(line)
-	if strings.Contains(line, " -> ") {
-		return updateLogLineHasPackageVersionChange(line)
-	}
-	for _, prefix := range []string{"upgraded ", "installing ", "installed ", "updated ", "pruning ", "pruned "} {
-		if strings.HasPrefix(lower, prefix) {
-			return true
-		}
-	}
-	return false
-}
-
-func updateLogLineHasPackageVersionChange(line string) bool {
-	before, after, ok := strings.Cut(line, " -> ")
-	if !ok || strings.TrimSpace(after) == "" {
-		return false
-	}
-	fields := strings.Fields(before)
-	if len(fields) < 2 {
-		return false
-	}
-	return !updateLogTokenLooksVersion(fields[0])
-}
-
-func updateLogTokenLooksVersion(token string) bool {
-	var hasDigit, hasLetter bool
-	for _, r := range token {
-		if unicode.IsDigit(r) {
-			hasDigit = true
-		}
-		if unicode.IsLetter(r) {
-			hasLetter = true
-		}
-	}
-	return hasDigit && !hasLetter
-}
-
-func updateLogLineIsProgress(line string) bool {
-	lower := strings.ToLower(strings.TrimSuffix(strings.TrimSpace(line), "."))
-	for _, needle := range []string{
-		"adjust how often this is run with",
-		"homebrew_auto_update_secs",
-		"homebrew_no_auto_update",
-	} {
-		if strings.Contains(lower, needle) {
-			return true
-		}
-	}
-	for _, progress := range []string{
-		"auto-updating homebrew",
-		"updating homebrew",
-		"updating homebrew bundle",
-		"updating homebrew/bundle",
-	} {
-		if lower == progress {
-			return true
-		}
-	}
-	if strings.HasPrefix(lower, "upgrading ") {
-		return true
-	}
-	if strings.HasPrefix(lower, "upgraded ") && strings.Contains(lower, " outdated package") {
-		return true
-	}
-	return false
-}
-
-func updateLogLineIsSkipped(line string) bool {
-	lower := strings.ToLower(line)
-	for _, needle := range []string{
-		"already up-to-date",
-		"already installed",
-		"nothing to do",
-		"no outdated",
-		"not upgrading",
-		"skipping",
-		"skipped",
-		"kept current",
-	} {
-		if strings.Contains(lower, needle) {
-			return true
-		}
-	}
-	return false
-}
-
-func updateLogLineIsGenericSkipped(line string) bool {
-	lower := strings.ToLower(strings.TrimSpace(line))
-	for _, generic := range []string{
-		"already up-to-date.",
-		"already up-to-date",
-		"nothing to do",
-	} {
-		if lower == generic {
-			return true
-		}
-	}
-	return false
-}
-
-func appendCappedUniqueSummary(values []string, value string) []string {
-	if len(values) >= 12 {
-		return values
-	}
-	value = truncate(oneLine(value), 160)
-	for _, existing := range values {
-		if existing == value {
-			return values
-		}
-	}
-	return append(values, value)
-}
-
-func appendCappedUniqueUpdateSummary(values []string, value string) []string {
-	value = normalizeUpdateSummaryItem(value)
-	if value == "" || len(values) >= 12 {
-		return values
-	}
-	key := updateSummaryItemKey(value)
-	for index, existing := range values {
-		if existing == value || (key != "" && updateSummaryItemKey(existing) == key) {
-			if len(value) < len(existing) {
-				values[index] = value
-			}
-			return values
-		}
-	}
-	return append(values, value)
-}
-
-func appendUniqueUpdateSummaries(values []string, more ...string) []string {
-	for _, value := range more {
-		values = appendCappedUniqueUpdateSummary(values, value)
-	}
-	return values
-}
-
-func appendUniqueSkippedSummaries(values []string, more ...string) []string {
-	for _, value := range more {
-		values = appendCappedUniqueSummary(values, value)
-	}
-	return values
-}
-
-func normalizeUpdateSummaryItem(value string) string {
-	value = truncate(oneLine(value), 160)
-	if before, after, ok := strings.Cut(value, " -> "); ok {
-		after = strings.TrimSpace(after)
-		if left, _, ok := strings.Cut(after, " ("); ok {
-			after = strings.TrimSpace(left)
-		}
-		return strings.TrimSpace(before) + " -> " + after
-	}
-	return value
-}
-
-func normalizeSkippedSummaryItem(value string) string {
-	value = truncate(oneLine(value), 220)
-	if name, detail, ok := parseHomebrewSkippingWarning(value); ok {
-		return name + " skipped: " + detail
-	}
-	return value
-}
-
-func parseHomebrewSkippingWarning(value string) (string, string, bool) {
-	trimmed := strings.TrimSpace(value)
-	lower := strings.ToLower(trimmed)
-	for _, prefix := range []string{"warning: skipping ", "skipping "} {
-		if !strings.HasPrefix(lower, prefix) {
-			continue
-		}
-		rest := strings.TrimSpace(trimmed[len(prefix):])
-		if rest == "" {
-			return "", "", false
-		}
-		name := rest
-		detail := trimmed
-		if before, after, ok := strings.Cut(rest, " because "); ok {
-			name = strings.TrimSpace(before)
-			detail = "because " + strings.TrimSpace(after)
-		}
-		name = strings.Trim(name, "`\"'")
-		if name == "" {
-			return "", "", false
-		}
-		return name, detail, true
-	}
-	return "", "", false
-}
-
-func updateSummaryItemKey(value string) string {
-	name, detail := updateOutcomeUpdatedItemParts(value)
-	if name == "" || detail == "" {
-		return ""
-	}
-	return strings.ToLower(strings.TrimSpace(name))
-}
-
 func printUpdateText(report updateReport) {
 	printUpdateTextTo(os.Stdout, report)
 }
@@ -1344,7 +1260,7 @@ func printUpdateBodyTo(w io.Writer, report updateReport, color bool) {
 			fmt.Fprintf(w, "    %s\n", truncate(oneLine(step.Stderr), 120))
 		}
 		if step.Reason != "" {
-			fmt.Fprintf(w, "    %s %s\n", textui.StyleLabel(tr("reason:", "理由:"), color), truncate(oneLine(localizedUpdateStepReason(step.Reason)), 120))
+			fmt.Fprintf(w, "    %s %s\n", textui.StyleLabel(tr("reason:", "理由:"), color), truncate(oneLine(localizedUpdateStepReasonForStep(step)), 120))
 		}
 	}
 	printUpdateSafetyDashboard(w, report, color)
@@ -1393,7 +1309,7 @@ func printUpdateStepsTable(w io.Writer, steps []updateStep, color bool, labels u
 
 func updateStepHumanDetail(step updateStep) string {
 	if step.Reason != "" {
-		return truncate(oneLine(localizedUpdateStepReason(step.Reason)), 72)
+		return truncate(oneLine(localizedUpdateStepReasonForStep(step)), 72)
 	}
 	if len(step.Updated) > 0 {
 		return fmt.Sprintf(tr("%d updated", "更新 %d件"), len(step.Updated))
@@ -1408,7 +1324,7 @@ func updateStepHumanDetail(step updateStep) string {
 }
 
 func saveLastUpdateReport(report updateReport) string {
-	dir := updevReportCacheDir()
+	dir := updevpath.ReportCacheDir()
 	if dir == "" {
 		return ""
 	}
@@ -1440,7 +1356,7 @@ func saveLastUpdateReport(report updateReport) string {
 }
 
 func loadLastUpdateReport() (updateReportCacheEntry, bool) {
-	dir := updevReportCacheDir()
+	dir := updevpath.ReportCacheDir()
 	if dir == "" {
 		return updateReportCacheEntry{}, false
 	}
@@ -1568,14 +1484,14 @@ func printLastReportText(w io.Writer, entry updateReportCacheEntry, opts lastRep
 	printUpdateHeaderTo(w, "updev last", entry.Report.Status, color)
 	if !entry.CreatedAt.IsZero() {
 		fmt.Fprintf(w, "%s %s\n", textui.StyleLabel(tr("created:", "作成:"), color), entry.CreatedAt.Format(time.RFC3339))
-		fmt.Fprintf(w, "%s %s\n", textui.StyleLabel(tr("age:", "経過:"), color), friendlyAge(time.Since(entry.CreatedAt)))
+		fmt.Fprintf(w, "%s %s\n", textui.StyleLabel(tr("age:", "経過:"), color), textui.FriendlyAge(time.Since(entry.CreatedAt)))
 	}
 	report := filterUpdateReport(entry.Report, opts)
 	if opts.section != "" && opts.section != "summary" {
 		fmt.Fprintf(w, "%s %s %s\n", textui.StyleLabel(tr("section:", "section:"), color), textui.StyleRequested(opts.section, color), textui.StyleStatus(string(updateSectionStatus(report, opts.section)), color))
 	}
 	if filters := lastReportFilterMap(opts); len(filters) > 0 {
-		fmt.Fprintf(w, "%s %s\n", textui.StyleLabel(tr("filters:", "フィルター:"), color), textui.StyleRequested(filterSummary(filters), color))
+		fmt.Fprintf(w, "%s %s\n", textui.StyleLabel(tr("filters:", "フィルター:"), color), textui.StyleRequested(textui.FilterSummary(filters, filterSummaryKeys...), color))
 	}
 	switch opts.section {
 	case "updates":
@@ -1591,14 +1507,6 @@ func printLastReportText(w io.Writer, entry updateReportCacheEntry, opts lastRep
 	default:
 		printUpdateBodyTo(w, report, color)
 	}
-}
-
-func updevReportCacheDir() string {
-	dir := updevCacheDir()
-	if dir == "" {
-		return ""
-	}
-	return filepath.Join(dir, "reports")
 }
 
 func buildUpdateReportSectionView(entry updateReportCacheEntry, opts lastReportOptions) updateReportSectionView {
@@ -1715,7 +1623,7 @@ func updateReportSummary(report updateReport) updateReportViewSummary {
 		}
 	}
 	for _, item := range report.Inventory.Items {
-		if isAttentionStatus(item.Status) {
+		if plan.IsAttentionStatus(item.Status) {
 			summary.InventoryAttention++
 		}
 	}
@@ -1752,19 +1660,19 @@ func normalizeUpdateStepOutcomes(steps []updateStep) []updateStep {
 	for _, step := range steps {
 		normalizedUpdated := []string{}
 		for _, item := range step.Updated {
-			item = normalizeUpdateSummaryItem(item)
-			if item == "" || updateLogLineIsProgress(item) {
+			item = updatelog.NormalizeUpdatedItem(item)
+			if item == "" || updatelog.IsProgressLine(item) {
 				continue
 			}
-			normalizedUpdated = appendCappedUniqueUpdateSummary(normalizedUpdated, item)
+			normalizedUpdated = updatelog.AppendUniqueUpdated(normalizedUpdated, item)
 		}
 		normalizedSkipped := []string{}
 		for _, item := range step.SkippedItems {
-			item = normalizeSkippedSummaryItem(item)
-			if item == "" || updateLogLineIsGenericSkipped(item) {
+			item = updatelog.NormalizeSkippedItem(item)
+			if item == "" || updatelog.IsGenericSkippedLine(item) {
 				continue
 			}
-			normalizedSkipped = appendCappedUniqueSummary(normalizedSkipped, item)
+			normalizedSkipped = updatelog.AppendUniqueSkipped(normalizedSkipped, item)
 		}
 		step.Updated = normalizedUpdated
 		step.SkippedItems = normalizedSkipped
@@ -1787,7 +1695,7 @@ func filterUpdateSteps(steps []updateStep, opts lastReportOptions) []updateStep 
 		if opts.provider != "" && !strings.EqualFold(step.Name, opts.provider) {
 			continue
 		}
-		if opts.status != "" && !statusMatches(step.Status, opts.status) {
+		if opts.status != "" && !plan.StatusMatches(step.Status, opts.status) {
 			continue
 		}
 		if opts.query != "" {
@@ -1835,7 +1743,7 @@ func updateStepMatchesQuery(step updateStep, query string) bool {
 	haystack := strings.ToLower(strings.Join([]string{
 		step.Name,
 		string(step.Status),
-		joinCommand(step.Command),
+		updateStepCommandText(step),
 		step.Reason,
 		step.Stdout,
 		step.Stderr,
@@ -1883,7 +1791,7 @@ func filterSafetyFindings(findings []safetyFinding, opts lastReportOptions) []sa
 }
 
 func safetyGateMatchesFilters(gate safetyGate, opts lastReportOptions) bool {
-	if opts.status != "" && !statusMatches(gate.Status, opts.status) {
+	if opts.status != "" && !plan.StatusMatches(gate.Status, opts.status) {
 		return false
 	}
 	if opts.query != "" && !safetyGateMatchesQuery(gate, opts.query) {
@@ -1954,7 +1862,7 @@ func filterPlanProviders(providers []plan.ProviderSummary, opts lastReportOption
 		if opts.provider != "" && !strings.EqualFold(provider.Name, opts.provider) {
 			continue
 		}
-		if opts.status != "" && !statusMatches(plan.Status(providerStatus(provider)), opts.status) {
+		if opts.status != "" && !plan.StatusMatches(plan.ProviderStatus(provider), opts.status) {
 			continue
 		}
 		out = append(out, provider)
@@ -2048,7 +1956,7 @@ func updateOutcomeRows(report updateReport, limit int, color bool) [][]string {
 				outcome = "would"
 				item = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(item), "would bump "))
 			}
-			name, detail := updateOutcomeUpdatedItemParts(item)
+			name, detail := updatelog.UpdatedItemParts(item)
 			rows = append(rows, []string{
 				textui.StyleStatus(outcome, color),
 				textui.StyleName(step.Name, color),
@@ -2076,7 +1984,7 @@ func updateOutcomeRows(report updateReport, limit int, color bool) [][]string {
 				textui.StyleStatus("skipped", color),
 				textui.StyleName(step.Name, color),
 				truncate(firstNonEmpty(step.Name, "step"), 38),
-				truncate(oneLine(localizedUpdateStepReason(step.Reason)), 72),
+				truncate(oneLine(localizedUpdateStepReasonForStep(step)), 72),
 			})
 			if len(rows) >= limit {
 				return rows
@@ -2126,36 +2034,10 @@ func updateOutcomeSkippedItemParts(step updateStep, item string) (string, string
 	if localized := localizedUpdateStepReason(item); localized != item {
 		return firstNonEmpty(step.Name, "step"), localized
 	}
-	if name, detail := updateOutcomeUpdatedItemParts(strings.TrimPrefix(item, "would bump ")); name != "" && strings.TrimSpace(name) != strings.TrimSpace(item) {
+	if name, detail := updatelog.UpdatedItemParts(strings.TrimPrefix(item, "would bump ")); name != "" && strings.TrimSpace(name) != strings.TrimSpace(item) {
 		return name, detail
 	}
 	return firstNonEmpty(step.Name, "step"), item
-}
-
-func updateOutcomeUpdatedItemParts(item string) (string, string) {
-	item = oneLine(strings.TrimSpace(item))
-	if item == "" {
-		return "", ""
-	}
-	lower := strings.ToLower(item)
-	if strings.HasPrefix(lower, "updated ") && (strings.Contains(lower, " tap ") || strings.Contains(lower, " taps ")) {
-		return "Homebrew taps", item
-	}
-	if strings.HasPrefix(lower, "updated homebrew") {
-		return "Homebrew", item
-	}
-	if before, after, ok := strings.Cut(item, " -> "); ok {
-		fields := strings.Fields(before)
-		if len(fields) == 1 {
-			return strings.TrimSpace(before), strings.TrimSpace(after)
-		}
-		if len(fields) >= 2 {
-			name := strings.Join(fields[:len(fields)-1], " ")
-			from := fields[len(fields)-1]
-			return name, from + " -> " + strings.TrimSpace(after)
-		}
-	}
-	return item, ""
 }
 
 func updateOutcomeFindingDetail(finding safetyFinding) string {
@@ -2374,7 +2256,7 @@ func printUpdateInventoryDashboard(w io.Writer, inventory plan.Report, color boo
 	fmt.Fprintf(w, "\n%s %s\n", textui.StyleHeading("inventory", color), textui.StyleStatus(string(inventory.Status), color))
 	providerRows := [][]string{}
 	for _, provider := range inventory.Providers {
-		status := providerStatus(provider)
+		status := string(plan.ProviderStatus(provider))
 		if status == "ok" {
 			continue
 		}
@@ -2413,13 +2295,13 @@ func printUpdateInventoryDashboard(w io.Writer, inventory plan.Report, color boo
 
 func inventoryAttentionRows(items []plan.Item, limit int, color bool) [][]string {
 	rows := [][]string{}
-	for _, status := range attentionStatusOrder() {
+	for _, status := range plan.AttentionStatusOrder() {
 		for _, item := range items {
 			if item.Status != status {
 				continue
 			}
 			rows = append(rows, []string{
-				textui.StyleStatus(inventoryItemStatusLabel(item), color),
+				textui.StyleStatus(inventoryannotate.ItemStatusLabel(item), color),
 				textui.StyleName(item.Provider, color),
 				item.Kind,
 				item.Name,
@@ -2436,7 +2318,7 @@ func inventoryAttentionRows(items []plan.Item, limit int, color bool) [][]string
 func profileMismatchCount(items []plan.Item, provider string) int {
 	count := 0
 	for _, item := range items {
-		if strings.EqualFold(item.Provider, provider) && itemHasProfileMismatch(item) {
+		if strings.EqualFold(item.Provider, provider) && inventoryannotate.ItemHasProfileMismatch(item) {
 			count++
 		}
 	}
@@ -2551,7 +2433,7 @@ func runUpdateSummaryRouteDetail(report updateReport, route updateSummaryRoute, 
 	suffix := updateSummaryRouteTitleSuffix(route)
 	switch route.Base {
 	case updateHubActionLogs:
-		stateKey := "summary:logs:" + filterSummary(lastReportFilterMap(opts))
+		stateKey := "summary:logs:" + textui.FilterSummary(lastReportFilterMap(opts), filterSummaryKeys...)
 		state, err := runDetailBrowserWithState("updev update logs"+suffix, updateLogDetailRows(filtered), detailStates[stateKey], color)
 		if err != nil {
 			printLastUpdateLogs(os.Stdout, filtered, color)
@@ -2560,7 +2442,7 @@ func runUpdateSummaryRouteDetail(report updateReport, route updateSummaryRoute, 
 		detailStates[stateKey] = state
 		return state.Action == updevActionExit
 	case updateHubActionSecurity:
-		stateKey := "summary:security:" + filterSummary(lastReportFilterMap(opts))
+		stateKey := "summary:security:" + textui.FilterSummary(lastReportFilterMap(opts), filterSummaryKeys...)
 		state, err := runDetailBrowserWithState("updev security details"+suffix, updateSecurityDetailRows(filtered), detailStates[stateKey], color)
 		if err != nil {
 			printLastSecuritySection(os.Stdout, filtered, true, color)
@@ -2578,7 +2460,7 @@ func runUpdateSummaryRouteDetail(report updateReport, route updateSummaryRoute, 
 		}
 		return action == updevActionExit
 	case updateHubActionInventoryDetails:
-		stateKey := "summary:inventory-details:" + filterSummary(lastReportFilterMap(opts))
+		stateKey := "summary:inventory-details:" + textui.FilterSummary(lastReportFilterMap(opts), filterSummaryKeys...)
 		state, err := runDetailBrowserWithState("updev inventory details"+suffix, updateInventoryDetailRowsWithBackend(filtered, backendPlan), detailStates[stateKey], color)
 		if err != nil {
 			printLastInventorySection(os.Stdout, filtered, lastReportOptions{section: "inventory", provider: route.Provider, query: route.Query, details: true}, color)
@@ -2929,14 +2811,15 @@ func handleMiseBumpDetailAction(report *updateReport, value string) bool {
 	}
 	result := runMiseBumpCommand(context.Background(), runner.Local{}, report.Root, false, true, findings, os.Stdout, os.Stderr)
 	step := updateStep{
-		Name:    miseBumpProvider,
-		Command: miseBumpCommand(report.Root, false, true, findings),
-		Stdout:  result.Stdout,
-		Stderr:  result.Stderr,
+		Name:     miseBumpProvider,
+		Command:  miseBumpCommandForFindings(report.Root, false, true, findings),
+		Commands: miseBumpApplyCommands(report.Root, findings),
+		Stdout:   result.Stdout,
+		Stderr:   result.Stderr,
 	}
 	if result.Code != 0 || result.Err != nil {
 		step.Status = plan.StatusError
-		step.Reason = "mise bump failed: " + miseOutdatedResultDetail(result, "mise upgrade --bump failed")
+		setUpdateStepReason(&step, updatereason.MiseBumpFailedReason(miseOutdatedResultDetail(result, "mise upgrade --bump failed")))
 	} else {
 		step.Status = plan.StatusOK
 		for _, finding := range findings {
@@ -3221,10 +3104,10 @@ func scopedSecurityRerunStep(report updateReport, provider string, kind string, 
 		Status:   plan.StatusOK,
 		Findings: []safetyFinding{finding},
 	}})
-	if holdReason != "" || len(scoped.Command) == 0 {
+	if holdReason != "" || len(updateStepCommands(scoped)) == 0 {
 		return updateStep{}, false
 	}
-	scoped.Reason = fmt.Sprintf("security policy reran scoped %s update for %s/%s %s", provider, provider, kind, name)
+	setUpdateStepReason(&scoped, updatereason.SecurityPolicyScopedRerunReason(provider, kind, name))
 	return scoped, true
 }
 
@@ -3637,7 +3520,7 @@ func updateDashboardInventorySummary(report plan.Report) string {
 func updateDashboardInventoryAttention(report plan.Report) int {
 	count := 0
 	for _, item := range report.Items {
-		if isAttentionStatus(item.Status) || itemHasProfileMismatch(item) {
+		if plan.IsAttentionStatus(item.Status) || inventoryannotate.ItemHasProfileMismatch(item) {
 			count++
 		}
 	}
@@ -3849,7 +3732,7 @@ func updateStepStatusCounts(steps []updateStep) map[string]int {
 			status = string(plan.StatusOK)
 		}
 		counts[status]++
-		if isAttentionStatus(step.Status) {
+		if plan.IsAttentionStatus(step.Status) {
 			attention++
 		}
 	}
@@ -4023,6 +3906,7 @@ func safetyFindingDetailRow(gate safetyGate, finding safetyFinding) detailBrowse
 		"decision: " + firstNonEmpty(finding.Decision, string(gate.Status)),
 	}
 	metadata = appendDetailMeta(metadata, "reason", reason)
+	metadata = appendDetailMeta(metadata, "reason_code", finding.ReasonCode)
 	metadata = appendDetailMeta(metadata, "remediation", remediation)
 	metadata = appendDetailMeta(metadata, "source", finding.Source)
 	metadata = appendDetailMeta(metadata, "tap", finding.Tap)
@@ -4034,6 +3918,7 @@ func safetyFindingDetailRow(gate safetyGate, finding safetyFinding) detailBrowse
 	metadata = appendDetailMeta(metadata, "trust", finding.TrustStatus)
 	metadata = appendDetailMeta(metadata, "trust target", finding.TrustTarget)
 	metadata = appendDetailMeta(metadata, "trust command", finding.TrustCommand)
+	metadata = appendDetailMeta(metadata, "trust command argv", joinCommand(finding.TrustCommandArgv))
 	metadata = appendDetailMeta(metadata, "release", finding.ReleaseDate)
 	if versions := versionText(finding); versions != "" {
 		metadata = appendDetailMeta(metadata, "version", versions)
@@ -4065,6 +3950,21 @@ func appendDetailMeta(metadata []string, label string, value string) []string {
 	return append(metadata, label+": "+value)
 }
 
+func updateStepCommandText(step updateStep) string {
+	commands := updateStepCommands(step)
+	if len(commands) == 0 {
+		return ""
+	}
+	out := []string{}
+	for _, command := range commands {
+		if len(command.Command) == 0 {
+			continue
+		}
+		out = append(out, joinCommand(command.Command))
+	}
+	return strings.Join(out, " ; ")
+}
+
 func updateLogDetailRows(report updateReport) []detailBrowserRow {
 	rows := []detailBrowserRow{}
 	for _, step := range report.Steps {
@@ -4079,13 +3979,16 @@ func updateLogDetailRows(report updateReport) []detailBrowserRow {
 		metadata := []string{
 			"provider: " + step.Name,
 			"status: " + status,
-			"command: " + joinCommand(step.Command),
+			"command: " + updateStepCommandText(step),
 		}
 		if step.Skipped {
 			metadata = append(metadata, "skipped: true")
 		}
 		if step.Reason != "" {
-			metadata = append(metadata, "reason: "+localizedUpdateStepReason(step.Reason))
+			metadata = append(metadata, "reason: "+localizedUpdateStepReasonForStep(step))
+			if step.ReasonCode != "" {
+				metadata = append(metadata, "reason_code: "+step.ReasonCode)
+			}
 		}
 		if len(step.Updated) > 0 {
 			metadata = append(metadata, "updated: "+strings.Join(step.Updated, "; "))
@@ -4109,7 +4012,7 @@ func updateLogDetailRows(report updateReport) []detailBrowserRow {
 			Title:    step.Name,
 			Status:   status,
 			Summary:  updateStepDetailSummary(step),
-			Detail:   firstNonEmpty(localizedUpdateStepReason(step.Reason), step.Stdout, step.Stderr),
+			Detail:   firstNonEmpty(localizedUpdateStepReasonForStep(step), step.Stdout, step.Stderr),
 			Metadata: metadata,
 			Actions:  updateStepDetailActions(step),
 		})
@@ -4133,7 +4036,7 @@ func updateStepItemDetailRows(step updateStep) []detailBrowserRow {
 				"provider: " + step.Name,
 				"result: updated",
 				"item: " + item,
-				"command: " + joinCommand(step.Command),
+				"command: " + updateStepCommandText(step),
 			},
 		})
 	}
@@ -4155,7 +4058,7 @@ func updateStepItemDetailRows(step updateStep) []detailBrowserRow {
 				"provider: " + step.Name,
 				"result: " + status,
 				"item: " + item,
-				"command: " + joinCommand(step.Command),
+				"command: " + updateStepCommandText(step),
 			},
 			Actions: updateStepDetailActions(step),
 		})
@@ -4191,7 +4094,7 @@ func updateStepDetailActions(step updateStep) []detailBrowserAction {
 
 func updateStepDetailSummary(step updateStep) string {
 	if step.Reason != "" {
-		return localizedUpdateStepReason(step.Reason)
+		return localizedUpdateStepReasonForStep(step)
 	}
 	if len(step.Updated) > 0 && len(step.SkippedItems) > 0 {
 		return fmt.Sprintf("%d updated, %d deferred", len(step.Updated), len(step.SkippedItems))
@@ -4293,7 +4196,7 @@ func printLastUpdateLogs(w io.Writer, report updateReport, color bool) {
 		}
 		wrote = true
 		fmt.Fprintf(w, "%s %s\n", textui.StyleName(step.Name, color), textui.StyleStatus(string(step.Status), color))
-		printDetailLine(w, "reason", localizedUpdateStepReason(step.Reason), color)
+		printDetailLine(w, "reason", localizedUpdateStepReasonForStep(step), color)
 		printDetailBlock(w, "stdout", step.Stdout, color)
 		printDetailBlock(w, "stderr", step.Stderr, color)
 	}
@@ -4314,128 +4217,131 @@ func localizedSafetyReason(reason string) string {
 	return localizedSecurityReason(reason)
 }
 
+func localizedNativeAuditReason(audit nativeAudit) string {
+	reason := securityreason.Reason{
+		Code: audit.ReasonCode,
+		Text: audit.Reason,
+		Args: audit.ReasonArgs,
+	}
+	if reason.Code == "" {
+		reason = securityreason.Infer(audit.Reason)
+		if reason.Code == securityreason.NativeAuditVulnerability {
+			reason.Args = cloneStringMap(reason.Args)
+			reason.Args["tool"] = firstNonEmpty(audit.Tool, reason.Args["tool"])
+			reason.Args["ecosystem"] = firstNonEmpty(audit.Ecosystem, reason.Args["ecosystem"])
+			reason.Args["target"] = firstNonEmpty(audit.Target, reason.Args["target"])
+		}
+	}
+	if defaultLanguage() == "ja" && reason.Code != "" {
+		if localized := securityreason.LocalizeJapanese(reason); localized != "" {
+			return localized
+		}
+	}
+	return localizedSecurityReason(audit.Reason)
+}
+
+func localizedGitHubPostureReason(posture githubPosture) string {
+	reason := securityreason.Reason{Code: posture.ReasonCode, Text: posture.Reason, Args: posture.ReasonArgs}
+	if reason.Code == "" {
+		reason = securityreason.Infer(posture.Reason)
+	}
+	if reason.Code != "" {
+		reason.Args = cloneStringMap(reason.Args)
+		reason.Args["repository"] = firstNonEmpty(reason.Args["repository"], posture.Repository)
+	}
+	if defaultLanguage() == "ja" && reason.Code != "" {
+		if localized := securityreason.LocalizeJapanese(reason); localized != "" {
+			return localized
+		}
+	}
+	return localizedSecurityReason(posture.Reason)
+}
+
+func localizedHomebrewPostureReason(posture homebrewPosture) string {
+	reason := securityreason.Reason{Code: posture.ReasonCode, Text: posture.Reason, Args: posture.ReasonArgs}
+	if reason.Code == "" {
+		reason = securityreason.Infer(posture.Reason)
+	}
+	if reason.Code != "" {
+		reason.Args = cloneStringMap(reason.Args)
+		delete(reason.Args, "kind")
+		delete(reason.Args, "name")
+		reason.Args["homepage_host"] = firstNonEmpty(reason.Args["homepage_host"], posture.HomepageHost)
+		reason.Args["url_host"] = firstNonEmpty(reason.Args["url_host"], posture.URLHost)
+	}
+	if defaultLanguage() == "ja" && reason.Code != "" {
+		if localized := securityreason.LocalizeJapanese(reason); localized != "" {
+			return localized
+		}
+	}
+	return localizedSecurityReason(posture.Reason)
+}
+
+func localizedVSCodePostureReason(posture vscodePosture) string {
+	reason := securityreason.Reason{Code: posture.ReasonCode, Text: posture.Reason, Args: posture.ReasonArgs}
+	if reason.Code == "" {
+		reason = securityreason.Infer(posture.Reason)
+	}
+	if reason.Code != "" {
+		reason.Args = cloneStringMap(reason.Args)
+		delete(reason.Args, "extension")
+	}
+	if defaultLanguage() == "ja" && reason.Code != "" {
+		if localized := securityreason.LocalizeJapanese(reason); localized != "" {
+			return localized
+		}
+	}
+	return localizedSecurityReason(posture.Reason)
+}
+
+func localizedNPMPostureReason(posture npmPosture) string {
+	return localizedRegistryPostureReason(posture.Reason, posture.ReasonCode, posture.ReasonArgs, "npm", posture.Package, posture.Version)
+}
+
+func localizedCargoPostureReason(posture cargoPosture) string {
+	return localizedRegistryPostureReason(posture.Reason, posture.ReasonCode, posture.ReasonArgs, "crates.io", posture.Crate, posture.Version)
+}
+
+func localizedPyPIPostureReason(posture pypiPosture) string {
+	return localizedRegistryPostureReason(posture.Reason, posture.ReasonCode, posture.ReasonArgs, "PyPI", posture.Package, posture.Version)
+}
+
+func localizedRegistryPostureReason(text string, code string, args map[string]string, registry string, packageName string, version string) string {
+	reason := securityreason.Reason{Code: code, Text: text, Args: args}
+	if reason.Code == "" {
+		reason = securityreason.Infer(text)
+	}
+	if reason.Code != "" {
+		reason.Args = cloneStringMap(reason.Args)
+		reason.Args["registry"] = firstNonEmpty(reason.Args["registry"], registry)
+		reason.Args["package"] = firstNonEmpty(reason.Args["package"], packageName)
+		reason.Args["version"] = firstNonEmpty(reason.Args["version"], version)
+	}
+	if defaultLanguage() == "ja" && reason.Code != "" {
+		if localized := securityreason.LocalizeJapanese(reason); localized != "" {
+			return localized
+		}
+	}
+	return localizedSecurityReason(text)
+}
+
 func localizedUpdateStepReason(reason string) string {
 	reason = strings.TrimSpace(reason)
 	if reason == "" || defaultLanguage() != "ja" {
 		return reason
 	}
-	if reason == "security=strict held update because safety gate requires review" {
-		return "security=strict のため更新を保留しました: safety gate の確認が必要です"
-	}
-	if suffix, ok := strings.CutPrefix(reason, "security=strict held update because safety gate failed: "); ok {
-		return "security=strict のため更新を保留しました: safety gate が失敗しました: " + suffix
-	}
-	if reason == "strict safety refreshed Homebrew metadata before rechecking package candidates" {
-		return "strict safety のため Homebrew metadata を更新し、package 候補を再確認しました"
-	}
-	if reason == "strict safety refreshes Homebrew metadata only before rechecking package candidates" {
-		return "strict safety のため Homebrew metadata の更新だけを実行し、package 候補を再確認します"
-	}
-	if reason == "strict safety refreshed Homebrew metadata; no package candidates found" {
-		return "strict safety のため Homebrew metadata を更新しました。更新対象の package 候補はありません"
-	}
-	const brewHeldPrefix = "strict safety refreshed Homebrew metadata and held "
-	const brewHeldSuffix = " Homebrew candidates requiring review"
-	if value, ok := strings.CutPrefix(reason, brewHeldPrefix); ok {
-		if count, ok := strings.CutSuffix(value, brewHeldSuffix); ok {
-			return fmt.Sprintf("Homebrew metadata を更新し、確認が必要な Homebrew 候補 %s件を保留しました", strings.TrimSpace(count))
+	inferred := updatereason.Infer(reason)
+	if inferred.Code != "" {
+		switch inferred.Code {
+		case updatereason.MiseBumpCandidateChangedApply, updatereason.MiseBumpCandidateChangedPreview:
+			inferred.Args = cloneStringMap(inferred.Args)
+			inferred.Args["detail"] = localizedMiseBumpCandidateChange(inferred.Args["detail"])
+		}
+		if localized := updatereason.LocalizeJapanese(inferred); localized != "" {
+			return localized
 		}
 	}
-	if reason == "security=strict held mise update because no scoped safe candidates were found" {
-		return "security=strict のため mise 更新を保留しました: 適用できる scoped safe 候補がありません"
-	}
-	if reason == "security=strict held brew update because no scoped safe candidates were found" {
-		return "security=strict のため brew 更新を保留しました: 適用できる scoped safe 候補がありません"
-	}
-	if safe, unsafe, ok := parseTwoCountReason(reason, "strict safety will apply ", " safe mise candidates and hold ", " unsafe candidates"); ok {
-		return fmt.Sprintf("strict safety は mise の safe 候補 %d件だけを適用し、unsafe 候補 %d件を保留します", safe, unsafe)
-	}
-	if safe, unsafe, ok := parseTwoCountReason(reason, "strict safety will apply ", " safe Homebrew candidates and hold ", " unsafe candidates; Homebrew cannot generally install an older intermediate release"); ok {
-		return fmt.Sprintf("strict safety は Homebrew の safe 候補 %d件だけを適用し、unsafe 候補 %d件を保留します。Homebrew は通常、古い中間 version を指定して install できません", safe, unsafe)
-	}
-	if reason == "mise bump candidates available; mode=manual requires item review" {
-		return "mise bump 候補があります。mode=manual のため item ごとの確認が必要です"
-	}
-	if reason == "mise bump candidates require review" {
-		return "mise bump 候補の確認が必要です"
-	}
-	if reason == "mise bump candidates require review; no safe auto candidates" {
-		return "mise bump 候補の確認が必要です。自動適用できる safe 候補はありません"
-	}
-	if count, ok := parseOneCountReason(reason, "mise bump candidates available; ", " safe candidates can be applied after confirmation"); ok {
-		return fmt.Sprintf("mise bump 候補があります。確認後に safe 候補 %d件を適用できます", count)
-	}
-	if count, ok := parseOneCountReason(reason, "mise bump auto would apply ", " safe candidates"); ok {
-		return fmt.Sprintf("mise bump auto は safe 候補 %d件を適用します", count)
-	}
-	if safe, review, ok := parseTwoCountReason(reason, "mise bump auto would apply ", " safe candidates; ", " candidates require review"); ok {
-		return fmt.Sprintf("mise bump auto は safe 候補 %d件を適用し、%d件は確認待ちにします", safe, review)
-	}
-	if suffix, ok := strings.CutPrefix(reason, "mise bump candidate set changed before apply: "); ok {
-		return "mise bump の候補が適用直前に変わったため保留しました: " + localizedMiseBumpCandidateChange(suffix)
-	}
-	if suffix, ok := strings.CutPrefix(reason, "mise bump candidate set changed before preview: "); ok {
-		return "mise bump の候補が preview 直前に変わりました: " + localizedMiseBumpCandidateChange(suffix)
-	}
-	if reason == "mise bump auto found only dependency-blocked candidates" {
-		return "mise bump auto で見つかった候補は dependency 不足で block されたものだけです"
-	}
-	if suffix, ok := strings.CutPrefix(reason, "mise bump dry-run preflight failed: "); ok {
-		return "mise bump の dry-run preflight が失敗しました: " + suffix
-	}
-	if suffix, ok := strings.CutPrefix(reason, "mise bump failed: "); ok {
-		return "mise bump が失敗しました: " + suffix
-	}
-	if safe, review, ok := parseTwoCountReason(reason, "mise bump applied ", " safe candidates; ", " candidates require review"); ok {
-		return fmt.Sprintf("mise bump は safe 候補 %d件を適用し、%d件は確認待ちです", safe, review)
-	}
-	if provider, target, ok := parseScopedSecurityPolicyReason(reason); ok {
-		return fmt.Sprintf("security policy に従い、%s の scoped update を再実行しました: %s", provider, target)
-	}
 	return reason
-}
-
-func parseOneCountReason(reason string, prefix string, suffix string) (int, bool) {
-	value, ok := strings.CutPrefix(reason, prefix)
-	if !ok {
-		return 0, false
-	}
-	value, ok = strings.CutSuffix(value, suffix)
-	if !ok {
-		return 0, false
-	}
-	count, err := strconv.Atoi(strings.TrimSpace(value))
-	return count, err == nil
-}
-
-func parseTwoCountReason(reason string, prefix string, middle string, suffix string) (int, int, bool) {
-	value, ok := strings.CutPrefix(reason, prefix)
-	if !ok {
-		return 0, 0, false
-	}
-	left, right, ok := strings.Cut(value, middle)
-	if !ok {
-		return 0, 0, false
-	}
-	right, ok = strings.CutSuffix(right, suffix)
-	if !ok {
-		return 0, 0, false
-	}
-	first, errFirst := strconv.Atoi(strings.TrimSpace(left))
-	second, errSecond := strconv.Atoi(strings.TrimSpace(right))
-	return first, second, errFirst == nil && errSecond == nil
-}
-
-func parseScopedSecurityPolicyReason(reason string) (string, string, bool) {
-	value, ok := strings.CutPrefix(reason, "security policy reran scoped ")
-	if !ok {
-		return "", "", false
-	}
-	provider, target, ok := strings.Cut(value, " update for ")
-	if !ok {
-		return "", "", false
-	}
-	return strings.TrimSpace(provider), strings.TrimSpace(target), true
 }
 
 func localizedMiseBumpCandidateChange(reason string) string {
@@ -4460,7 +4366,7 @@ func localizedMiseBumpCandidateChange(reason string) string {
 }
 
 func localizedSafetyReasonWithReleaseAge(finding safetyFinding) string {
-	reason := strings.TrimSpace(localizedSafetyReason(finding.Reason))
+	reason := strings.TrimSpace(localizedSafetyFindingReason(finding))
 	if wait := releaseAgeHoldAvailabilityText(finding); wait != "" {
 		if miseNativeReleaseAgeHoldReason(finding) {
 			return strings.TrimSpace(strings.Join(nonEmptyStrings(wait, reason), "。"))
