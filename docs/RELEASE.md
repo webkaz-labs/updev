@@ -11,10 +11,10 @@ stays an integer schema contract. `v0.x` releases are public preview releases;
 
 ## Current Release
 
-The current implemented release is `updev v0.7.1`. `updev version`,
+The current implemented release is `updev v0.7.2`. `updev version`,
 `updev --version`, and `updev -v` report this command contract.
 
-`updev v0.7.1` is a public-preview hardening patch release. It keeps the supported
+`updev v0.7.2` is a public-preview hardening patch release. It keeps the supported
 macOS/Homebrew/mise preview path from `v0.6.x`, adds machine-readable support
 labels for providers, commands, report families, and inventory sources, and
 uses those labels to clarify which surfaces are supported preview,
@@ -36,6 +36,8 @@ Current support promise:
 
 Released patch notes:
 
+- [v0.7.2](release-notes/v0.7.2.md): compatibility-ledger JSON contract test
+  precision for support labels.
 - [v0.7.1](release-notes/v0.7.1.md): compatibility-ledger JSON contract polish
   for support labels.
 - [v0.7.0](release-notes/v0.7.0.md): public-preview hardening with support
