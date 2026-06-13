@@ -19,19 +19,20 @@ type ReviewCandidate struct {
 }
 
 type ReviewEvidence struct {
-	Scanner             string `json:"scanner"`
-	Source              string `json:"source,omitempty"`
-	Path                string `json:"path,omitempty"`
-	ReviewURL           string `json:"review_url,omitempty"`
-	SourceURL           string `json:"source_url,omitempty"`
-	Owner               string `json:"owner,omitempty"`
-	ManagedBy           string `json:"managed_by,omitempty"`
-	UpdateOwner         string `json:"update_owner,omitempty"`
-	OwnershipConfidence string `json:"ownership_confidence,omitempty"`
-	ProviderMetadata    string `json:"provider_metadata,omitempty"`
-	MASID               string `json:"mas_id,omitempty"`
-	BundleID            string `json:"bundle_id,omitempty"`
-	Version             string `json:"version,omitempty"`
+	Scanner             string            `json:"scanner"`
+	Source              string            `json:"source,omitempty"`
+	Path                string            `json:"path,omitempty"`
+	ReviewURL           string            `json:"review_url,omitempty"`
+	SourceURL           string            `json:"source_url,omitempty"`
+	Owner               string            `json:"owner,omitempty"`
+	ManagedBy           string            `json:"managed_by,omitempty"`
+	UpdateOwner         string            `json:"update_owner,omitempty"`
+	OwnershipConfidence string            `json:"ownership_confidence,omitempty"`
+	ProviderMetadata    string            `json:"provider_metadata,omitempty"`
+	MASID               string            `json:"mas_id,omitempty"`
+	BundleID            string            `json:"bundle_id,omitempty"`
+	Version             string            `json:"version,omitempty"`
+	Identifiers         map[string]string `json:"identifiers,omitempty"`
 }
 
 type ReviewOverrideFields struct {
@@ -240,6 +241,11 @@ func ReviewCandidateIdentityKeys(candidate ReviewCandidate) []string {
 		if evidence.MASID != "" {
 			keys = append(keys, "mas:"+strings.ToLower(evidence.MASID))
 		}
+		for _, idKey := range []string{"desktop_id", "package_id", "app_id"} {
+			if value := strings.TrimSpace(evidence.Identifiers[idKey]); value != "" {
+				keys = append(keys, idKey+":"+strings.ToLower(value))
+			}
+		}
 		if evidence.Path != "" {
 			for _, key := range AppPathKeys(evidence.Path) {
 				keys = append(keys, "name:"+key)
@@ -265,6 +271,11 @@ func StructuredAppIdentityKeys(app StructuredApp) []string {
 	}
 	if masID := strings.TrimSpace(app.Identifiers["mas_id"]); masID != "" {
 		keys = append(keys, "mas:"+strings.ToLower(masID))
+	}
+	for _, idKey := range []string{"desktop_id", "package_id", "app_id"} {
+		if value := strings.TrimSpace(app.Identifiers[idKey]); value != "" {
+			keys = append(keys, idKey+":"+strings.ToLower(value))
+		}
 	}
 	if path := strings.TrimSpace(app.Identifiers["path"]); path != "" {
 		for _, key := range AppPathKeys(path) {

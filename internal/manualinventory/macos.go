@@ -11,11 +11,13 @@ import (
 )
 
 type App struct {
-	Name     string
-	Source   string
-	Path     string
-	BundleID string
-	Version  string
+	Name          string
+	Source        string
+	Path          string
+	BundleID      string
+	IdentifierKey string
+	Identifier    string
+	Version       string
 }
 
 func ScanMacApplications(root string, defaultRoot string) []App {
@@ -64,12 +66,15 @@ func readMacAppBundle(path string) App {
 	if macAppHasMASReceipt(path) {
 		source = "mac app store receipt"
 	}
+	bundleID := values["CFBundleIdentifier"]
 	return App{
-		Name:     name,
-		Source:   source,
-		Path:     filepath.Clean(path),
-		BundleID: values["CFBundleIdentifier"],
-		Version:  firstNonEmpty(values["CFBundleShortVersionString"], values["CFBundleVersion"]),
+		Name:          name,
+		Source:        source,
+		Path:          filepath.Clean(path),
+		BundleID:      bundleID,
+		IdentifierKey: "bundle_id",
+		Identifier:    bundleID,
+		Version:       firstNonEmpty(values["CFBundleShortVersionString"], values["CFBundleVersion"]),
 	}
 }
 

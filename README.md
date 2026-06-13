@@ -196,6 +196,7 @@ Run consistency checks:
 updev check
 updev sync
 updev doctor dependencies
+updev doctor dependencies --ledger ./updev-compatibility-ledger.json
 ```
 
 Review manual/vendor macOS apps:
@@ -348,6 +349,10 @@ desired state only when `review_status = "accepted"`.
 Manual review can call a configured agent with `inventory review --action
 enrich` or `enrich-batch`; updev validates the returned TOML and writes only
 draft entries.
+Agent-facing guidance is available from the binary as well as the docs:
+`updev skill` prints the installable skill text, `updev skill --full` appends
+the detailed workflow guide, and `updev help agent` prints the detailed guide
+only.
 
 `mise_bump.mode` controls fixed-version mise updates. `manual` shows safe
 item-level bump actions, `safe` adds a confirmed safe-batch action, and `auto`
@@ -375,8 +380,10 @@ recommendation order.
 ## Support Status
 
 - Supported preview path: macOS with Homebrew and mise.
-- Experimental: Linux/Windows binaries, future Linux package scanners, broader
-  provider adoption suggestions, and Windows package evidence.
+- Experimental: Linux/Windows binaries, read-only Linux `.desktop` / Flatpak /
+  Snap / AppImage inventory evidence, Windows `winget export` inventory
+  evidence, broader provider adoption suggestions, and non-macOS provider
+  promotion.
 - Not managed by `updev`: OS settings, shell/editor configuration, secrets,
   account setup, backups, and device-management policy.
 

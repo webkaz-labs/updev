@@ -364,6 +364,10 @@ External advisory matching keeps confidence explicit:
   available.
 - Local policy is shared across scan/gate/update and reports expired, invalid,
   duplicate, shadowed, missing-reason, missing-expiry, and broad rules.
+- Provider command/API drift checks are available through
+  `updev doctor dependencies` and `updev check --dependencies`; JSON output
+  includes a compatibility ledger, and `--ledger <file>` writes it for local/CI
+  tracking without public issue posting by default.
 
 ## Remaining Roadmap
 
@@ -377,9 +381,7 @@ remaining buckets are:
 - harden Homebrew release-age, tap/cask provenance, URL cask warnings, and
   skipped/held reporting;
 - harden VS Code extension update gates while keeping VS Code opt-in;
-- keep agent-assisted review optional for ambiguous candidates;
-- improve policy ergonomics with guided add/edit/list helpers, rule indexes,
-  and shadowed-rule diagnostics.
+- keep agent-assisted review optional for ambiguous candidates.
 
 ## Limitations
 

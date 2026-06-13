@@ -30,7 +30,7 @@ func BuildAgentRequestPayload(provider string, action string, candidates interfa
 			"Return only TOML. Do not include prose or markdown fences.",
 			"Use one [[manual.apps]] entry per candidate.",
 			"Keep review_status = \"draft\" for every entry.",
-			"Use [manual.apps.identifiers] for bundle_id, mas_id, cask, or path when known.",
+			"Use [manual.apps.identifiers] for bundle_id, mas_id, cask, path, desktop_id, package_id, or app_id when known.",
 			"Use [manual.apps.provenance] source = \"agent\" and evidence = [...].",
 			"Add source_url or review_url when a vendor or provider page is known.",
 			"Add owner, update_owner, and provider_metadata when ownership evidence is known.",

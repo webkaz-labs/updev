@@ -39,6 +39,13 @@ fi
 require_file "docs/agent/USAGE.md"
 require_file "docs/agent/SKILL.md"
 require_grep 'docs/agent/' "docs/DESIGN.md"
+go_cache="${GOCACHE:-${TMPDIR:-/tmp}/updev-gocache}"
+if ! diff -u "$root/docs/agent/SKILL.md" <(cd "$root" && GOCACHE="$go_cache" go run . skill); then
+  fail "embedded updev skill output drifted from docs/agent/SKILL.md"
+fi
+if ! diff -u "$root/docs/agent/USAGE.md" <(cd "$root" && GOCACHE="$go_cache" go run . help agent); then
+  fail "embedded updev help agent output drifted from docs/agent/USAGE.md"
+fi
 if [[ -f "$root/docs/PUBLISHING.md" ]]; then
   require_grep 'docs/release-notes/<tag>\.md' "docs/DESIGN.md"
 fi
