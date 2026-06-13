@@ -91,6 +91,9 @@ func TestStyleStatusColorsManualAndPolicyAttentionStates(t *testing.T) {
 	if got := StyleStatus("keep-manual", true); !strings.Contains(got, ansiGreen) {
 		t.Fatalf("expected keep-manual to be ok-colored, got %q", got)
 	}
+	if got := StyleStatusText("▶hold 1d", "held", true); !strings.Contains(got, ansiYellow) || !strings.Contains(got, "▶hold 1d") {
+		t.Fatalf("expected arbitrary held status text to be warning-colored, got %q", got)
+	}
 }
 
 func TestFriendlyAge(t *testing.T) {

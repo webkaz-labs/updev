@@ -155,6 +155,27 @@ The short version:
 - external commands go through `internal/runner` unless listed in the direct
   subprocess exceptions above.
 
+### v0.6.4 Architecture Focus
+
+`v0.6.4` should keep the runtime contract stable and improve maintainability
+around boundaries that are already visible in the product. Do not start broad
+provider expansion until these boundaries are easier to test:
+
+| Boundary | Owner | v0.6.4 rule |
+|----------|-------|-------------|
+| Provider command contracts | provider packages such as `brew`, `mise`, `vscode`, `manualinventory` | argv/env construction, structured parsing, and provider-specific error normalization stay with the provider owner. |
+| Security/update decisions | `securitygate`, `securityreason`, `updatereason`, provider safety packages | decisions are represented as stable codes/args first; localized prose is render-time output. |
+| TTY navigation and prompts | `reviewui` plus command-local route adapters | focus/scroll/action state, Back/Home semantics, confirmations, and write-flow state stay shared where the behavior is not domain-specific. |
+| Tables, widths, badges, and color | `textui` | ANSI-safe width calculations and compact badges are not reimplemented in command files. |
+| Root/config/cache/policy paths | `updevpath` | commands and providers do not guess repository-local defaults; compatibility fallbacks are explicit. |
+| Inventory annotations | `inventoryannotate`, `plan`, provider packages | report enrichment should be data-backed and available to cached report views, not TUI-only. |
+
+Extraction is justified when it moves an entire domain contract with tests.
+Moving only a helper to reduce file count is not enough. If a cleanup would
+require a provider package to import command routes, TUI models, or report
+rendering internals, keep a thin command adapter instead and document the next
+split in [SOURCE-STRUCTURE.md](SOURCE-STRUCTURE.md).
+
 ## Shared Internal Extraction
 
 Do not create a broad shared framework before two tools need the same behavior.
