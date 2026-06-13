@@ -58,15 +58,19 @@ func PrintTable(w io.Writer, columns []Column, rows [][]string, color bool) {
 }
 
 func StyleStatus(status string, color bool) string {
+	return StyleStatusText(status, status, color)
+}
+
+func StyleStatusText(text string, status string, color bool) string {
 	switch status {
 	case "ok", "allow", "active", "updated", "keep-manual":
-		return Style(status, ansiGreen, color)
+		return Style(text, ansiGreen, color)
 	case "missing", "extra", "drift", "held", "hold", "review", "unavailable", "inactive", "attention", "skipped", "deferred", "needs-review", "ignore-local", "adopt-brew", "adopt-mas", "open-vendor":
-		return Style(status, ansiYellow, color)
+		return Style(text, ansiYellow, color)
 	case "error", "blocked", "block":
-		return Style(status, ansiRed, color)
+		return Style(text, ansiRed, color)
 	default:
-		return Style(status, ansiCyan, color)
+		return Style(text, ansiCyan, color)
 	}
 }
 
