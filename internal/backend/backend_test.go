@@ -56,6 +56,29 @@ func TestPreferenceRulesCarrySourceEvidence(t *testing.T) {
 	}
 }
 
+func TestPreferenceRuleEntriesAreComplete(t *testing.T) {
+	if len(preferenceRuleEntries) == 0 {
+		t.Fatal("expected backend preference registry entries")
+	}
+	seen := map[string]bool{}
+	for _, entry := range preferenceRuleEntries {
+		key := entry.SourceProvider + "/" + entry.SourceName
+		if seen[key] {
+			t.Fatalf("duplicate backend preference entry: %s", key)
+		}
+		seen[key] = true
+		if entry.SourceProvider == "" || entry.SourceName == "" || entry.RecommendedName == "" || entry.Reason == "" {
+			t.Fatalf("incomplete backend preference entry: %#v", entry)
+		}
+		if len(entry.Commands) == 0 {
+			t.Fatalf("expected command evidence for %s", key)
+		}
+		if len(entry.SourceEvidence) == 0 {
+			t.Fatalf("expected source evidence for %s", key)
+		}
+	}
+}
+
 func TestFindingIncludesRecommendationSourceEvidence(t *testing.T) {
 	registry := Registry{}
 	recommendation, ok := registry.PreferenceRecommendation("brew", "fd")

@@ -125,7 +125,7 @@ Global flags:
   and `--format json`; add global verbosity only when a concrete cross-command
   diagnostic need appears.
 - `updev version`, `updev --version`, and `updev -v` report the current
-  implemented release contract, currently `updev v0.6.1`. JSON output from
+  implemented release contract, currently `updev v0.6.2`. JSON output from
   `updev version --format json` includes SemVer parts and the stable/pre-stable
   contract label.
 - Read-only aliases are supported for common commands: `ls` for `list`,
@@ -217,8 +217,11 @@ while showing safety gaps. `off` skips mutation gates and must be visible in the
 report. The default update gate covers Homebrew candidates and mise candidates
 from `mise outdated --json --cd <root>`; Brewfile-managed VS Code extension
 updates remain opt-in. The updev-owned mise gate release-age checks
-`github:`, `npm:`, `cargo:`, and `pipx:` candidates when provider metadata is
-available; unsupported or opaque mise backends stay review-held in strict mode.
+GitHub-backed entries, explicit `aqua:<owner>/<repo>` entries, registry
+`aqua` entries, selected core runtimes such as `go`, `node`, and `rust`,
+high-confidence `npm:` / `cargo:` / `pipx:` entries, and data-driven vfox
+metadata entries when an exact candidate release-date resolver exists.
+Unsupported or opaque mise backends stay review-held in strict mode.
 `[security.mise].min_release_age_days` and
 `UPDEV_MISE_MIN_RELEASE_AGE_DAYS` control the mise threshold without changing
 the Homebrew threshold. `[security.homebrew].outdated_timeout_seconds` and

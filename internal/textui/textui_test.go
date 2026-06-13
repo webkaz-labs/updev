@@ -3,6 +3,7 @@ package textui
 import (
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestDisplayWidthIgnoresANSISequences(t *testing.T) {
@@ -89,5 +90,47 @@ func TestStyleStatusColorsManualAndPolicyAttentionStates(t *testing.T) {
 	}
 	if got := StyleStatus("keep-manual", true); !strings.Contains(got, ansiGreen) {
 		t.Fatalf("expected keep-manual to be ok-colored, got %q", got)
+	}
+}
+
+func TestFriendlyAge(t *testing.T) {
+	tests := []struct {
+		age  time.Duration
+		want string
+	}{
+		{age: 500 * time.Millisecond, want: "0s"},
+		{age: 12 * time.Second, want: "12s"},
+		{age: 3 * time.Minute, want: "3m"},
+		{age: 2 * time.Hour, want: "2h"},
+	}
+	for _, tt := range tests {
+		if got := FriendlyAge(tt.age); got != tt.want {
+			t.Fatalf("FriendlyAge(%s)=%q want %q", tt.age, got, tt.want)
+		}
+	}
+}
+
+func TestFilterSummaryUsesProvidedKeyOrder(t *testing.T) {
+	got := FilterSummary(map[string]string{
+		"query":    "git",
+		"provider": "brew",
+		"empty":    "",
+		"ignored":  "yes",
+	}, "provider", "empty", "query")
+	want := "provider=brew query=git"
+	if got != want {
+		t.Fatalf("FilterSummary = %q, want %q", got, want)
+	}
+}
+
+func TestFilterSummaryWithSeparatorKeepsProvidedKeyOrder(t *testing.T) {
+	got := FilterSummaryWithSeparator(map[string]string{
+		"name":     "git",
+		"decision": "review",
+		"kind":     "tap",
+	}, ", ", "decision", "kind", "name")
+	want := "decision=review, kind=tap, name=git"
+	if got != want {
+		t.Fatalf("FilterSummaryWithSeparator = %q, want %q", got, want)
 	}
 }

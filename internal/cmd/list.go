@@ -14,6 +14,9 @@ import (
 	"time"
 
 	"github.com/webkaz-labs/updev/internal/i18n"
+	"github.com/webkaz-labs/updev/internal/inventoryannotate"
+	"github.com/webkaz-labs/updev/internal/legacycache"
+	"github.com/webkaz-labs/updev/internal/manualinventory"
 	"github.com/webkaz-labs/updev/internal/plan"
 	"github.com/webkaz-labs/updev/internal/reviewui"
 	"github.com/webkaz-labs/updev/internal/textui"
@@ -208,8 +211,8 @@ func maybeUpdateListTranslations(opts listOptions, report listReport) listTransl
 		}
 		return listTranslationUpdate{}
 	}
-	cache := loadLegacyCache()
-	pending := pendingTranslations(report, cache, opts.retranslateAll)
+	cache := legacycache.Load()
+	pending := cache.PendingTranslations(displayListItems(report.Items, report.Sections), report.Sections, opts.retranslateAll)
 	if len(pending) == 0 {
 		if explicit {
 			return listTranslationUpdate{Attempted: true, Message: "translations: up to date"}
@@ -229,13 +232,8 @@ func maybeUpdateListTranslations(opts listOptions, report listReport) listTransl
 		}
 		return listTranslationUpdate{Attempted: true}
 	}
-	for key, en := range pending {
-		cache.en[key] = en
-		if ja := translated[key]; ja != "" {
-			cache.ja[key] = ja
-		}
-	}
-	saveTranslationCache(cache.en, cache.ja)
+	cache.ApplyTranslations(pending, translated)
+	cache.SaveTranslations()
 	message := ""
 	if explicit {
 		message = fmt.Sprintf("translations: updated %d entries", len(translated))
@@ -260,42 +258,6 @@ func validDescriptionTranslationMode(value string) bool {
 		return true
 	default:
 		return false
-	}
-}
-
-func pendingTranslations(report listReport, cache legacyCache, force bool) map[string]string {
-	pending := map[string]string{}
-	for _, item := range displayListItems(report.Items, report.Sections) {
-		key := legacyKey(item.Provider, item.Kind, item.Name)
-		if key == "" {
-			continue
-		}
-		desc := cache.translationSourceForItem(item, key)
-		addPendingTranslation(pending, cache, key, desc, force)
-	}
-	for _, section := range report.Sections {
-		for _, row := range section.Rows {
-			key := row.TranslationKey
-			if key == "" {
-				key = section.Name + ":" + row.Name
-			}
-			desc := row.TranslationSource
-			if desc == "" {
-				desc = cache.en[key]
-			}
-			addPendingTranslation(pending, cache, key, desc, force)
-		}
-	}
-	return pending
-}
-
-func addPendingTranslation(pending map[string]string, cache legacyCache, key string, desc string, force bool) {
-	desc = strings.TrimSpace(desc)
-	if desc == "" || desc == noDescription {
-		return
-	}
-	if force || cache.ja[key] == "" || cache.en[key] != desc {
-		pending[key] = desc
 	}
 }
 
@@ -369,7 +331,7 @@ func parseTranslatedTSV(output []byte, pending map[string]string) map[string]str
 }
 
 func buildListReport(result inventoryResult, opts listOptions) listReport {
-	legacy := loadLegacyCache()
+	legacy := legacycache.Load()
 	root := opts.root
 	if root == "" {
 		root = result.Report.Root
@@ -377,7 +339,7 @@ func buildListReport(result inventoryResult, opts listOptions) listReport {
 	enriched := enrichItems(result.Report.Items, legacy, manualAppIndex(root))
 	enriched = enrichHomebrewTapCaskItems(enriched, manualHomebrewTapIndex(root))
 	filtered := filterItems(enriched, opts)
-	sections := legacy.toolSections(opts)
+	sections := legacy.ToolSections(legacyCacheFilters(opts))
 	manualInventoryItems := enriched
 	if listManualOnly(opts) && len(manualInventoryItems) == 0 {
 		manualInventoryItems = manualCachedInventoryItems(root)
@@ -402,7 +364,7 @@ func buildListReport(result inventoryResult, opts listOptions) listReport {
 		Limit:            opts.limit,
 	}
 	if result.Cached && !result.CreatedAt.IsZero() {
-		report.CacheAge = friendlyAge(time.Since(result.CreatedAt))
+		report.CacheAge = textui.FriendlyAge(time.Since(result.CreatedAt))
 	}
 	filters := map[string]string{}
 	if opts.provider != "" {
@@ -432,6 +394,16 @@ func buildListReport(result inventoryResult, opts listOptions) listReport {
 	return report
 }
 
+func legacyCacheFilters(opts listOptions) legacycache.Filters {
+	return legacycache.Filters{
+		Provider: opts.provider,
+		Kind:     opts.kind,
+		Category: opts.category,
+		Status:   opts.status,
+		Query:    opts.query,
+	}
+}
+
 func printListText(w io.Writer, report listReport, title string, color bool) {
 	fmt.Fprintf(w, "%s %s\n", textui.StyleHeading(title, color), textui.StyleStatus(string(report.Status), color))
 	fmt.Fprintf(w, "%s %s\n", textui.StyleLabel(tr("root:", "ルート:"), color), report.Root)
@@ -439,7 +411,7 @@ func printListText(w io.Writer, report listReport, title string, color bool) {
 		fmt.Fprintf(w, "%s %s %s\n", textui.StyleLabel(tr("cache:", "キャッシュ:"), color), textui.StyleCount(report.CacheAge+" old", color), textui.StyleDim(tr("(use --refresh for a fresh read)", "(再取得は --refresh)"), color))
 	}
 	if len(report.Filters) > 0 {
-		fmt.Fprintf(w, "%s %s\n", textui.StyleLabel(tr("filters:", "フィルター:"), color), textui.StyleRequested(filterSummary(report.Filters), color))
+		fmt.Fprintf(w, "%s %s\n", textui.StyleLabel(tr("filters:", "フィルター:"), color), textui.StyleRequested(textui.FilterSummary(report.Filters, filterSummaryKeys...), color))
 	}
 	printListAttentionSummary(w, report, color)
 	printListEvidenceSummary(w, report, color)
@@ -471,14 +443,14 @@ func printListText(w io.Writer, report listReport, title string, color bool) {
 func printListAttentionSummary(w io.Writer, report listReport, color bool) {
 	providerAttention := 0
 	for _, provider := range report.Providers {
-		if providerStatus(provider) != "ok" {
+		if plan.ProviderStatus(provider) != plan.StatusOK {
 			providerAttention++
 		}
 	}
 	itemCounts := map[string]int{}
 	for _, item := range displayListItems(report.Items, report.Sections) {
-		if isAttentionStatus(item.Status) {
-			itemCounts[inventoryItemStatusLabel(item)]++
+		if plan.IsAttentionStatus(item.Status) {
+			itemCounts[inventoryannotate.ItemStatusLabel(item)]++
 		}
 	}
 	parts := []string{
@@ -491,7 +463,7 @@ func printListAttentionSummary(w io.Writer, report listReport, color bool) {
 	if providerAttention > 0 {
 		parts = append(parts, textui.StyleWarning(fmt.Sprintf(tr("%d provider attention", "provider 注意 %d件"), providerAttention), color))
 	}
-	for _, status := range attentionStatusOrder() {
+	for _, status := range plan.AttentionStatusOrder() {
 		if count := itemCounts[string(status)]; count > 0 {
 			parts = append(parts, textui.StyleStatus(fmt.Sprintf("%s=%d", status, count), color))
 		}
@@ -531,7 +503,7 @@ func printProviderSummary(w io.Writer, providers []plan.ProviderSummary, color b
 	}
 	rows := make([][]string, 0, len(providers))
 	for _, provider := range providers {
-		status := providerStatus(provider)
+		status := string(plan.ProviderStatus(provider))
 		rows = append(rows, []string{
 			textui.StyleName(provider.Name, color),
 			textui.StyleCount(fmt.Sprint(provider.Desired), color),
@@ -580,7 +552,7 @@ func printGroupedItems(w io.Writer, items []plan.Item, limit int, color bool) {
 			rows = append(rows, []string{
 				textui.StyleName(item.Name, color),
 				styleInventoryItemVersion(item.Version, item.Status, color),
-				textui.StyleStatus(inventoryItemStatusLabel(item), color),
+				textui.StyleStatus(inventoryannotate.ItemStatusLabel(item), color),
 				textui.StyleBool(item.Desired, color),
 				textui.StyleBool(item.Live, color),
 				styleInventoryItemDetail(item.Detail, item.Status, color),
@@ -677,7 +649,7 @@ func printListDetails(w io.Writer, report listReport, color bool) {
 			continue
 		}
 		wrote = true
-		fmt.Fprintf(w, "%s %s\n", textui.StyleName(item.Provider+"/"+item.Kind+" "+item.Name, color), textui.StyleStatus(inventoryItemStatusLabel(item), color))
+		fmt.Fprintf(w, "%s %s\n", textui.StyleName(item.Provider+"/"+item.Kind+" "+item.Name, color), textui.StyleStatus(inventoryannotate.ItemStatusLabel(item), color))
 		printDetailLine(w, "detail", localizedBuiltInNoteText(item.Detail), color)
 	}
 	for _, section := range listTextDisplaySections(report) {
@@ -1313,7 +1285,7 @@ func runListFilteredDetailBrowser(title string, report listReport, detailStates 
 }
 
 func listBrowserStateKey(report listReport) string {
-	if summary := filterSummary(report.Filters); summary != "" {
+	if summary := textui.FilterSummary(report.Filters, filterSummaryKeys...); summary != "" {
 		return "list:" + summary
 	}
 	return "list:all"
@@ -1348,7 +1320,7 @@ func enrichToolSectionsWithEvidence(sections []toolSection, evidence listEvidenc
 			actions := row.Actions
 			for _, item := range items {
 				itemEvidence = mergeListItemEvidence(itemEvidence, itemListEvidence(item, evidence))
-				actions = mergeReviewActions(actions, itemToolRowActions(item, evidence))
+				actions = reviewui.MergeActions(actions, itemToolRowActions(item, evidence))
 			}
 			if itemEvidence.Summary() != "" {
 				row.Detail = itemDetailWithEvidence(row.Detail, itemEvidence)
@@ -1363,7 +1335,7 @@ func enrichToolSectionsWithEvidence(sections []toolSection, evidence listEvidenc
 
 func toolSectionRowEvidenceItems(section toolSection, row toolRow) []plan.Item {
 	items := []plan.Item{toolSectionRowEvidenceItem(section, row)}
-	if cask := manualDetailValue(row.Detail, "cask"); cask != "" {
+	if cask := manualinventory.DetailValue(row.Detail, "cask"); cask != "" {
 		items = append(items, plan.Item{
 			Provider: "brew",
 			Kind:     "cask",
@@ -1426,28 +1398,6 @@ func mergeStringsUnique(left []string, right []string) []string {
 	return out
 }
 
-func mergeReviewActions(left []reviewui.Action, right []reviewui.Action) []reviewui.Action {
-	if len(left) == 0 {
-		return right
-	}
-	if len(right) == 0 {
-		return left
-	}
-	out := append([]reviewui.Action{}, left...)
-	seen := map[string]bool{}
-	for _, action := range out {
-		seen[action.Value] = true
-	}
-	for _, action := range right {
-		if strings.TrimSpace(action.Value) == "" || seen[action.Value] {
-			continue
-		}
-		seen[action.Value] = true
-		out = append(out, action)
-	}
-	return out
-}
-
 func itemToolSections(items []plan.Item, evidence listEvidenceIndex) []toolSection {
 	grouped := map[string][]toolRow{}
 	order := []string{}
@@ -1483,7 +1433,7 @@ func itemToolRow(item plan.Item, evidence listEvidenceIndex) toolRow {
 	return toolRow{
 		Name:    item.Name,
 		Version: item.Version,
-		State:   inventoryItemStatusLabel(item),
+		State:   inventoryannotate.ItemStatusLabel(item),
 		Detail:  inventoryItemDetail(item, itemEvidence, detailActionsFromReviewActions(actions)),
 		Actions: actions,
 	}
@@ -2325,7 +2275,7 @@ func inventoryItemIdentity(item plan.Item) string {
 }
 
 func inventoryItemStatusSummary(item plan.Item) string {
-	return inventoryItemStatusLabel(item) + " - " + inventoryItemManagementSummary(item)
+	return inventoryannotate.ItemStatusLabel(item) + " - " + inventoryItemManagementSummary(item)
 }
 
 func inventoryItemManagementSummary(item plan.Item) string {
@@ -2397,7 +2347,7 @@ func listDetailRows(report listReport) []detailBrowserRow {
 
 func itemDetailRow(item plan.Item, evidence listEvidenceIndex) detailBrowserRow {
 	metadata := []string{
-		"status: " + inventoryItemStatusLabel(item),
+		"status: " + inventoryannotate.ItemStatusLabel(item),
 		"provider: " + item.Provider,
 		"kind: " + item.Kind,
 		"name: " + item.Name,
@@ -2416,7 +2366,7 @@ func itemDetailRow(item plan.Item, evidence listEvidenceIndex) detailBrowserRow 
 	metadata = append(metadata, actionRouteEvidence(actions)...)
 	return detailBrowserRow{
 		Title:    item.Provider + "/" + item.Kind + " " + item.Name,
-		Status:   inventoryItemStatusLabel(item),
+		Status:   inventoryannotate.ItemStatusLabel(item),
 		Summary:  firstNonEmpty(item.Detail, itemEvidence.Summary(), item.Version),
 		Detail:   inventoryItemDetail(item, itemEvidence, actions),
 		Metadata: metadata,
@@ -2763,11 +2713,11 @@ func styleDriftCount(count int, color bool) string {
 	return textui.StyleWarning(value, color)
 }
 
-func enrichItems(items []plan.Item, cache legacyCache, manualIndex map[string]toolRow) []plan.Item {
+func enrichItems(items []plan.Item, cache legacycache.Cache, manualIndex map[string]toolRow) []plan.Item {
 	out := make([]plan.Item, 0, len(items))
 	related := syncProviderMismatchIndex(items)
 	for _, item := range items {
-		enriched := cache.enrichItem(item)
+		enriched := cache.EnrichItem(item)
 		if strings.TrimSpace(enriched.Detail) == "" {
 			if reason := syncReasonForItemWithManual(enriched, related, manualIndex); reason != "" {
 				guidance := syncGuidanceForItem(reason, enriched, related)
@@ -2824,7 +2774,7 @@ func filterItems(items []plan.Item, opts listOptions) []plan.Item {
 		if opts.status != "" && !itemStatusMatches(item, opts.status) {
 			continue
 		}
-		if opts.query != "" && !queryMatches(item, opts.query) {
+		if opts.query != "" && !plan.ItemMatchesQuery(item, opts.query) {
 			continue
 		}
 		out = append(out, item)
@@ -2855,83 +2805,12 @@ func filteredProviders(providers []plan.ProviderSummary, provider string) []plan
 	return out
 }
 
-func statusMatches(status plan.Status, filter string) bool {
-	return itemStatusMatches(plan.Item{Status: status}, filter)
-}
-
 func itemStatusMatches(item plan.Item, filter string) bool {
 	normalized := strings.ToLower(strings.TrimSpace(filter))
 	switch normalized {
-	case "attention", "problem", "problems":
-		return isAttentionStatus(item.Status)
 	case "profile-mismatch", "profile":
-		return itemHasProfileMismatch(item)
-	case "changed", "changes", "drift":
-		return item.Status == plan.StatusMissing || item.Status == plan.StatusExtra || item.Status == plan.StatusDrift
+		return inventoryannotate.ItemHasProfileMismatch(item)
 	default:
-		return strings.EqualFold(string(item.Status), normalized)
+		return plan.StatusMatches(item.Status, filter)
 	}
-}
-
-func isAttentionStatus(status plan.Status) bool {
-	for _, candidate := range attentionStatusOrder() {
-		if status == candidate {
-			return true
-		}
-	}
-	return false
-}
-
-func attentionStatusOrder() []plan.Status {
-	return []plan.Status{
-		plan.StatusError,
-		plan.StatusBlocked,
-		plan.StatusHeld,
-		plan.StatusMissing,
-		plan.StatusExtra,
-		plan.StatusDrift,
-		plan.StatusUnavailable,
-	}
-}
-
-func queryMatches(item plan.Item, query string) bool {
-	needle := strings.ToLower(query)
-	haystack := strings.ToLower(strings.Join([]string{item.Name, item.Kind, item.Category, item.Version, item.Detail}, " "))
-	return strings.Contains(haystack, needle)
-}
-
-func providerStatus(provider plan.ProviderSummary) string {
-	switch {
-	case provider.Unavailable:
-		return "unavailable"
-	case provider.Error != "":
-		return "error"
-	case provider.Missing > 0 || provider.Extra > 0:
-		return "drift"
-	default:
-		return "ok"
-	}
-}
-
-func filterSummary(filters map[string]string) string {
-	parts := []string{}
-	for _, key := range []string{"provider", "kind", "category", "status", "query", "limit", "include_vscode"} {
-		if value := filters[key]; value != "" {
-			parts = append(parts, key+"="+value)
-		}
-	}
-	return strings.Join(parts, " ")
-}
-
-func friendlyAge(age time.Duration) string {
-	if age < time.Second {
-		return "0s"
-	}
-	if age < time.Minute {
-		return fmt.Sprintf("%ds", int(age.Seconds()))
-	}
-	if age < time.Hour {
-		return fmt.Sprintf("%dm", int(age.Minutes()))
-	}
-	return fmt.Sprintf("%dh", int(age.Hours()))
 }

@@ -14,7 +14,9 @@ import (
 
 	"github.com/webkaz-labs/updev/internal/brew"
 	"github.com/webkaz-labs/updev/internal/brewfile"
+	"github.com/webkaz-labs/updev/internal/inventoryannotate"
 	"github.com/webkaz-labs/updev/internal/plan"
+	"github.com/webkaz-labs/updev/internal/reviewui"
 	"github.com/webkaz-labs/updev/internal/runner"
 	"github.com/webkaz-labs/updev/internal/textui"
 	"github.com/webkaz-labs/updev/internal/updevpath"
@@ -32,8 +34,10 @@ type options struct {
 const (
 	usageExitCode = 64
 	toolName      = "updev"
-	toolVersion   = "v0.6.1"
+	toolVersion   = "v0.6.2"
 )
+
+var filterSummaryKeys = []string{"provider", "kind", "category", "status", "query", "limit", "include_vscode"}
 
 type versionReport struct {
 	SchemaVersion int    `json:"schema_version"`
@@ -43,6 +47,58 @@ type versionReport struct {
 	Minor         int    `json:"minor"`
 	Patch         int    `json:"patch"`
 	Contract      string `json:"contract"`
+}
+
+type startupProgress = reviewui.StartupProgress
+
+func newStartupProgress(input io.Reader, w io.Writer, format string, message string) startupProgress {
+	return reviewui.NewStartupProgress(shouldShowStartupProgress(input, w, format), w, message)
+}
+
+func shouldShowStartupProgress(input io.Reader, w io.Writer, format string) bool {
+	if value, ok := boolEnv("UPDEV_PROGRESS"); ok {
+		if !value {
+			return false
+		}
+	} else if configured := loadUpdevConfig().UI.Progress; configured != nil && !*configured {
+		return false
+	}
+	if format != "text" {
+		return false
+	}
+	return isTerminal(input) && isTerminal(w)
+}
+
+func inventoryProgressMessage(lang string, refresh bool) string {
+	return reviewui.InventoryProgressMessage(lang, refresh)
+}
+
+func safetyProgressMessage(lang string) string {
+	return reviewui.SafetyProgressMessage(lang)
+}
+
+func descriptionTranslationProgressMessage(lang string) string {
+	return reviewui.DescriptionTranslationProgressMessage(lang)
+}
+
+func reviewPlanProgressMessage(lang string) string {
+	return reviewui.ReviewPlanProgressMessage(lang)
+}
+
+func securityScanProgressMessage(lang string) string {
+	return reviewui.SecurityScanProgressMessage(lang)
+}
+
+func securityReviewProgressMessage(lang string) string {
+	return reviewui.SecurityReviewProgressMessage(lang)
+}
+
+func syncProgressMessage(lang string, refresh bool) string {
+	return reviewui.SyncProgressMessage(lang, refresh)
+}
+
+func mutationProgressMessage(lang string, action string) string {
+	return reviewui.MutationProgressMessage(lang, action)
 }
 
 func Run(args []string) int {
@@ -443,7 +499,7 @@ func runReadOnly(command string, opts options) int {
 
 func runManifestOnlyCheck(command string, opts options) int {
 	report := plan.Report{Status: plan.StatusOK, Root: opts.root, Providers: []plan.ProviderSummary{}}
-	annotateMiseManifestIssues(&report, opts.root)
+	inventoryannotate.AnnotateMiseManifestIssues(&report, opts.root)
 	sortReport(&report)
 	result := inventoryResult{Report: report}
 	if opts.format == "json" {
@@ -480,20 +536,13 @@ func printReadOnlyText(w io.Writer, command string, result inventoryResult) {
 	fmt.Fprintf(w, "%s %s\n", textui.StyleHeading(title, color), textui.StyleStatus(string(report.Status), color))
 	fmt.Fprintf(w, "%s %s\n", textui.StyleLabel("root:", color), report.Root)
 	if result.Cached {
-		fmt.Fprintf(w, "%s %s %s\n", textui.StyleLabel(tr("cache:", "キャッシュ:"), color), textui.StyleCount(friendlyAge(time.Since(result.CreatedAt))+" old", color), textui.StyleDim(tr("(use --refresh for a fresh read)", "(再取得は --refresh)"), color))
+		fmt.Fprintf(w, "%s %s %s\n", textui.StyleLabel(tr("cache:", "キャッシュ:"), color), textui.StyleCount(textui.FriendlyAge(time.Since(result.CreatedAt))+" old", color), textui.StyleDim(tr("(use --refresh for a fresh read)", "(再取得は --refresh)"), color))
 	}
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, textui.StyleHeading("providers", color))
 	rows := make([][]string, 0, len(report.Providers))
 	for _, provider := range report.Providers {
-		status := "ok"
-		if provider.Unavailable {
-			status = "unavailable"
-		} else if provider.Error != "" {
-			status = "error"
-		} else if provider.Missing > 0 || provider.Extra > 0 {
-			status = "drift"
-		}
+		status := string(plan.ProviderStatus(provider))
 		rows = append(rows, []string{
 			textui.StyleName(provider.Name, color),
 			textui.StyleCount(fmt.Sprint(provider.Desired), color),

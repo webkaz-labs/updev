@@ -8,12 +8,15 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
+	"github.com/webkaz-labs/updev/internal/githubrepo"
 	"github.com/webkaz-labs/updev/internal/plan"
+	"github.com/webkaz-labs/updev/internal/registryaudit"
 	"github.com/webkaz-labs/updev/internal/runner"
+	"github.com/webkaz-labs/updev/internal/securityreason"
+	"github.com/webkaz-labs/updev/internal/updatereason"
 )
 
 func TestParseSecurityGateOptions(t *testing.T) {
@@ -47,6 +50,24 @@ func TestParseSecurityGateOptions(t *testing.T) {
 	}
 	if opts.provider != "all" {
 		t.Fatalf("expected all provider, got %+v", opts)
+	}
+}
+
+func TestCollectUpdateSafetyTasksPreservesTaskOrder(t *testing.T) {
+	gates := collectUpdateSafetyTasks([]updateSafetyTask{
+		{provider: "first", collect: func() safetyGate {
+			time.Sleep(5 * time.Millisecond)
+			return safetyGate{}
+		}},
+		{provider: "second", collect: func() safetyGate {
+			return safetyGate{Provider: "explicit-second"}
+		}},
+	})
+	if len(gates) != 2 {
+		t.Fatalf("expected two gates, got %#v", gates)
+	}
+	if gates[0].Provider != "first" || gates[1].Provider != "explicit-second" {
+		t.Fatalf("unexpected gate order/providers: %#v", gates)
 	}
 }
 
@@ -114,66 +135,6 @@ func TestBrewUpdateSafetyUsesGreedyOutdatedCandidates(t *testing.T) {
 	}
 }
 
-func TestBuildSecurityGateReportRunsVSCodeSafety(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
-	root := t.TempDir()
-	if err := os.WriteFile(filepath.Join(root, "Brewfile.tmpl"), []byte(`vscode "publisher.extension"`), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write([]byte(`{"results":[{"extensions":[{
-	  "publisher": {"publisherName": "publisher", "isDomainVerified": true},
-	  "extensionName": "extension",
-	  "displayName": "Extension",
-	  "flags": "validated, public",
-	  "lastUpdated": "2026-05-01T00:00:00Z",
-	  "publishedDate": "2026-04-01T00:00:00Z",
-	  "versions": [{"version": "1.0.0", "properties": [
-	    {"key": "Microsoft.VisualStudio.Code.ExecutesCode", "value": "true"},
-	    {"key": "Microsoft.VisualStudio.Services.Links.Support", "value": "https://example.com/support"}
-	  ]}],
-	  "statistics": [
-	    {"statisticName": "install", "value": 1234},
-	    {"statisticName": "averagerating", "value": 4.5}
-	  ]
-	}]}]}`))
-	}))
-	defer server.Close()
-	osvServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write([]byte(`{"results":[{}]}`))
-	}))
-	defer osvServer.Close()
-	t.Setenv("UPDEV_VSCODE_MARKETPLACE_URL", server.URL)
-	t.Setenv("UPDEV_OSV_API_URL", osvServer.URL)
-	report := buildSecurityGateReport(context.Background(), securityGateOptions{root: root, provider: "vscode"}, &fakeCommandRunner{
-		result: runner.Result{Stdout: "publisher.extension@0.9.0\n"},
-	})
-	if report.Status != plan.StatusHeld {
-		t.Fatalf("expected vscode gate held, got %#v", report)
-	}
-	if len(report.Gates) != 1 || report.Gates[0].Provider != "vscode" {
-		t.Fatalf("expected vscode gate, got %#v", report.Gates)
-	}
-	if len(report.Gates[0].Findings) != 1 || report.Gates[0].Findings[0].Kind != "vscode" || report.Gates[0].Findings[0].Decision != "review" {
-		t.Fatalf("expected vscode review finding, got %#v", report.Gates[0].Findings)
-	}
-	if !report.Gates[0].Findings[0].ExecutesCode || report.Gates[0].Findings[0].Publisher != "publisher" || report.Gates[0].Findings[0].SupportURL == "" {
-		t.Fatalf("expected vscode posture details, got %#v", report.Gates[0].Findings[0])
-	}
-	if len(report.Gates[0].Findings[0].InstalledVersions) != 1 || report.Gates[0].Findings[0].InstalledVersions[0] != "0.9.0" || report.Gates[0].Findings[0].CurrentVersion != "1.0.0" {
-		t.Fatalf("expected vscode installed/current versions, got %#v", report.Gates[0].Findings[0])
-	}
-	if report.Gates[0].Findings[0].PublisherVerified == nil || !*report.Gates[0].Findings[0].PublisherVerified || report.Gates[0].Findings[0].InstallCount != 1234 || report.Gates[0].Findings[0].AverageRating != 4.5 || report.Gates[0].Findings[0].LastUpdated == "" || report.Gates[0].Findings[0].PublishedDate == "" {
-		t.Fatalf("expected vscode provenance details, got %#v", report.Gates[0].Findings[0])
-	}
-	if report.Gates[0].Summary == nil || report.Gates[0].Summary.Review != 1 {
-		t.Fatalf("expected vscode gate summary, got %#v", report.Gates[0].Summary)
-	}
-	if !strings.Contains(report.Gates[0].Findings[0].Remediation, "Marketplace") {
-		t.Fatalf("expected vscode remediation, got %#v", report.Gates[0].Findings[0])
-	}
-}
-
 func TestBuildSecurityGateReportRunsAllSafety(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	root := t.TempDir()
@@ -201,18 +162,6 @@ func TestBuildSecurityGateReportRunsAllSafety(t *testing.T) {
 	report := buildSecurityGateReport(context.Background(), securityGateOptions{root: root, provider: "all", includeVSCode: true}, &fakeCommandRunner{result: runner.Result{Stdout: "{}"}})
 	if report.Status != plan.StatusHeld || len(report.Gates) != 3 || report.Gates[0].Provider != "brew" || report.Gates[1].Provider != "mise" || report.Gates[2].Provider != "vscode" {
 		t.Fatalf("expected combined brew/mise/vscode held gate, got %#v", report)
-	}
-}
-
-func TestBuildSecurityGateReportAllExcludesVSCodeByDefault(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
-	root := t.TempDir()
-	if err := os.WriteFile(filepath.Join(root, "Brewfile.tmpl"), []byte(`vscode "publisher.extension"`), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	report := buildSecurityGateReport(context.Background(), securityGateOptions{root: root, provider: "all"}, &fakeCommandRunner{result: runner.Result{Stdout: "{}"}})
-	if len(report.Gates) != 2 || report.Gates[0].Provider != "brew" || report.Gates[1].Provider != "mise" {
-		t.Fatalf("expected brew and mise gates by default, got %#v", report.Gates)
 	}
 }
 
@@ -253,173 +202,6 @@ func TestBuildSecurityGateReportReportsMiseMinimumReleaseAgeWithoutCandidates(t 
 	}
 	if !containsSubstring(report.Gates[0].Evidence, "mise minimum_release_age active: 3d from /fake/mise/config.toml") {
 		t.Fatalf("expected minimum_release_age evidence without candidates, got %#v", report.Gates[0].Evidence)
-	}
-}
-
-func TestVSCodeInstalledVersionsErrorUsesExitStatus(t *testing.T) {
-	got := vscodeInstalledVersionsError(runner.Result{Code: 127})
-	if got != "code exited with status 127" {
-		t.Fatalf("expected exit status detail, got %q", got)
-	}
-}
-
-func TestCollectUpdateSafetyIncludesVSCodeWhenBrewfileDeclaresExtensions(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
-	root := t.TempDir()
-	if err := os.WriteFile(filepath.Join(root, "Brewfile.tmpl"), []byte(`vscode "publisher.extension"`), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	homebrewServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		http.NotFound(w, r)
-	}))
-	defer homebrewServer.Close()
-	marketplaceServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write([]byte(`{"results":[{"extensions":[{
-	  "publisher": {"publisherName": "publisher", "isDomainVerified": true},
-	  "extensionName": "extension",
-	  "displayName": "Extension",
-	  "flags": "validated, public",
-	  "lastUpdated": "2026-05-01T00:00:00Z",
-	  "publishedDate": "2026-04-01T00:00:00Z",
-	  "versions": [{"version": "1.0.0", "properties": [
-	    {"key": "Microsoft.VisualStudio.Code.ExecutesCode", "value": "true"}
-	  ]}]
-	}]}]}`))
-	}))
-	defer marketplaceServer.Close()
-	osvServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write([]byte(`{"results":[{}]}`))
-	}))
-	defer osvServer.Close()
-	t.Setenv("UPDEV_HOMEBREW_API_URL", homebrewServer.URL)
-	t.Setenv("UPDEV_VSCODE_MARKETPLACE_URL", marketplaceServer.URL)
-	t.Setenv("UPDEV_OSV_API_URL", osvServer.URL)
-	fake := &fakeCommandRunner{results: map[string]runner.Result{
-		strings.Join([]string{"env", "HOMEBREW_NO_AUTO_UPDATE=1", "HOMEBREW_NO_INSTALL_FROM_API=1", "brew", "outdated", "--json=v2", "--greedy"}, "\x00"): {Stdout: `{"formulae":[],"casks":[]}`},
-		strings.Join([]string{"code", "--list-extensions", "--show-versions"}, "\x00"):                                                                    {Stdout: "publisher.extension@0.9.0\n"},
-	}}
-	gates := collectUpdateSafetyWithPolicy(context.Background(), fake, updateOptions{root: root, security: "strict", includeVSCode: true}, securityPolicy{})
-	if len(gates) != 3 || gates[0].Provider != "brew" || gates[1].Provider != "mise" || gates[2].Provider != "vscode" {
-		t.Fatalf("expected brew, mise, and vscode update safety gates, got %#v", gates)
-	}
-	if gates[2].Status != plan.StatusHeld || len(gates[2].Findings) != 1 || gates[2].Findings[0].Kind != "vscode" {
-		t.Fatalf("expected held vscode update safety finding, got %#v", gates[2])
-	}
-}
-
-func TestCollectUpdateSafetyExcludesVSCodeByDefault(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
-	root := t.TempDir()
-	if err := os.WriteFile(filepath.Join(root, "Brewfile.tmpl"), []byte(`vscode "publisher.extension"`), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	fake := &fakeCommandRunner{results: map[string]runner.Result{
-		strings.Join([]string{"env", "HOMEBREW_NO_AUTO_UPDATE=1", "HOMEBREW_NO_INSTALL_FROM_API=1", "brew", "outdated", "--json=v2", "--greedy"}, "\x00"): {Stdout: `{"formulae":[],"casks":[]}`},
-		strings.Join([]string{"code", "--list-extensions", "--show-versions"}, "\x00"):                                                                    {Stdout: "publisher.extension@0.9.0\n"},
-	}}
-	gates := collectUpdateSafetyWithPolicy(context.Background(), fake, updateOptions{root: root, security: "strict"}, securityPolicy{})
-	if len(gates) != 2 || gates[0].Provider != "brew" || gates[1].Provider != "mise" {
-		t.Fatalf("expected brew and mise update safety gates by default, got %#v", gates)
-	}
-	for _, call := range fake.calls {
-		if len(call) > 0 && call[0] == "code" {
-			t.Fatalf("did not expect code command by default, calls=%#v", fake.calls)
-		}
-	}
-}
-
-func TestCollectUpdateSafetyUsesVSCodeCandidateCache(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
-	t.Setenv("XDG_CACHE_HOME", t.TempDir())
-	root := t.TempDir()
-	if err := os.WriteFile(filepath.Join(root, "Brewfile.tmpl"), []byte(`vscode "publisher.extension"`), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	marketplaceCalls := 0
-	marketplaceServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		marketplaceCalls++
-		_, _ = w.Write([]byte(`{"results":[{"extensions":[{
-	  "publisher": {"publisherName": "publisher", "isDomainVerified": true},
-	  "extensionName": "extension",
-	  "displayName": "Extension",
-	  "flags": "validated, public",
-	  "lastUpdated": "2026-05-01T00:00:00Z",
-	  "publishedDate": "2026-04-01T00:00:00Z",
-	  "versions": [{"version": "1.0.0", "properties": [
-	    {"key": "Microsoft.VisualStudio.Code.ExecutesCode", "value": "true"}
-	  ]}]
-	}]}]}`))
-	}))
-	defer marketplaceServer.Close()
-	osvServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write([]byte(`{"results":[{}]}`))
-	}))
-	defer osvServer.Close()
-	t.Setenv("UPDEV_VSCODE_MARKETPLACE_URL", marketplaceServer.URL)
-	t.Setenv("UPDEV_OSV_API_URL", osvServer.URL)
-	fake := &fakeCommandRunner{result: runner.Result{Stdout: "publisher.extension@0.9.0\n"}}
-	first := collectVSCodeUpdateSafetyWithPolicy(context.Background(), fake, root, securityPolicy{})
-	second := collectVSCodeUpdateSafetyWithPolicy(context.Background(), fake, root, securityPolicy{})
-	if marketplaceCalls != 1 {
-		t.Fatalf("expected marketplace to be called once, got %d", marketplaceCalls)
-	}
-	if len(first.Findings) != 1 || len(second.Findings) != 1 {
-		t.Fatalf("expected one cached vscode finding, got first=%#v second=%#v", first.Findings, second.Findings)
-	}
-	if !containsSubstring(second.Findings[0].Evidence, "updev update safety cache") {
-		t.Fatalf("expected cache evidence on second finding, got %#v", second.Findings[0].Evidence)
-	}
-}
-
-func TestCollectUpdateSafetyCachesVSCodeMarketplaceError(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
-	t.Setenv("XDG_CACHE_HOME", t.TempDir())
-	root := t.TempDir()
-	if err := os.WriteFile(filepath.Join(root, "Brewfile.tmpl"), []byte(`vscode "publisher.extension"`), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	marketplaceCalls := 0
-	marketplaceServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		marketplaceCalls++
-		http.Error(w, "temporary marketplace failure", http.StatusBadGateway)
-	}))
-	defer marketplaceServer.Close()
-	t.Setenv("UPDEV_VSCODE_MARKETPLACE_URL", marketplaceServer.URL)
-	fake := &fakeCommandRunner{result: runner.Result{Stdout: "publisher.extension@0.9.0\n"}}
-	first := collectVSCodeUpdateSafetyWithPolicy(context.Background(), fake, root, securityPolicy{})
-	second := collectVSCodeUpdateSafetyWithPolicy(context.Background(), fake, root, securityPolicy{})
-	if marketplaceCalls != 1 {
-		t.Fatalf("expected marketplace error to be cached, got %d calls", marketplaceCalls)
-	}
-	if !containsSubstring(first.Warnings, "VS Code marketplace posture failed") {
-		t.Fatalf("expected first marketplace warning, got %#v", first.Warnings)
-	}
-	if !containsSubstring(second.Warnings, "cached VS Code marketplace posture failed") {
-		t.Fatalf("expected cached marketplace warning, got %#v", second.Warnings)
-	}
-}
-
-func TestCollectUpdateSafetySkipsUninstalledVSCodeItems(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
-	t.Setenv("XDG_CACHE_HOME", t.TempDir())
-	root := t.TempDir()
-	if err := os.WriteFile(filepath.Join(root, "Brewfile.tmpl"), []byte(`vscode "publisher.extension"`), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	marketplaceCalls := 0
-	marketplaceServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		marketplaceCalls++
-		_, _ = w.Write([]byte(`{"results":[{"extensions":[]}]}`))
-	}))
-	defer marketplaceServer.Close()
-	t.Setenv("UPDEV_VSCODE_MARKETPLACE_URL", marketplaceServer.URL)
-	fake := &fakeCommandRunner{result: runner.Result{Stdout: "other.extension@1.0.0\n"}}
-	gate := collectVSCodeUpdateSafetyWithPolicy(context.Background(), fake, root, securityPolicy{})
-	if gate.Status != plan.StatusOK || len(gate.Findings) != 0 {
-		t.Fatalf("expected no vscode update candidates, got %#v", gate)
-	}
-	if marketplaceCalls != 0 {
-		t.Fatalf("expected no marketplace call for uninstalled Brewfile extension, got %d", marketplaceCalls)
 	}
 }
 
@@ -496,6 +278,18 @@ func TestCollectUpdateSafetyCachesBrewOutdatedSuccessWithDeadline(t *testing.T) 
 	}
 }
 
+func TestBrewOutdatedTimeoutFallsBackForNonPositiveEnv(t *testing.T) {
+	t.Setenv("UPDEV_CONFIG", filepath.Join(t.TempDir(), "missing-updev.toml"))
+	t.Setenv("UPDEV_BREW_OUTDATED_TIMEOUT_SECONDS", "0")
+	if got := brewOutdatedTimeout(); got != 60*time.Second {
+		t.Fatalf("expected zero timeout to fall back to default, got %s", got)
+	}
+	t.Setenv("UPDEV_BREW_OUTDATED_TIMEOUT_SECONDS", "-1")
+	if got := brewOutdatedTimeout(); got != 60*time.Second {
+		t.Fatalf("expected negative timeout to fall back to default, got %s", got)
+	}
+}
+
 func TestMiseCommandsInjectGitHubTokenWithoutLeakingCommand(t *testing.T) {
 	t.Setenv("UPDEV_GITHUB_TOKEN", "updev-test-token")
 	root := t.TempDir()
@@ -509,9 +303,9 @@ func TestMiseCommandsInjectGitHubTokenWithoutLeakingCommand(t *testing.T) {
 	}
 
 	recording = &envRecordingRunner{fakeCommandRunner: fakeCommandRunner{result: runner.Result{Stdout: "All tools are up to date"}}}
-	step := updateStep{Name: "mise", Command: []string{"zsh", "-c", "source ~/.zshenv && mise upgrade && mise prune"}}
+	step := updateSteps()[1]
 	_ = runUpdateStepWithHold(context.Background(), recording, step, false, "")
-	if len(recording.envCalls) != 1 || !containsString(recording.envCalls[0], "MISE_GITHUB_TOKEN=updev-test-token") {
+	if len(recording.envCalls) != 2 || !containsString(recording.envCalls[0], "MISE_GITHUB_TOKEN=updev-test-token") || !containsString(recording.envCalls[1], "MISE_GITHUB_TOKEN=updev-test-token") {
 		t.Fatalf("expected mise upgrade step to receive MISE_GITHUB_TOKEN env, got %#v", recording.envCalls)
 	}
 	if strings.Contains(strings.Join(recording.calls[0], " "), "updev-test-token") {
@@ -637,2043 +431,454 @@ mode = "safe"
 	}
 }
 
-func TestRunUpdateStepDryRunDoesNotExecute(t *testing.T) {
-	fake := &fakeCommandRunner{}
-	step := runUpdateStep(context.Background(), fake, updateSteps()[0], true)
-	if step.Status != plan.StatusOK {
-		t.Fatalf("expected dry-run step to be ok, got %s", step.Status)
-	}
-	if len(fake.calls) != 0 {
-		t.Fatalf("dry-run executed commands: %+v", fake.calls)
-	}
-}
-
-func TestRunUpdateStepReportsError(t *testing.T) {
-	fake := &fakeCommandRunner{result: runner.Result{Code: 2, Stderr: "failed", Err: os.ErrPermission}}
-	step := runUpdateStep(context.Background(), fake, updateSteps()[0], false)
-	if step.Status != plan.StatusError {
-		t.Fatalf("expected error status, got %s", step.Status)
-	}
-	if step.Stderr != "failed" {
-		t.Fatalf("expected stderr to be preserved, got %q", step.Stderr)
-	}
-}
-
-func TestRunUpdateStepSummarizesProviderLogs(t *testing.T) {
-	fake := &fakeCommandRunner{result: runner.Result{Stdout: `Upgrading jq
-jq 1.7 -> 1.8.1
-Already up-to-date.`}}
-	step := runUpdateStep(context.Background(), fake, updateSteps()[0], false)
-	if len(step.Updated) != 1 || step.Updated[0] != "jq 1.7 -> 1.8.1" {
-		t.Fatalf("expected updated items from provider logs, got %#v", step.Updated)
-	}
-	if len(step.SkippedItems) != 0 {
-		t.Fatalf("generic skipped provider logs should not become outcome rows, got %#v", step.SkippedItems)
-	}
-}
-
-func TestRunUpdateStepDeduplicatesHomebrewUpgradeProgress(t *testing.T) {
-	fake := &fakeCommandRunner{result: runner.Result{Stdout: `Upgrading 3 outdated packages:
-usage 3.3.0 -> 3.4.0
-mise 2026.5.16 -> 2026.5.18
-cursor 3.6.21,e7a7e93f4d75f8272503ecf33cedbaae10114a15 -> 3.6.31,81fcf2931d768
-mole 1.41.0 -> 1.42.0 (3.5MB)
-Upgraded 4 outdated packages
-Upgrading usage
-3.3.0 -> 3.4.0
-Upgrading mise
-2026.5.16 -> 2026.5.18
-Upgrading cursor
-3.6.21,e7a7e93f4d75f8272503ecf33cedbaae10114a15 -> 3.6.31,81fcf2931d768
-Upgrading mole
-1.41.0 -> 1.42.0`}}
-	step := runUpdateStep(context.Background(), fake, updateSteps()[0], false)
-	want := []string{
-		"usage 3.3.0 -> 3.4.0",
-		"mise 2026.5.16 -> 2026.5.18",
-		"cursor 3.6.21,e7a7e93f4d75f8272503ecf33cedbaae10114a15 -> 3.6.31,81fcf2931d768",
-		"mole 1.41.0 -> 1.42.0",
-	}
-	if strings.Join(step.Updated, "\n") != strings.Join(want, "\n") {
-		t.Fatalf("expected only package version summary rows, got %#v", step.Updated)
-	}
-}
-
-func TestUpdateOutcomeRowsSplitItemAndVersionDetail(t *testing.T) {
-	report := updateReport{Steps: []updateStep{{
-		Name:    "brew",
-		Status:  plan.StatusOK,
-		Updated: []string{"usage 3.3.0 -> 3.4.0", "Updated 2 taps (homebrew/core and homebrew/cask)."},
-	}}}
-	rows := updateOutcomeRows(report, 10, false)
-	if len(rows) != 2 {
-		t.Fatalf("expected two outcome rows, got %#v", rows)
-	}
-	if rows[0][2] != "usage" || rows[0][3] != "3.3.0 -> 3.4.0" {
-		t.Fatalf("expected item/detail split, got %#v", rows[0])
-	}
-	if rows[1][2] != "Homebrew taps" || !strings.Contains(rows[1][3], "Updated 2 taps") {
-		t.Fatalf("expected Homebrew tap update row, got %#v", rows[1])
-	}
-}
-
-func TestUpdateOutcomeRowsSplitMiseBumpSkippedItems(t *testing.T) {
-	report := updateReport{Steps: []updateStep{{
-		Name:         miseBumpProvider,
-		Status:       plan.StatusDrift,
-		Skipped:      true,
-		Reason:       "mise bump candidates available; mode=manual requires item review",
-		SkippedItems: []string{"github:openai/codex 0.60.0 -> 0.60.1"},
-	}}}
-	rows := updateOutcomeRows(report, 10, false)
-	if len(rows) != 1 {
-		t.Fatalf("expected one outcome row, got %#v", rows)
-	}
-	if rows[0][2] != "github:openai/codex" || rows[0][3] != "0.60.0 -> 0.60.1" {
-		t.Fatalf("expected mise-bump skipped item/detail split, got %#v", rows[0])
-	}
-}
-
-func TestRunUpdateStepNormalizesHomebrewSkippedWarnings(t *testing.T) {
-	fake := &fakeCommandRunner{result: runner.Result{Stdout: "Warning: Skipping oven-sh/bun because it is not trusted. Run `brew trust oven-sh/bun`."}}
-	step := runUpdateStep(context.Background(), fake, updateSteps()[0], false)
-	if len(step.SkippedItems) != 1 || step.SkippedItems[0] != "oven-sh/bun skipped: because it is not trusted. Run `brew trust oven-sh/bun`." {
-		t.Fatalf("expected normalized skipped item, got %#v", step.SkippedItems)
-	}
-	rows := updateOutcomeRows(updateReport{Steps: []updateStep{step}}, 10, false)
-	if len(rows) != 1 || rows[0][2] != "oven-sh/bun" || !strings.Contains(rows[0][3], "not trusted") {
-		t.Fatalf("expected skipped outcome row to use item name, got %#v", rows)
-	}
-}
-
-func TestLastUpdateReportNormalizesCachedOutcomes(t *testing.T) {
-	t.Setenv("XDG_CACHE_HOME", t.TempDir())
-	cached := updateReport{Steps: []updateStep{{
-		Name: "brew",
-		Updated: []string{
-			"mole 1.41.0 -> 1.42.0 (3.5MB)",
-			"Upgraded 3 outdated packages",
-			"mole 1.41.0 -> 1.42.0",
-			"Updated Homebrew from 2920e720fa to 6a64c5ef91.",
-		},
-		SkippedItems: []string{
-			"Warning: Skipping oven-sh/bun because it is not trusted. Run `brew trust oven-sh/bun`.",
-			"Already up-to-date.",
-		},
-	}}}
-	_ = saveLastUpdateReport(cached)
-	entry, ok := loadLastUpdateReport()
-	if !ok {
-		t.Fatal("expected cached update report to load")
-	}
-	report := filterUpdateReport(entry.Report, lastReportOptions{})
-	step := report.Steps[0]
-	wantUpdated := []string{
-		"mole 1.41.0 -> 1.42.0",
-		"Updated Homebrew from 2920e720fa to 6a64c5ef91.",
-	}
-	if strings.Join(step.Updated, "\n") != strings.Join(wantUpdated, "\n") {
-		t.Fatalf("expected cached update outcomes to be normalized, got %#v", step.Updated)
-	}
-	if len(step.SkippedItems) != 1 || step.SkippedItems[0] != "oven-sh/bun skipped: because it is not trusted. Run `brew trust oven-sh/bun`." {
-		t.Fatalf("expected cached skipped outcomes to be normalized, got %#v", step.SkippedItems)
-	}
-	rows := updateOutcomeRows(report, 10, false)
-	if len(rows) != 3 || rows[0][2] != "mole" || rows[2][2] != "oven-sh/bun" {
-		t.Fatalf("expected normalized cached outcome rows, got %#v", rows)
-	}
-}
-
-func TestRunUpdateStepIgnoresGenericHomebrewProgressLogs(t *testing.T) {
-	fake := &fakeCommandRunner{result: runner.Result{Stdout: `Updating Homebrew...
-Auto-updating Homebrew...
-Adjust how often this is run with $HOMEBREW_AUTO_UPDATE_SECS or disable with $HOMEBREW_NO_AUTO_UPDATE.
-Already up-to-date.`}}
-	step := runUpdateStep(context.Background(), fake, updateSteps()[0], false)
-	if len(step.Updated) != 0 || len(step.SkippedItems) != 0 {
-		t.Fatalf("generic Homebrew progress logs should not become outcome rows, got updated=%#v skipped=%#v", step.Updated, step.SkippedItems)
-	}
-}
-
-func TestRunUpdateStepStreamsProviderLogsWhenRequested(t *testing.T) {
-	fake := &fakeCommandRunner{result: runner.Result{Stdout: "brew stdout\n", Stderr: "brew stderr\n"}}
-	var stdout bytes.Buffer
-	var stderr bytes.Buffer
-	step := updateSteps()[0]
-	result := runUpdateStepWithWriters(context.Background(), fake, step, false, "", &stdout, &stderr)
-	if result.Status != plan.StatusOK {
-		t.Fatalf("expected ok step, got %#v", result)
-	}
-	if !strings.Contains(stdout.String(), "brew stdout") || !strings.Contains(stderr.String(), "brew stderr") {
-		t.Fatalf("expected provider logs to stream, stdout=%q stderr=%q", stdout.String(), stderr.String())
-	}
-}
-
-func TestShouldStreamUpdateProviderLogs(t *testing.T) {
-	plainOpts, err := parseUpdateOptions([]string{"--plain"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	tests := []struct {
-		name string
-		opts updateOptions
-		want bool
-	}{
-		{
-			name: "text update streams provider logs",
-			opts: updateOptions{format: "text"},
-			want: true,
-		},
-		{
-			name: "interactive text update still streams provider logs",
-			opts: updateOptions{format: "text", tui: true},
-			want: true,
-		},
-		{
-			name: "plain text update still streams provider logs",
-			opts: plainOpts,
-			want: true,
-		},
-		{
-			name: "dry run keeps deterministic output",
-			opts: updateOptions{format: "text", dryRun: true, tui: true},
-			want: false,
-		},
-		{
-			name: "json keeps deterministic output",
-			opts: updateOptions{format: "json"},
-			want: false,
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := shouldStreamUpdateProviderLogs(tt.opts); got != tt.want {
-				t.Fatalf("shouldStreamUpdateProviderLogs()=%v want %v", got, tt.want)
-			}
-		})
-	}
-}
-
-func TestRunUpdateStepCanBeHeldByStrictSafety(t *testing.T) {
-	fake := &fakeCommandRunner{}
-	step := runUpdateStepWithHold(context.Background(), fake, updateSteps()[0], false, "security=strict held update")
-	if step.Status != plan.StatusHeld || !step.Skipped {
-		t.Fatalf("expected held skipped step, got %#v", step)
-	}
-	if len(fake.calls) != 0 {
-		t.Fatalf("held step executed commands: %+v", fake.calls)
-	}
-}
-
-func TestUpdateProviderStdoutWriterUsesStderrForInteractiveTTY(t *testing.T) {
-	if got := updateProviderStdoutWriterForTerminal(true, true); got != os.Stderr {
-		t.Fatalf("expected interactive provider stdout to stream to stderr, got %#v", got)
-	}
-	if got := updateProviderStdoutWriterForTerminal(false, true); got != os.Stdout {
-		t.Fatalf("expected non-interactive provider stdout to stay on stdout, got %#v", got)
-	}
-	if got := updateProviderStdoutWriterForTerminal(true, false); got != os.Stdout {
-		t.Fatalf("expected redirected provider stdout to stay on stdout, got %#v", got)
-	}
-}
-
-func TestRunUpdateStrictSafetyHoldsTooNewBrewCandidate(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
-	t.Setenv("XDG_CACHE_HOME", t.TempDir())
-	t.Setenv("UPDEV_CONFIG", filepath.Join(t.TempDir(), "missing-config.toml"))
-	root := t.TempDir()
-	if err := os.WriteFile(filepath.Join(root, "Brewfile.tmpl"), []byte(`brew "jq"`), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodPost {
-			_, _ = w.Write([]byte(`{"results":[{}]}`))
-			return
-		}
-		switch r.URL.Path {
-		case "/formula/jq.json":
-			_, _ = w.Write([]byte(`{
-  "name": "jq",
-  "tap": "homebrew/core",
-  "homepage": "https://jqlang.github.io/jq/",
-  "versions": {"stable": "1.8.1"},
-  "urls": {"stable": {"url": "https://github.com/jqlang/jq/releases/download/jq-1.8.1/jq-1.8.1.tar.gz"}}
-}`))
-		case "/repos/jqlang/jq/releases/tags/jq-1.8.1":
-			_, _ = w.Write([]byte(`{"published_at":"` + time.Now().UTC().Format(time.RFC3339) + `"}`))
-		default:
-			t.Fatalf("unexpected API path: %s", r.URL.Path)
-		}
-	}))
-	defer server.Close()
-	t.Setenv("UPDEV_HOMEBREW_API_URL", server.URL)
-	t.Setenv("UPDEV_GITHUB_API_URL", server.URL)
-	t.Setenv("UPDEV_OSV_API_URL", server.URL)
-	fake := &fakeCommandRunner{results: map[string]runner.Result{
-		"env\x00HOMEBREW_NO_AUTO_UPDATE=1\x00HOMEBREW_NO_INSTALL_FROM_API=1\x00brew\x00outdated\x00--json=v2\x00--greedy": runner.Result{Stdout: `{"formulae":[{"name":"jq","installed_versions":["1.7"],"current_version":"1.8.1"}],"casks":[]}`},
-	}}
-	code := runUpdate(updateOptions{format: "text", root: root, security: "strict"}, fake)
-	if code != 2 {
-		t.Fatalf("expected held update exit code 2, got %d", code)
-	}
-	for _, call := range fake.calls {
-		if strings.Join(call, " ") == "bash -lc brew update && brew upgrade --greedy && brew cleanup" {
-			t.Fatalf("strict safety hold executed brew upgrade: %#v", fake.calls)
-		}
-	}
-	if !fakeCommandWasCalled(fake.calls, []string{"bash", "-lc", "brew update"}) {
-		t.Fatalf("strict safety should still refresh Homebrew metadata while holding only unsafe candidates: %#v", fake.calls)
-	}
-	entry, ok := loadLastUpdateReport()
-	if !ok {
-		t.Fatal("expected last update report to be saved")
-	}
-	if entry.Report.Status != plan.StatusHeld || len(entry.Report.Safety) != 2 || entry.Report.Safety[0].Status != plan.StatusHeld {
-		t.Fatalf("expected held safety report, got %#v", entry.Report)
-	}
-	if len(entry.Report.Safety[0].Findings) != 1 || entry.Report.Safety[0].Findings[0].Decision != "hold" {
-		t.Fatalf("expected too-new hold finding, got %#v", entry.Report.Safety[0].Findings)
-	}
-	var brewStep updateStep
-	for _, step := range entry.Report.Steps {
-		if step.Name == "brew" {
-			brewStep = step
-			break
-		}
-	}
-	if brewStep.Status != plan.StatusHeld || !brewStep.Skipped || len(brewStep.SkippedItems) != 1 {
-		t.Fatalf("expected item-scoped brew hold, got %#v", brewStep)
-	}
-	if !strings.Contains(brewStep.SkippedItems[0], "jq -> 1.8.1 hold") || strings.Contains(brewStep.SkippedItems[0], "security=strict held update") {
-		t.Fatalf("expected package-specific hold reason, got %#v", brewStep.SkippedItems)
-	}
-}
-
-func TestRunUpdateStrictSafetyHoldsMiseCandidate(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
-	t.Setenv("XDG_CACHE_HOME", t.TempDir())
-	root := t.TempDir()
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/repos/openai/codex/releases/tags/0.61.0", "/repos/openai/codex/git/ref/tags/0.61.0",
-			"/repos/openai/codex/releases/tags/codex-0.61.0", "/repos/openai/codex/git/ref/tags/codex-0.61.0":
-			http.NotFound(w, r)
-		case "/repos/openai/codex/releases/tags/v0.61.0":
-			_, _ = w.Write([]byte(`{"published_at":"` + time.Now().UTC().Format(time.RFC3339) + `"}`))
-		default:
-			t.Fatalf("unexpected API path: %s", r.URL.Path)
-		}
-	}))
-	defer server.Close()
-	t.Setenv("UPDEV_GITHUB_API_URL", server.URL)
-	fake := &fakeCommandRunner{results: map[string]runner.Result{
-		"env\x00HOMEBREW_NO_AUTO_UPDATE=1\x00HOMEBREW_NO_INSTALL_FROM_API=1\x00brew\x00outdated\x00--json=v2\x00--greedy": {Stdout: `{"formulae":[],"casks":[]}`},
-		strings.Join([]string{"mise", "outdated", "--json", "--cd", root}, "\x00"):                                        {Stdout: `{"github:openai/codex":{"requested":"0.60.0","current":"0.60.0","latest":"0.61.0"}}`},
-		strings.Join([]string{"bash", "-lc", "brew update && brew upgrade --greedy && brew cleanup"}, "\x00"):             {Stdout: "Already up-to-date."},
-	}}
-	code := runUpdate(updateOptions{format: "text", root: root, security: "strict"}, fake)
-	if code != 2 {
-		t.Fatalf("expected held update exit code 2, got %d", code)
-	}
-	for _, call := range fake.calls {
-		if strings.Join(call, " ") == "zsh -c source ~/.zshenv && mise upgrade && mise prune" {
-			t.Fatalf("strict safety hold executed mise upgrade: %#v", fake.calls)
-		}
-	}
-	entry, ok := loadLastUpdateReport()
-	if !ok {
-		t.Fatal("expected last update report to be saved")
-	}
-	if entry.Report.Status != plan.StatusHeld || len(entry.Report.Safety) != 2 || entry.Report.Safety[1].Status != plan.StatusHeld {
-		t.Fatalf("expected held mise safety report, got %#v", entry.Report)
-	}
-	if len(entry.Report.Safety[1].Findings) != 1 || entry.Report.Safety[1].Findings[0].Provider != "mise" || entry.Report.Safety[1].Findings[0].Decision != "hold" {
-		t.Fatalf("expected mise hold finding, got %#v", entry.Report.Safety[1].Findings)
-	}
-}
-
-func TestRunUpdateStrictSafetyAppliesMiseSafeCandidateAndHoldsNewerNativeCandidate(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
-	t.Setenv("XDG_CACHE_HOME", t.TempDir())
-	root := t.TempDir()
-	oldRelease := time.Now().AddDate(0, 0, -4).UTC().Format(time.RFC3339)
-	newRelease := time.Now().AddDate(0, 0, -1).UTC().Format(time.RFC3339)
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/repos/openai/codex/releases/tags/0.61.0", "/repos/openai/codex/git/ref/tags/0.61.0",
-			"/repos/openai/codex/releases/tags/codex-0.61.0", "/repos/openai/codex/git/ref/tags/codex-0.61.0":
-			http.NotFound(w, r)
-		case "/repos/openai/codex/releases/tags/v0.61.0":
-			_, _ = w.Write([]byte(`{"published_at":"` + oldRelease + `"}`))
-		case "/repos/openai/codex/releases/tags/0.62.0", "/repos/openai/codex/git/ref/tags/0.62.0",
-			"/repos/openai/codex/releases/tags/codex-0.62.0", "/repos/openai/codex/git/ref/tags/codex-0.62.0":
-			http.NotFound(w, r)
-		case "/repos/openai/codex/releases/tags/v0.62.0":
-			_, _ = w.Write([]byte(`{"published_at":"` + newRelease + `"}`))
-		default:
-			t.Fatalf("unexpected API path: %s", r.URL.Path)
-		}
-	}))
-	defer server.Close()
-	t.Setenv("UPDEV_GITHUB_API_URL", server.URL)
-	scopedMiseKey := strings.Join([]string{"zsh", "-c", "source ~/.zshenv && mise upgrade --yes --minimum-release-age 3d --cd " + root + " github:openai/codex && mise prune"}, "\x00")
-	fake := &fakeCommandRunner{results: map[string]runner.Result{
-		"env\x00HOMEBREW_NO_AUTO_UPDATE=1\x00HOMEBREW_NO_INSTALL_FROM_API=1\x00brew\x00outdated\x00--json=v2\x00--greedy": {Stdout: `{"formulae":[],"casks":[]}`},
-		strings.Join([]string{"mise", "outdated", "--json", "--cd", root}, "\x00"):                                        {Stdout: `{"github:openai/codex":{"requested":"0.60.0","current":"0.60.0","latest":"0.61.0"}}`},
-		strings.Join([]string{"env", "MISE_MINIMUM_RELEASE_AGE=0d", "mise", "outdated", "--json", "--cd", root}, "\x00"):  {Stdout: `{"github:openai/codex":{"requested":"0.60.0","current":"0.60.0","latest":"0.62.0"}}`},
-		scopedMiseKey: {Stdout: "github:openai/codex 0.60.0 -> 0.61.0"},
-	}}
-	code := runUpdate(updateOptions{format: "text", root: root, security: "strict", noTUI: true}, fake)
-	if code != 2 {
-		t.Fatalf("expected held report with safe scoped mise update, got %d", code)
-	}
-	if !fakeCommandWasCalled(fake.calls, strings.Split(scopedMiseKey, "\x00")) {
-		t.Fatalf("expected scoped mise upgrade for safe candidate, calls=%#v", fake.calls)
-	}
-	for _, call := range fake.calls {
-		if strings.Join(call, " ") == "zsh -c source ~/.zshenv && mise upgrade && mise prune" {
-			t.Fatalf("mixed safety must not execute unscoped mise upgrade, calls=%#v", fake.calls)
-		}
-	}
-	entry, ok := loadLastUpdateReport()
-	if !ok {
-		t.Fatal("expected last update report to be saved")
-	}
-	var miseStep updateStep
-	for _, step := range entry.Report.Steps {
-		if step.Name == "mise" {
-			miseStep = step
-			break
-		}
-	}
-	if miseStep.Status != plan.StatusHeld || len(miseStep.Updated) != 1 || len(miseStep.SkippedItems) != 1 {
-		t.Fatalf("expected safe mise update plus held newer candidate, got %#v", miseStep)
-	}
-	if !strings.Contains(miseStep.Updated[0], "0.60.0 -> 0.61.0") || !strings.Contains(miseStep.SkippedItems[0], "0.62.0") {
-		t.Fatalf("expected safe and held mise versions in report, got updated=%#v skipped=%#v", miseStep.Updated, miseStep.SkippedItems)
-	}
-}
-
-func TestRunUpdateStrictSafetyAppliesBrewAllowedCandidatesAndSkipsHeldCandidates(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
-	t.Setenv("XDG_CACHE_HOME", t.TempDir())
-	root := t.TempDir()
-	allowed := safetyFinding{
-		Provider:          "brew",
-		Kind:              "brew",
-		Name:              "jq",
-		InstalledVersions: []string{"1.7"},
-		CurrentVersion:    "1.8.1",
-		Decision:          "allow",
-		Reason:            "candidate release age passed",
-	}
-	held := safetyFinding{
-		Provider:          "brew",
-		Kind:              "brew",
-		Name:              "fast-release",
-		InstalledVersions: []string{"1.0.0"},
-		CurrentVersion:    "3.0.0",
-		Decision:          "hold",
-		Reason:            "candidate release is too new: age 1 days, minimum 3 days",
-	}
-	scoped := updateSteps()[0]
-	scoped, holdReason := updateStepWithStrictSafety(scoped, updateOptions{root: root, security: "strict"}, []safetyGate{{
-		Provider: "brew",
-		Status:   plan.StatusHeld,
-		Findings: []safetyFinding{allowed, held},
-	}})
-	if holdReason != "" {
-		t.Fatalf("expected scoped brew command, got hold reason %q", holdReason)
-	}
-	wantCommand := []string{"bash", "-lc", "HOMEBREW_NO_AUTO_UPDATE=1 brew upgrade --greedy jq && HOMEBREW_NO_AUTO_UPDATE=1 brew cleanup && brew update"}
-	if strings.Join(scoped.Command, "\x00") != strings.Join(wantCommand, "\x00") {
-		t.Fatalf("expected scoped brew command %#v, got %#v", wantCommand, scoped.Command)
-	}
-	fake := &fakeCommandRunner{result: runner.Result{Stdout: "jq 1.7 -> 1.8.1"}}
-	result := runUpdateStepWithHold(context.Background(), fake, scoped, false, holdReason)
-	if result.Status != plan.StatusHeld || len(result.Updated) != 1 || len(result.SkippedItems) != 1 {
-		t.Fatalf("expected partial brew update with held skipped item, got %#v", result)
-	}
-	if !strings.Contains(result.SkippedItems[0], "fast-release -> 3.0.0 hold") {
-		t.Fatalf("expected held brew candidate summary, got %#v", result.SkippedItems)
-	}
-}
-
-func TestRunUpdateStrictSafetyScopesAllAllowedProviderCandidates(t *testing.T) {
-	root := t.TempDir()
-	brew := updateSteps()[0]
-	brew, holdReason := updateStepWithStrictSafety(brew, updateOptions{root: root, security: "strict"}, []safetyGate{{
-		Provider: "brew",
-		Status:   plan.StatusOK,
-		Findings: []safetyFinding{{
-			Provider:       "brew",
-			Kind:           "brew",
-			Name:           "jq",
-			CurrentVersion: "1.8.1",
-			Decision:       "allow",
+func TestSecurityReviewCandidatesFromReportBuildsPrompts(t *testing.T) {
+	report := securityReport{
+		Findings: []securityFinding{{
+			Provider:    "mise",
+			Name:        "npm:pnpm",
+			Package:     "pnpm",
+			Version:     "11.1.2",
+			Ecosystem:   "npm",
+			VulnID:      "GHSA-test",
+			Decision:    "hold",
+			Reason:      "GitHub Advisory vulnerability match",
+			Remediation: "upgrade to a fixed version",
+			URL:         "https://github.com/advisories/GHSA-test",
 		}},
-	}})
-	if holdReason != "" {
-		t.Fatalf("expected scoped all-allow brew command, got hold reason %q", holdReason)
-	}
-	if got := strings.Join(brew.Command, " "); strings.Contains(got, "brew update && brew upgrade") || !strings.Contains(got, "brew upgrade --greedy jq") || !strings.HasSuffix(got, "brew update") {
-		t.Fatalf("expected scoped all-allow brew command without brew update, got %#v", brew.Command)
-	}
-	mise := updateSteps()[1]
-	mise, holdReason = updateStepWithStrictSafety(mise, updateOptions{root: root, security: "strict"}, []safetyGate{{
-		Provider: "mise",
-		Status:   plan.StatusOK,
-		Findings: []safetyFinding{{
-			Provider:       "mise",
-			Kind:           "tool",
-			Name:           "github:openai/codex",
-			CurrentVersion: "0.61.0",
-			Decision:       "allow",
+		VSCode: []vscodePosture{{
+			Provider:    "brew",
+			Kind:        "vscode",
+			Name:        "publisher.extension",
+			Version:     "1.0.0",
+			Decision:    "review",
+			Reason:      "publisher domain is not verified",
+			Remediation: "verify publisher identity",
 		}},
-	}})
-	if holdReason != "" {
-		t.Fatalf("expected scoped all-allow mise command, got hold reason %q", holdReason)
-	}
-	if got := strings.Join(mise.Command, " "); strings.Contains(got, "mise upgrade &&") || !strings.Contains(got, "mise upgrade --yes --minimum-release-age 3d --cd "+root+" github:openai/codex") {
-		t.Fatalf("expected scoped all-allow mise command, got %#v", mise.Command)
-	}
-}
-
-func TestScopedSecurityRerunStepOnlyTargetsSelectedFinding(t *testing.T) {
-	report := updateReport{
-		Root: "/repo",
-		Safety: []safetyGate{{
-			Provider: "brew",
-			Status:   plan.StatusOK,
-			Findings: []safetyFinding{{
-				Provider:       "brew",
-				Kind:           "cask",
-				Name:           "wezterm@nightly",
-				CurrentVersion: "latest",
-				Decision:       "allow",
-			}, {
-				Provider:       "brew",
-				Kind:           "cask",
-				Name:           "cursor",
-				CurrentVersion: "3.7.19",
-				Decision:       "allow",
+		Scanners: []scannerEvidence{{
+			Tool: "osv-scanner",
+			Findings: []scannerFinding{{
+				Kind:           "vulnerability",
+				Ecosystem:      "npm",
+				Package:        "left-pad",
+				Version:        "1.0.0",
+				DependencyKind: "direct",
+				VulnID:         "GHSA-scanner",
+				SourcePath:     "package-lock.json",
+				Decision:       "hold",
+				Reason:         "osv-scanner reported vulnerability in a directly managed package",
+				Remediation:    "update left-pad",
 			}},
 		}},
+		Audits: []nativeAudit{{
+			Provider: "project",
+			Tool:     "maven-native-audit",
+			Target:   "pom.xml",
+			Decision: "review",
+			Reason:   "Maven project audit unavailable",
+			Error:    "no configured provider-native Maven vulnerability audit",
+		}},
+		NPM: []npmPosture{{
+			Provider: "mise",
+			Kind:     "npm",
+			Package:  "safe-package",
+			Decision: "allow",
+		}},
 	}
-	step, ok := scopedSecurityRerunStep(report, "brew", "cask", "wezterm@nightly")
-	if !ok {
-		t.Fatal("expected scoped security rerun step")
+	candidates := securityReviewCandidatesFromReport(report)
+	if len(candidates) != 4 {
+		t.Fatalf("expected four review candidates, got %#v", candidates)
 	}
-	command := strings.Join(step.Command, " ")
-	if !strings.Contains(command, "brew upgrade --greedy wezterm@nightly") || strings.Contains(command, "cursor") {
-		t.Fatalf("expected selected cask only in scoped brew rerun command, got %#v", step.Command)
+	if candidates[0].Decision != "hold" || candidates[0].Name != "pnpm" || !strings.Contains(candidates[0].Prompt, "recommend allow/review/hold/block") {
+		t.Fatalf("expected advisory review prompt first, got %#v", candidates)
 	}
-	if strings.Contains(command, "brew update && brew upgrade") {
-		t.Fatalf("expected scoped rerun not to use unscoped provider update command, got %#v", step.Command)
+	if !strings.Contains(candidates[0].PolicyCommand, "updev security policy hold --provider npm --name pnpm") || !strings.Contains(candidates[0].PolicyCommand, "--ttl-days 30") {
+		t.Fatalf("expected advisory policy command, got %#v", candidates[0])
+	}
+	var nativeCandidate securityReviewCandidate
+	var scannerCandidate securityReviewCandidate
+	var vscodeCandidate securityReviewCandidate
+	for _, candidate := range candidates {
+		switch {
+		case candidate.Provider == "project" && candidate.Kind == "native-audit":
+			nativeCandidate = candidate
+		case candidate.Provider == "scanner" && candidate.Kind == "osv-scanner":
+			scannerCandidate = candidate
+		case candidate.Provider == "brew" && candidate.Kind == "vscode":
+			vscodeCandidate = candidate
+		}
+	}
+	if nativeCandidate.Name != "maven-native-audit" || !strings.Contains(nativeCandidate.Prompt, "pom.xml") || !strings.Contains(nativeCandidate.Prompt, "no configured provider-native") {
+		t.Fatalf("expected native audit review prompt with source and remediation, got %#v", nativeCandidate)
+	}
+	if nativeCandidate.PolicyCommand != "" {
+		t.Fatalf("expected native audit not to produce policy command, got %#v", nativeCandidate)
+	}
+	if scannerCandidate.Name != "GHSA-scanner" || scannerCandidate.Ecosystem != "npm" || scannerCandidate.Package != "left-pad" || scannerCandidate.DependencyKind != "direct" {
+		t.Fatalf("expected scanner review candidate to target scanner tool, got %#v", scannerCandidate)
+	}
+	if !strings.Contains(scannerCandidate.Prompt, "package left-pad") || !strings.Contains(scannerCandidate.Prompt, "dependency role direct") {
+		t.Fatalf("expected scanner prompt package context, got %#v", scannerCandidate)
+	}
+	if !strings.Contains(scannerCandidate.PolicyCommand, "updev security policy hold --provider scanner --kind osv-scanner --name GHSA-scanner") || !strings.Contains(scannerCandidate.PolicyCommand, "--ttl-days 30") {
+		t.Fatalf("expected scanner policy command, got %#v", scannerCandidate)
+	}
+	if vscodeCandidate.Name != "publisher.extension" || !strings.Contains(vscodeCandidate.Prompt, "publisher domain") {
+		t.Fatalf("expected VS Code review prompt, got %#v", candidates)
+	}
+	if !strings.Contains(vscodeCandidate.PolicyCommand, "updev security policy review --provider brew --kind vscode --name publisher.extension") || !strings.Contains(vscodeCandidate.PolicyCommand, "--ttl-days 30") {
+		t.Fatalf("expected VS Code policy command, got %#v", vscodeCandidate)
+	}
+	summary := securityReviewSummaryFromCandidates(candidates)
+	if summary == nil || summary.Candidates != 4 || summary.Decisions["hold"] != 2 || summary.Decisions["review"] != 2 || summary.Providers["mise"] != 1 || summary.Providers["brew"] != 1 || summary.Providers["scanner"] != 1 || summary.Providers["project"] != 1 {
+		t.Fatalf("expected review candidate summary, got %#v", summary)
+	}
+	held := filterSecurityReviewCandidates(candidates, securityReviewOptions{decision: "hold"})
+	if len(held) != 2 {
+		t.Fatalf("expected two held candidates, got %#v", held)
+	}
+	scannerFiltered := filterSecurityReviewCandidates(candidates, securityReviewOptions{kind: "osv-scanner", name: "GHSA"})
+	if len(scannerFiltered) != 1 || scannerFiltered[0].Name != "GHSA-scanner" {
+		t.Fatalf("expected scanner candidate name substring match, got %#v", scannerFiltered)
 	}
 }
 
-func TestScopedMiseUpgradeCommandUsesConfiguredMinimumReleaseAge(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
-	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
-	t.Setenv("UPDEV_MISE_MIN_RELEASE_AGE_DAYS", "5")
-	root := t.TempDir()
-
-	command := scopedMiseUpgradeCommand(root, []safetyFinding{{
-		Provider: "mise",
-		Name:     "github:openai/codex",
-		Decision: "allow",
-	}})
-
-	got := strings.Join(command, " ")
-	want := "mise upgrade --yes --minimum-release-age 5d --cd " + root + " github:openai/codex"
-	if !strings.Contains(got, want) {
-		t.Fatalf("expected configured minimum release age in scoped mise command\nwant: %s\ngot:  %s", want, got)
+func TestSecurityReviewStatusReflectsFilteredCandidates(t *testing.T) {
+	scan := securityReport{Status: plan.StatusHeld}
+	if got := securityReviewStatus(scan, nil); got != plan.StatusOK {
+		t.Fatalf("expected filtered review with no candidates to be ok, got %s", got)
+	}
+	if got := securityReviewStatus(scan, []securityReviewCandidate{{Name: "candidate"}}); got != plan.StatusHeld {
+		t.Fatalf("expected review candidates to hold review status, got %s", got)
+	}
+	if got := securityReviewStatus(securityReport{Status: plan.StatusError}, nil); got != plan.StatusError {
+		t.Fatalf("expected scan errors to remain errors, got %s", got)
 	}
 }
 
-func TestScopedMiseUpgradeCommandOmitsMinimumReleaseAgeWhenDisabled(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
-	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
-	t.Setenv("UPDEV_MISE_MIN_RELEASE_AGE_DAYS", "0")
-
-	command := scopedMiseUpgradeCommand("", []safetyFinding{{
-		Provider: "mise",
-		Name:     "github:openai/codex",
-		Decision: "allow",
-	}})
-
-	got := strings.Join(command, " ")
-	if strings.Contains(got, "--minimum-release-age") {
-		t.Fatalf("expected disabled minimum release age to omit flag, got %s", got)
+func TestPrintSecurityReviewTextIncludesCandidates(t *testing.T) {
+	var buffer bytes.Buffer
+	printSecurityReviewText(&buffer, securityReviewReport{
+		Status:  plan.StatusHeld,
+		Root:    "/repo",
+		Filters: &securityReviewFilters{Decision: "review", Kind: "cask", Name: "demo"},
+		Summary: &securityReviewSummary{Candidates: 1, Decisions: map[string]int{"review": 1}, Providers: map[string]int{"brew": 1}},
+		Candidates: []securityReviewCandidate{{
+			Provider:      "brew",
+			Kind:          "cask",
+			Name:          "demo-app",
+			Decision:      "review",
+			Reason:        "needs provenance review",
+			Remediation:   "verify upstream provenance",
+			Evidence:      []string{"unsigned cask", "non-official tap"},
+			Source:        "Brewfile.tmpl",
+			URL:           "https://example.com/demo-app",
+			Prompt:        "Review updev security candidate brew/cask demo-app.",
+			PolicyCommand: "updev security policy review --provider brew --kind cask --name demo-app --reason \"needs provenance review\"",
+		}},
+	})
+	got := buffer.String()
+	for _, want := range []string{"filters: decision=review, kind=cask, name=demo", "review candidates: 1", "decisions: review=1", "providers: brew=1", "brew/cask demo-app", "needs provenance review", "remediation: verify upstream provenance", "source: Brewfile.tmpl", "url: https://example.com/demo-app", "evidence: unsigned cask; non-official tap", "policy:", "prompt:"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("expected review text to include %q, got %q", want, got)
+		}
 	}
 }
 
-func TestRunUpdateStrictSafetyRefreshesBrewMetadataOnlyWhenNoCandidates(t *testing.T) {
-	brew := updateSteps()[0]
-	brew, holdReason := updateStepWithStrictSafety(brew, updateOptions{security: "strict"}, []safetyGate{{
+func TestPrintSecurityTextIncludesSkippedDetails(t *testing.T) {
+	var buffer bytes.Buffer
+	printSecurityText(&buffer, securityReport{
+		Status:  plan.StatusOK,
+		Root:    "/repo",
+		Sources: []string{"osv"},
+		Skipped: []securitySkipped{{
+			Provider: "brew",
+			Kind:     "brew",
+			Reason:   "homebrew requires curated advisory mapping",
+			Count:    2,
+			Examples: []string{"jq", "gh"},
+		}},
+	}, false)
+	got := buffer.String()
+	if !strings.Contains(got, "skipped automatic matching") || !strings.Contains(got, "brew") || !strings.Contains(got, "2") || !strings.Contains(got, "jq,gh") || !strings.Contains(got, "curated advisory mapping") {
+		t.Fatalf("expected skipped details in text output, got %q", got)
+	}
+}
+
+func TestPrintSafetyTextIncludesWarningsWithErrors(t *testing.T) {
+	var buffer bytes.Buffer
+	printSafetyTextTo(&buffer, []safetyGate{{
 		Provider: "brew",
-		Status:   plan.StatusOK,
+		Status:   plan.StatusError,
+		Warnings: []string{"Homebrew manifest unavailable; provenance checks may be incomplete"},
+		Error:    "brew outdated failed",
 	}})
-	if holdReason != "" {
-		t.Fatalf("expected metadata-only brew command, got hold reason %q", holdReason)
-	}
-	want := []string{"bash", "-lc", "brew update"}
-	if strings.Join(brew.Command, "\x00") != strings.Join(want, "\x00") {
-		t.Fatalf("expected metadata-only brew update, got %#v", brew.Command)
-	}
-	if !strings.Contains(brew.Reason, "metadata only") {
-		t.Fatalf("expected metadata-only reason, got %q", brew.Reason)
+	got := buffer.String()
+	if !strings.Contains(got, "warning: Homebrew manifest unavailable") || !strings.Contains(got, "error: brew outdated failed") {
+		t.Fatalf("expected safety warnings and error, got %q", got)
 	}
 }
 
-func TestRunUpdateStrictSafetyRefreshesBrewMetadataAndAppliesDiscoveredSafeCandidate(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
-	t.Setenv("XDG_CACHE_HOME", t.TempDir())
-	root := t.TempDir()
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/formula/jq.json":
-			_, _ = w.Write([]byte(`{
-  "name": "jq",
-  "tap": "homebrew/core",
-  "homepage": "https://jqlang.github.io/jq/",
-  "versions": {"stable": "1.8.1"},
-  "urls": {"stable": {"url": "https://github.com/jqlang/jq/releases/download/jq-1.8.1/jq-1.8.1.tar.gz"}}
-}`))
-		case "/repos/jqlang/jq/releases/tags/jq-1.8.1":
-			_, _ = w.Write([]byte(`{"published_at":"` + time.Now().AddDate(0, 0, -4).UTC().Format(time.RFC3339) + `"}`))
-		case "/":
-			_, _ = w.Write([]byte(`{"results":[]}`))
-		default:
-			t.Fatalf("unexpected API path: %s", r.URL.Path)
-		}
-	}))
-	defer server.Close()
-	t.Setenv("UPDEV_HOMEBREW_API_URL", server.URL)
-	t.Setenv("UPDEV_GITHUB_API_URL", server.URL)
-	t.Setenv("UPDEV_OSV_API_URL", server.URL)
-	outdatedKey := "env\x00HOMEBREW_NO_AUTO_UPDATE=1\x00HOMEBREW_NO_INSTALL_FROM_API=1\x00brew\x00outdated\x00--json=v2\x00--greedy"
-	scopedBrewKey := strings.Join([]string{"bash", "-lc", "HOMEBREW_NO_AUTO_UPDATE=1 brew upgrade --greedy jq && HOMEBREW_NO_AUTO_UPDATE=1 brew cleanup && brew update"}, "\x00")
-	fake := &fakeCommandRunner{
-		results: map[string]runner.Result{
-			strings.Join([]string{"bash", "-lc", "brew update"}, "\x00"): {Stdout: "Updated Homebrew metadata"},
-			scopedBrewKey: {Stdout: "jq 1.7 -> 1.8.1"},
-		},
-		sequences: map[string][]runner.Result{
-			outdatedKey: {
-				{Stdout: `{"formulae":[],"casks":[]}`},
-				{Stdout: `{"formulae":[{"name":"jq","installed_versions":["1.7"],"current_version":"1.8.1"}],"casks":[]}`},
-			},
-		},
-	}
-	code := runUpdate(updateOptions{format: "text", root: root, security: "strict", noTUI: true}, fake)
-	if code != 0 {
-		t.Fatalf("expected same-run safe Homebrew update after metadata refresh, got %d", code)
-	}
-	if !fakeCommandWasCalled(fake.calls, strings.Split(scopedBrewKey, "\x00")) {
-		t.Fatalf("expected scoped brew upgrade after metadata refresh, calls=%#v", fake.calls)
-	}
-	entry, ok := loadLastUpdateReport()
-	if !ok {
-		t.Fatal("expected last update report to be saved")
-	}
-	var brewStep updateStep
-	for _, step := range entry.Report.Steps {
-		if step.Name == "brew" {
-			brewStep = step
-			break
-		}
-	}
-	if brewStep.Status != plan.StatusOK || len(brewStep.Updated) != 1 || !strings.Contains(brewStep.Updated[0], "jq 1.7 -> 1.8.1") {
-		t.Fatalf("expected discovered safe Homebrew candidate to update in same run, got %#v", brewStep)
-	}
-}
-
-func TestRunUpdateAutoMiseBumpRunsScopedSafeCandidates(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
-	t.Setenv("XDG_CACHE_HOME", t.TempDir())
-	t.Setenv("UPDEV_CONFIG", filepath.Join(t.TempDir(), "missing-config.toml"))
-	t.Setenv("UPDEV_MISE_MIN_RELEASE_AGE_DAYS", "0")
-	root := t.TempDir()
-	safeBumpJSON := `{"github:openai/codex":{"requested":"0.60.0","current":"0.60.0","bump":"0.60.1","latest":"0.60.1"}}`
-	preflightKey := strings.Join([]string{"mise", "upgrade", "--dry-run", "--bump", "--cd", root, "github:openai/codex"}, "\x00")
-	applyKey := strings.Join([]string{"mise", "upgrade", "--bump", "--yes", "--cd", root, "github:openai/codex"}, "\x00")
-	fake := &fakeCommandRunner{results: map[string]runner.Result{
-		strings.Join([]string{"env", "HOMEBREW_NO_AUTO_UPDATE=1", "HOMEBREW_NO_INSTALL_FROM_API=1", "brew", "outdated", "--json=v2", "--greedy"}, "\x00"): {
-			Stdout: `{"formulae":[],"casks":[]}`,
-		},
-		strings.Join([]string{"mise", "settings", "ls", "--json-extended", "--cd", root}, "\x00"): {
-			Stdout: `{}`,
-		},
-		strings.Join([]string{"mise", "outdated", "--json", "--cd", root}, "\x00"): {
-			Stdout: `{}`,
-		},
-		strings.Join([]string{"env", "MISE_MINIMUM_RELEASE_AGE=0d", "mise", "outdated", "--json", "--cd", root}, "\x00"): {
-			Stdout: `{}`,
-		},
-		strings.Join([]string{"mise", "outdated", "--json", "--bump", "--cd", root}, "\x00"): {
-			Stdout: safeBumpJSON,
-		},
-		strings.Join([]string{"env", "MISE_MINIMUM_RELEASE_AGE=0d", "mise", "outdated", "--json", "--bump", "--cd", root}, "\x00"): {
-			Stdout: `{}`,
-		},
-		strings.Join([]string{"bash", "-lc", "brew update && brew upgrade --greedy && brew cleanup"}, "\x00"): {
-			Stdout: "Already up-to-date.",
-		},
-		strings.Join([]string{"zsh", "-c", "source ~/.zshenv && mise upgrade && mise prune"}, "\x00"): {
-			Stdout: "All tools are up to date",
-		},
-		preflightKey: {Stdout: "Would bump github:openai/codex"},
-		applyKey:     {Stdout: "github:openai/codex 0.60.0 -> 0.60.1"},
-	}}
-	code := runUpdate(updateOptions{format: "text", root: root, security: "strict", miseBumpMode: "auto", noTUI: true}, fake)
-	if code != 0 {
-		t.Fatalf("expected successful auto bump update, got %d", code)
-	}
-	if !fakeCommandWasCalled(fake.calls, strings.Split(preflightKey, "\x00")) {
-		t.Fatalf("expected scoped dry-run bump command, calls=%#v", fake.calls)
-	}
-	if !fakeCommandWasCalled(fake.calls, strings.Split(applyKey, "\x00")) {
-		t.Fatalf("expected scoped apply bump command, calls=%#v", fake.calls)
-	}
-	for _, call := range fake.calls {
-		if len(call) == 3 && call[0] == "mise" && call[1] == "upgrade" && call[2] == "--bump" {
-			t.Fatalf("unscoped mise bump must not run, calls=%#v", fake.calls)
-		}
-	}
-	entry, ok := loadLastUpdateReport()
-	if !ok {
-		t.Fatal("expected last update report to be saved")
-	}
-	var bumpStep updateStep
-	for _, step := range entry.Report.Steps {
-		if step.Name == miseBumpProvider {
-			bumpStep = step
-			break
-		}
-	}
-	if bumpStep.Status != plan.StatusOK || len(bumpStep.Updated) != 1 || !strings.Contains(bumpStep.Updated[0], "github:openai/codex") {
-		t.Fatalf("expected successful bump step in report, got %#v", bumpStep)
-	}
-}
-
-func TestRunMiseBumpAutoDryRunShowsWouldUpdateCandidates(t *testing.T) {
-	step, ok := runMiseBumpUpdateStep(context.Background(), &fakeCommandRunner{}, updateOptions{root: "/repo", security: "strict", miseBumpMode: "auto", dryRun: true}, []safetyGate{{
-		Provider: miseBumpProvider,
-		Status:   plan.StatusOK,
-		Findings: []safetyFinding{{
-			Provider:          "mise",
-			Kind:              "tool",
-			Name:              "github:openai/codex",
-			InstalledVersions: []string{"0.60.0"},
-			CurrentVersion:    "0.60.1",
-			Decision:          "allow",
-			Source:            miseBumpSource,
-		}},
-	}}, false)
-	if !ok || len(step.Updated) != 1 || len(step.SkippedItems) != 0 || !strings.HasPrefix(step.Updated[0], "would bump ") {
-		t.Fatalf("expected dry-run auto bump to expose would-update row, ok=%v step=%#v", ok, step)
-	}
-	rows := updateOutcomeRows(updateReport{DryRun: true, Steps: []updateStep{step}}, 10, false)
-	if len(rows) != 1 || rows[0][0] != "would" || !strings.Contains(rows[0][2], "github:openai/codex") {
-		t.Fatalf("expected dry-run outcome to render as would-update, got %#v", rows)
-	}
-}
-
-func TestRunMiseBumpOffModeDoesNotCreateUpdateStep(t *testing.T) {
-	fake := &fakeCommandRunner{}
-	step, ok := runMiseBumpUpdateStep(context.Background(), fake, updateOptions{root: "/repo", security: "strict", miseBumpMode: "off"}, []safetyGate{{
-		Provider: miseBumpProvider,
-		Status:   plan.StatusOK,
-		Findings: []safetyFinding{{
-			Provider:          "mise",
-			Kind:              "tool",
-			Name:              "github:openai/codex",
-			InstalledVersions: []string{"0.60.0"},
-			CurrentVersion:    "0.60.1",
-			Decision:          "allow",
-			Source:            miseBumpSource,
-		}},
-	}}, false)
-	if ok || step.Name != "" || len(fake.calls) != 0 {
-		t.Fatalf("expected off mode to skip mise-bump step without command calls, ok=%v step=%#v calls=%#v", ok, step, fake.calls)
-	}
-}
-
-func TestRunMiseBumpManualModeKeepsAllCandidatesReviewOnly(t *testing.T) {
-	safe := safetyFinding{
-		Provider:          "mise",
-		Kind:              "tool",
-		Name:              "github:openai/codex",
-		InstalledVersions: []string{"0.60.0"},
-		CurrentVersion:    "0.60.1",
-		Decision:          "allow",
-		Source:            miseBumpSource,
-	}
-	unsafe := safetyFinding{
-		Provider:          "mise",
-		Kind:              "tool",
-		Name:              "npm:@google/gemini-cli",
-		InstalledVersions: []string{"0.42.0"},
-		CurrentVersion:    "0.46.0",
-		Decision:          "review",
-		Source:            miseBumpSource,
-	}
-	fake := &fakeCommandRunner{}
-	step, ok := runMiseBumpUpdateStep(context.Background(), fake, updateOptions{root: "/repo", security: "strict", miseBumpMode: "manual"}, []safetyGate{{
-		Provider: miseBumpProvider,
+func TestPrintSafetyTextIncludesRemediation(t *testing.T) {
+	var buffer bytes.Buffer
+	printSafetyTextTo(&buffer, []safetyGate{{
+		Provider: "brew",
 		Status:   plan.StatusHeld,
-		Findings: []safetyFinding{safe, unsafe},
-	}}, false)
-	if !ok || step.Status != plan.StatusDrift || !step.Skipped || len(step.Updated) != 0 || len(step.SkippedItems) != 2 || len(fake.calls) != 0 {
-		t.Fatalf("expected manual mode to expose all candidates without applying, ok=%v step=%#v calls=%#v", ok, step, fake.calls)
-	}
-	if !strings.Contains(strings.Join(step.SkippedItems, "\n"), "github:openai/codex") || !strings.Contains(strings.Join(step.SkippedItems, "\n"), "npm:@google/gemini-cli") {
-		t.Fatalf("expected manual mode skipped items to include safe and review candidates, got %#v", step.SkippedItems)
-	}
-}
-
-func TestRunMiseBumpSafeModeKeepsSafeCandidatesConfirmationOnly(t *testing.T) {
-	safe := safetyFinding{
-		Provider:          "mise",
-		Kind:              "tool",
-		Name:              "github:openai/codex",
-		InstalledVersions: []string{"0.60.0"},
-		CurrentVersion:    "0.60.1",
-		Decision:          "allow",
-		Source:            miseBumpSource,
-	}
-	fake := &fakeCommandRunner{}
-	step, ok := runMiseBumpUpdateStep(context.Background(), fake, updateOptions{root: "/repo", security: "strict", miseBumpMode: "safe"}, []safetyGate{{
-		Provider: miseBumpProvider,
-		Status:   plan.StatusOK,
-		Findings: []safetyFinding{safe},
-	}}, false)
-	if !ok || step.Status != plan.StatusDrift || !step.Skipped || len(step.Updated) != 0 || len(step.SkippedItems) != 1 || len(fake.calls) != 0 {
-		t.Fatalf("expected safe mode to expose confirmation-only batch without applying, ok=%v step=%#v calls=%#v", ok, step, fake.calls)
-	}
-	if !strings.Contains(step.Reason, "can be applied after confirmation") {
-		t.Fatalf("expected safe mode reason to describe confirmation boundary, got %q", step.Reason)
+		Findings: []safetyFinding{{
+			Kind:        "cask",
+			Name:        "firefox",
+			Decision:    "review",
+			Reason:      "needs review",
+			Remediation: "review vendor homepage and download host",
+		}},
+	}})
+	got := buffer.String()
+	if !strings.Contains(got, "next: review vendor homepage and download host") {
+		t.Fatalf("expected remediation in safety text, got %q", got)
 	}
 }
 
-func TestRunMiseBumpAutoSkipsDependencyBlockedCandidate(t *testing.T) {
-	root := t.TempDir()
-	codex := safetyFinding{
-		Provider:          "mise",
-		Kind:              "tool",
-		Name:              "github:openai/codex",
-		InstalledVersions: []string{"0.60.0"},
-		CurrentVersion:    "0.60.1",
-		Decision:          "allow",
-		Source:            miseBumpSource,
+func TestPrintSafetyTextLocalizesReleaseAgeWarnings(t *testing.T) {
+	withDefaultLanguageForTest(t, "ja")
+	var buffer bytes.Buffer
+	printSafetyTextTo(&buffer, []safetyGate{{
+		Provider: "brew",
+		Status:   plan.StatusHeld,
+		Findings: []safetyFinding{{
+			Kind:              "brew",
+			Name:              "libomp",
+			InstalledVersions: []string{"22.1.6"},
+			CurrentVersion:    "22.1.7",
+			Decision:          "hold",
+			Reason:            "candidate release is too new: age 0 days, minimum 3 days",
+			ReasonCode:        securityreason.CandidateReleaseTooNew,
+			ReasonArgs:        map[string]string{"age_days": "0", "min_age_days": "3"},
+			Remediation:       "wait until the release reaches the minimum age or allow temporarily by policy after review",
+		}},
+	}})
+	got := buffer.String()
+	if !strings.Contains(got, "候補リリースが新しすぎます") || !strings.Contains(got, "リリースが最小経過日数に達するまで") || strings.Contains(got, "candidate release is too new") {
+		t.Fatalf("expected localized safety gate text, got %q", got)
 	}
-	broot := safetyFinding{
-		Provider:          "mise",
-		Kind:              "tool",
-		Name:              "cargo:broot",
-		InstalledVersions: []string{"1.56.0"},
-		CurrentVersion:    "1.57.0",
-		Decision:          "allow",
-		Source:            miseBumpSource,
+}
+
+func TestLocalizedSafetyFindingReasonFallsBackFromProse(t *testing.T) {
+	withDefaultLanguageForTest(t, "ja")
+	got := localizedSafetyFindingReason(safetyFinding{Reason: "candidate release is too new: age 1 days, minimum 3 days"})
+	if !strings.Contains(got, "経過 1日") || strings.Contains(got, "candidate release") {
+		t.Fatalf("expected inferred localized safety reason, got %q", got)
 	}
-	validateKey := strings.Join([]string{"mise", "outdated", "--json", "--bump", "--cd", root}, "\x00")
-	firstPreflightKey := strings.Join([]string{"mise", "upgrade", "--dry-run", "--bump", "--cd", root, "cargo:broot", "github:openai/codex"}, "\x00")
-	secondPreflightKey := strings.Join([]string{"mise", "upgrade", "--dry-run", "--bump", "--cd", root, "github:openai/codex"}, "\x00")
-	applyKey := strings.Join([]string{"mise", "upgrade", "--bump", "--yes", "--cd", root, "github:openai/codex"}, "\x00")
-	fake := &fakeCommandRunner{
-		results: map[string]runner.Result{
-			validateKey:        {Stdout: `{"cargo:broot":{"requested":"1.56.0","current":"1.56.0","bump":"1.57.0","latest":"1.57.0"},"github:openai/codex":{"requested":"0.60.0","current":"0.60.0","bump":"0.60.1","latest":"0.60.1"}}`},
-			firstPreflightKey:  {Stderr: "mise WARN tool 'cargo:broot@1.57.0': depends on 'rust' which is not in the current install set"},
-			secondPreflightKey: {Stdout: "Would bump github:openai/codex"},
-			applyKey:           {Stdout: "github:openai/codex 0.60.0 -> 0.60.1"},
+}
+
+func TestSafetySummaryTextReportsHeldAndDecisionCounts(t *testing.T) {
+	got := safetySummaryText([]safetyGate{{
+		Provider: "brew",
+		Status:   plan.StatusHeld,
+		Findings: []safetyFinding{
+			{Decision: "allow"},
+			{Decision: "review"},
+			{Decision: "hold"},
+			{},
 		},
-	}
-	step, ok := runMiseBumpUpdateStep(context.Background(), fake, updateOptions{root: root, security: "strict", miseBumpMode: "auto"}, []safetyGate{{
-		Provider: miseBumpProvider,
-		Status:   plan.StatusOK,
-		Findings: []safetyFinding{codex, broot},
-	}}, false)
-	if !ok || step.Status != plan.StatusHeld || len(step.Updated) != 1 || !strings.Contains(step.Updated[0], "github:openai/codex") || len(step.SkippedItems) != 1 || !strings.Contains(step.SkippedItems[0], "cargo:broot") {
-		t.Fatalf("expected dependency-blocked candidate to be skipped while remaining safe candidate applies, ok=%v step=%#v", ok, step)
-	}
-	if fakeCommandWasCalled(fake.calls, strings.Split(strings.Join([]string{"mise", "upgrade", "--bump", "--yes", "--cd", root, "cargo:broot", "github:openai/codex"}, "\x00"), "\x00")) {
-		t.Fatalf("dependency-blocked candidate must not be passed to apply command, calls=%#v", fake.calls)
-	}
-	if !fakeCommandWasCalled(fake.calls, strings.Split(applyKey, "\x00")) {
-		t.Fatalf("expected remaining safe candidate to be applied, calls=%#v", fake.calls)
+	}})
+	want := "1 provider gates, 1 held providers, 4 findings (1 allow, 1 review, 1 hold, 1 unknown)"
+	if got != want {
+		t.Fatalf("expected safety summary %q, got %q", want, got)
 	}
 }
 
-func TestSanitizedNPMUserConfigForMiseBumpKeepsRegistryAndDropsReleaseAge(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
-	configDir := filepath.Join(home, ".config", "npm")
-	if err := os.MkdirAll(configDir, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(home, ".npmrc"), []byte("registry=https://registry.npmjs.org/\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(configDir, "npmrc"), []byte("@webkaz-labs:registry=https://npm.pkg.github.com\n//npm.pkg.github.com/:_authToken=${NODE_AUTH_TOKEN}\nmin-release-age=3\nminimum_release_age=3\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	content := sanitizedNPMUserConfigContentForMiseBump()
-	for _, want := range []string{
-		"registry=https://registry.npmjs.org/",
-		"@webkaz-labs:registry=https://npm.pkg.github.com",
-		"//npm.pkg.github.com/:_authToken=${NODE_AUTH_TOKEN}",
-	} {
-		if !strings.Contains(content, want) {
-			t.Fatalf("expected sanitized npm config to keep %q, got:\n%s", want, content)
-		}
-	}
-	if strings.Contains(content, "min-release-age") || strings.Contains(content, "minimum_release_age") {
-		t.Fatalf("expected sanitized npm config to drop release-age settings, got:\n%s", content)
-	}
-}
-
-func TestRunMiseBumpAutoWrapsNPMBackendWithSanitizedUserConfig(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
-	configDir := filepath.Join(home, ".config", "npm")
-	if err := os.MkdirAll(configDir, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(configDir, "npmrc"), []byte("registry=https://registry.npmjs.org/\nmin-release-age=3\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	root := t.TempDir()
-	finding := safetyFinding{
-		Provider:          "mise",
-		Kind:              "npm",
-		Name:              "npm:agent-browser",
-		InstalledVersions: []string{"0.27.0"},
-		CurrentVersion:    "0.27.1",
-		Decision:          "allow",
-		Source:            miseBumpSource,
-	}
-	validateKey := strings.Join([]string{"mise", "outdated", "--json", "--bump", "--cd", root}, "\x00")
-	fake := &fakeCommandRunner{results: map[string]runner.Result{
-		validateKey: {Stdout: `{"npm:agent-browser":{"requested":"0.27.0","current":"0.27.0","bump":"0.27.1","latest":"0.27.1"}}`},
-	}}
-	step, ok := runMiseBumpUpdateStep(context.Background(), fake, updateOptions{root: root, security: "strict", miseBumpMode: "auto"}, []safetyGate{{
-		Provider: miseBumpProvider,
-		Status:   plan.StatusOK,
-		Findings: []safetyFinding{finding},
-	}}, false)
-	if !ok || step.Status != plan.StatusOK || len(step.Updated) != 1 {
-		t.Fatalf("expected npm bump to apply with sanitized npm config, ok=%v step=%#v", ok, step)
-	}
-	envCalls := [][]string{}
-	for _, call := range fake.calls {
-		if len(call) > 2 && call[0] == "env" && npmUserConfigAssignmentFromCommand(call) != "" {
-			envCalls = append(envCalls, call)
-		}
-	}
-	if len(envCalls) != 2 {
-		t.Fatalf("expected preflight and apply to use sanitized npm userconfig, calls=%#v", fake.calls)
-	}
-	for _, call := range envCalls {
-		if !containsString(call, "mise") || !containsString(call, "npm:agent-browser") {
-			t.Fatalf("expected sanitized npm env call to wrap scoped mise bump, got %#v", call)
-		}
-		if !containsString(call, "-u") || !containsString(call, "NPM_CONFIG_MIN_RELEASE_AGE") || !containsString(call, "npm_config_min_release_age") {
-			t.Fatalf("expected sanitized npm env call to unset release-age env vars, got %#v", call)
-		}
-		path := strings.TrimPrefix(npmUserConfigAssignmentFromCommand(call), "NPM_CONFIG_USERCONFIG=")
-		if _, err := os.Stat(path); !os.IsNotExist(err) {
-			t.Fatalf("expected temporary npm config to be cleaned up, path=%q err=%v", path, err)
-		}
-	}
-}
-
-func npmUserConfigAssignmentFromCommand(command []string) string {
-	for _, arg := range command {
-		if strings.HasPrefix(arg, "NPM_CONFIG_USERCONFIG=") {
-			return arg
-		}
-	}
-	return ""
-}
-
-func TestRunMiseBumpAutoKeepsPartialUpdatesOnApplyError(t *testing.T) {
-	root := t.TempDir()
-	finding := safetyFinding{
-		Provider:          "mise",
-		Kind:              "tool",
-		Name:              "github:openai/codex",
-		InstalledVersions: []string{"0.60.0"},
-		CurrentVersion:    "0.60.1",
-		Decision:          "allow",
-		Source:            miseBumpSource,
-	}
-	validateKey := strings.Join([]string{"mise", "outdated", "--json", "--bump", "--cd", root}, "\x00")
-	preflightKey := strings.Join([]string{"mise", "upgrade", "--dry-run", "--bump", "--cd", root, "github:openai/codex"}, "\x00")
-	applyKey := strings.Join([]string{"mise", "upgrade", "--bump", "--yes", "--cd", root, "github:openai/codex"}, "\x00")
-	fake := &fakeCommandRunner{results: map[string]runner.Result{
-		validateKey:  {Stdout: `{"github:openai/codex":{"requested":"0.60.0","current":"0.60.0","bump":"0.60.1","latest":"0.60.1"}}`},
-		preflightKey: {Stdout: "Would bump github:openai/codex"},
-		applyKey:     {Stdout: "github:openai/codex 0.60.0 -> 0.60.1", Stderr: "mise failed after partial update", Code: 1},
-	}}
-	step, ok := runMiseBumpUpdateStep(context.Background(), fake, updateOptions{root: root, security: "strict", miseBumpMode: "auto"}, []safetyGate{{
-		Provider: miseBumpProvider,
-		Status:   plan.StatusOK,
-		Findings: []safetyFinding{finding},
-	}}, false)
-	if !ok || step.Status != plan.StatusError || len(step.Updated) != 1 || !strings.Contains(step.Updated[0], "github:openai/codex") {
-		t.Fatalf("expected partial update evidence to survive apply error, ok=%v step=%#v", ok, step)
-	}
-}
-
-func TestRunMiseBumpAutoHoldsWhenCandidateChangesBeforeApply(t *testing.T) {
-	root := t.TempDir()
-	finding := safetyFinding{
-		Provider:          "mise",
-		Kind:              "tool",
-		Name:              "github:openai/codex",
-		InstalledVersions: []string{"0.60.0"},
-		CurrentVersion:    "0.60.1",
-		Decision:          "allow",
-		Source:            miseBumpSource,
-	}
-	fake := &fakeCommandRunner{results: map[string]runner.Result{
-		strings.Join([]string{"mise", "outdated", "--json", "--bump", "--cd", root}, "\x00"): {
-			Stdout: `{"github:openai/codex":{"requested":"0.60.0","current":"0.60.0","bump":"0.60.2","latest":"0.60.2"}}`,
-		},
-	}}
-	step, ok := runMiseBumpUpdateStep(context.Background(), fake, updateOptions{root: root, security: "strict", miseBumpMode: "auto"}, []safetyGate{{
-		Provider: miseBumpProvider,
-		Status:   plan.StatusOK,
-		Findings: []safetyFinding{finding},
-	}}, false)
-	if !ok || step.Status != plan.StatusHeld || !strings.Contains(step.Reason, "candidate set changed") {
-		t.Fatalf("expected changed candidate set to hold auto bump, ok=%v step=%#v", ok, step)
-	}
-	for _, call := range fake.calls {
-		if len(call) >= 2 && call[0] == "mise" && call[1] == "upgrade" {
-			t.Fatalf("changed candidate set must not execute upgrade, calls=%#v", fake.calls)
-		}
-	}
-}
-
-func TestRunMiseBumpAutoAppliesPolicyAllowedNativeAgeHold(t *testing.T) {
-	root := t.TempDir()
-	finding := safetyFinding{
-		Provider:          "mise-bump",
-		Kind:              "tool",
-		Name:              "github:ogulcancelik/herdr",
-		InstalledVersions: []string{"0.6.8"},
-		CurrentVersion:    "0.6.9",
-		Decision:          "allow",
-		Reason:            "reviewed locally",
-		Confidence:        "policy",
-		Evidence:          []string{"mise outdated --json with MISE_MINIMUM_RELEASE_AGE=0d", "security-policy"},
-		Source:            miseNativeReleaseAgeSource,
-	}
-	validateKey := strings.Join([]string{"env", "MISE_MINIMUM_RELEASE_AGE=0d", "mise", "outdated", "--json", "--bump", "--cd", root}, "\x00")
-	preflightKey := strings.Join([]string{"env", "MISE_MINIMUM_RELEASE_AGE=0d", "mise", "upgrade", "--dry-run", "--bump", "--cd", root, "github:ogulcancelik/herdr"}, "\x00")
-	applyKey := strings.Join([]string{"env", "MISE_MINIMUM_RELEASE_AGE=0d", "mise", "upgrade", "--bump", "--yes", "--cd", root, "github:ogulcancelik/herdr"}, "\x00")
-	fake := &fakeCommandRunner{results: map[string]runner.Result{
-		validateKey:  {Stdout: `{"github:ogulcancelik/herdr":{"requested":"0.6.8","current":"0.6.8","bump":"0.6.9","latest":"0.6.9"}}`},
-		preflightKey: {Stdout: "Would bump github:ogulcancelik/herdr"},
-		applyKey:     {Stdout: "github:ogulcancelik/herdr 0.6.8 -> 0.6.9"},
-	}}
-	step, ok := runMiseBumpUpdateStep(context.Background(), fake, updateOptions{root: root, security: "strict", miseBumpMode: "auto"}, []safetyGate{{
-		Provider: miseBumpProvider,
-		Status:   plan.StatusOK,
-		Findings: []safetyFinding{finding},
-	}}, false)
-	if !ok || step.Status != plan.StatusOK || len(step.Updated) != 1 || !strings.Contains(step.Updated[0], "github:ogulcancelik/herdr") {
-		t.Fatalf("expected policy-allowed native age hold to apply, ok=%v step=%#v calls=%#v", ok, step, fake.calls)
-	}
-	normalValidateKey := strings.Join([]string{"mise", "outdated", "--json", "--bump", "--cd", root}, "\x00")
-	if fakeCommandWasCalled(fake.calls, strings.Split(normalValidateKey, "\x00")) {
-		t.Fatalf("policy-allowed age hold must validate against age-disabled candidates, calls=%#v", fake.calls)
-	}
-	if !fakeCommandWasCalled(fake.calls, strings.Split(applyKey, "\x00")) {
-		t.Fatalf("expected scoped age-disabled apply command, calls=%#v", fake.calls)
-	}
-}
-
-func TestMiseBumpSafeModeExposesBatchAction(t *testing.T) {
-	t.Setenv("UPDEV_MISE_BUMP_MODE", "safe")
-	actions := updateStepDetailActions(updateStep{Name: miseBumpProvider, Status: plan.StatusDrift})
-	found := false
-	for _, action := range actions {
-		parsedAction, _, ok := parseMiseBumpDetailAction(action.Value)
-		if ok && parsedAction == "apply-batch" {
-			found = true
-			break
-		}
-	}
-	if !found {
-		t.Fatalf("expected safe mode batch action, got %#v", actions)
-	}
-}
-
-func fakeCommandWasCalled(calls [][]string, want []string) bool {
-	for _, call := range calls {
-		if strings.Join(call, "\x00") == strings.Join(want, "\x00") {
-			return true
-		}
-	}
-	return false
-}
-
-func TestUpdateStepSummaryTextReportsSkippedHeldSteps(t *testing.T) {
-	got := updateStepSummaryText([]updateStep{
+func TestJapaneseSummaryTextUsesDistinctCountLabels(t *testing.T) {
+	withDefaultLanguageForTest(t, "ja")
+	updateGot := updateStepSummaryText([]updateStep{
 		{Name: "brew", Status: plan.StatusHeld, Skipped: true, SkippedItems: []string{"security held"}},
 		{Name: "mise", Status: plan.StatusOK, Updated: []string{"node 22 -> 24"}},
 	})
-	if got != "2 provider steps, 1 updated items, 1 deferred items, 1 held steps, 1 skipped steps" {
-		t.Fatalf("unexpected update step summary: %q", got)
-	}
-}
-
-func TestUpdateOutcomeRowsShowsBrewHeldCandidateItem(t *testing.T) {
-	withDefaultLanguageForTest(t, "ja")
-	step := updateStep{
-		Name:    "brew",
-		Status:  plan.StatusHeld,
-		Skipped: true,
-		SkippedItems: updateSafetySkippedSummaries([]safetyFinding{{
-			Provider:       "brew",
-			Kind:           "cask",
-			Name:           "wezterm@nightly",
-			CurrentVersion: "latest",
-			Decision:       "review",
-			Reason:         "Homebrew cask download host differs from homepage host; vendor provenance review required",
-		}}),
-	}
-	rows := updateOutcomeRows(updateReport{Steps: []updateStep{step}}, 10, false)
-	if len(rows) != 1 {
-		t.Fatalf("expected one skipped row, got %#v", rows)
-	}
-	if rows[0][2] != "wezterm@nightly" {
-		t.Fatalf("expected skipped row item name, got %#v", rows[0])
-	}
-	if !strings.Contains(rows[0][3], "latest review") || !strings.Contains(rows[0][3], "Homebrew cask") {
-		t.Fatalf("expected skipped row detail to include version, decision, and localized reason, got %#v", rows[0])
-	}
-}
-
-func TestPrintUpdateTextIncludesSkippedStepStatus(t *testing.T) {
-	var buffer bytes.Buffer
-	printUpdateTextTo(&buffer, updateReport{
-		Status:   plan.StatusHeld,
-		Root:     "/repo",
-		Report:   "/tmp/last-update.json",
-		Security: "strict",
-		Steps: []updateStep{
-			{Name: "brew", Command: []string{"brew", "upgrade"}, Status: plan.StatusHeld, Skipped: true, Reason: "security=strict held update because safety gate requires review"},
-			{Name: "mise", Command: []string{"mise", "upgrade"}, Status: plan.StatusOK, Updated: []string{"node 22.0.0 -> 22.1.0"}},
-		},
-	})
-	got := buffer.String()
-	for _, want := range []string{"update summary: 2 provider steps, 1 updated items, 1 deferred items, 1 held steps, 1 skipped steps", "update outcome", "node", "22.0.0 -> 22.1.0", "skipped", "brew", "yes", "reason: security=strict held update"} {
-		if !strings.Contains(got, want) {
-			t.Fatalf("expected update text to include %q, got %q", want, got)
-		}
-	}
-	if strings.Contains(got, "brew upgrade") || strings.Contains(got, "mise upgrade") || strings.Contains(got, "command") {
-		t.Fatalf("expected human update text to hide raw commands, got %q", got)
-	}
-}
-
-func TestSafetyHumanTextLocalizesReleaseAgeWarnings(t *testing.T) {
-	withDefaultLanguageForTest(t, "ja")
-	finding := safetyFinding{
-		Provider:          "brew",
-		Kind:              "brew",
-		Name:              "libomp",
-		InstalledVersions: []string{"22.1.6"},
-		CurrentVersion:    "22.1.7",
-		Decision:          "hold",
-		Reason:            "candidate release is too new: age 0 days, minimum 3 days",
-		Remediation:       "wait until the release reaches the minimum age or allow temporarily by policy after review",
-	}
-	report := updateReport{
-		Security: "warn",
-		Safety: []safetyGate{{
-			Provider: "brew",
-			Status:   plan.StatusHeld,
-			Findings: []safetyFinding{finding},
-		}},
-	}
-	var dashboard bytes.Buffer
-	printUpdateSafetyDashboard(&dashboard, report, false)
-	if got := dashboard.String(); !strings.Contains(got, "候補リリースが新しすぎます") || strings.Contains(got, "candidate release is too new") {
-		t.Fatalf("expected localized safety dashboard reason, got %q", got)
-	}
-	var details bytes.Buffer
-	printSafetyFindingDetails(&details, report.Safety, false)
-	if got := details.String(); !strings.Contains(got, "候補リリースが新しすぎます") || !strings.Contains(got, "リリースが最小経過日数に達するまで") {
-		t.Fatalf("expected localized safety details, got %q", got)
-	}
-	row := safetyFindingDetailRow(report.Safety[0], finding)
-	metadata := strings.Join(row.Metadata, "\n")
-	if !strings.Contains(row.Summary, "候補リリースが新しすぎます") || !strings.Contains(row.Detail, "リリースが最小経過日数に達するまで") || !strings.Contains(metadata, "候補リリースが新しすぎます") {
-		t.Fatalf("expected localized safety detail row, row=%#v metadata=%q", row, metadata)
-	}
-}
-
-func TestSecurityReviewTextLocalizesCandidateReasons(t *testing.T) {
-	withDefaultLanguageForTest(t, "ja")
-	report := securityReviewReport{
-		Status: plan.StatusHeld,
-		Root:   "/repo",
-		Candidates: []securityReviewCandidate{{
-			Provider:    "github-repo",
-			Kind:        "github",
-			Name:        "owner/repo",
-			Decision:    "review",
-			Reason:      "repository is archived",
-			Remediation: "replace the archived repository source or add a temporary policy override after review",
-			Prompt:      "Review updev security candidate github-repo/github owner/repo.",
-		}},
-	}
-	var buffer bytes.Buffer
-	printSecurityReviewText(&buffer, report)
-	got := buffer.String()
-	if !strings.Contains(got, "reason: repository が archived です") || !strings.Contains(got, "remediation: archived repository source を置き換える") {
-		t.Fatalf("expected localized review candidate reason/remediation, got %q", got)
-	}
-	if strings.Contains(got, "reason: repository is archived") || strings.Contains(got, "remediation: replace the archived repository source") {
-		t.Fatalf("expected review candidate text to avoid English reason/remediation, got %q", got)
-	}
-}
-
-func withDefaultLanguageForTest(t *testing.T, lang string) {
-	t.Helper()
-	old, hadOld := os.LookupEnv("UPDEV_LANG")
-	_ = os.Setenv("UPDEV_LANG", lang)
-	defaultLanguageOnce = sync.Once{}
-	defaultLanguageValue = ""
-	t.Cleanup(func() {
-		if hadOld {
-			_ = os.Setenv("UPDEV_LANG", old)
-		} else {
-			_ = os.Unsetenv("UPDEV_LANG")
-		}
-		defaultLanguageOnce = sync.Once{}
-		defaultLanguageValue = ""
-	})
-}
-
-func TestPrintUpdateTextOmitsEmptyDetailColumn(t *testing.T) {
-	var buffer bytes.Buffer
-	printUpdateTextTo(&buffer, updateReport{
-		Status:   plan.StatusOK,
-		Root:     "/repo",
-		Security: "off",
-		Steps: []updateStep{
-			{Name: "brew", Status: plan.StatusOK},
-			{Name: "mise", Status: plan.StatusOK},
-		},
-	})
-	got := buffer.String()
-	if strings.Contains(got, "detail") || strings.Contains(got, "詳細") {
-		t.Fatalf("expected empty detail column to be omitted, got %q", got)
-	}
-}
-
-func TestUpdateOutcomeRowsPreferGateProviderForSecurityFindings(t *testing.T) {
-	rows := updateOutcomeRows(updateReport{
-		Safety: []safetyGate{{
-			Provider: "vscode",
-			Status:   plan.StatusHeld,
-			Findings: []safetyFinding{{
-				Provider:          "brew",
-				Kind:              "vscode",
-				Name:              "publisher.extension",
-				InstalledVersions: []string{"1.0.0"},
-				CurrentVersion:    "1.1.0",
-				Decision:          "hold",
-			}},
-		}},
-	}, 10, false)
-	if len(rows) != 1 || rows[0][1] != "vscode" || rows[0][3] != "1.0.0 -> 1.1.0" {
-		t.Fatalf("expected vscode provider and concise version detail, got %#v", rows)
-	}
-}
-
-func TestUpdateOutcomeRowsColorUpdatedItems(t *testing.T) {
-	rows := updateOutcomeRows(updateReport{
-		Steps: []updateStep{{
-			Name:    "mise",
-			Status:  plan.StatusOK,
-			Updated: []string{"node 22.0.0 -> 24.0.0"},
-		}},
-	}, 10, true)
-	if len(rows) != 1 {
-		t.Fatalf("expected updated row, got %#v", rows)
-	}
-	for _, column := range []int{0, 2, 3} {
-		if !strings.Contains(rows[0][column], "\033[32m") {
-			t.Fatalf("expected updated column %d to be green, got %#v", column, rows[0])
-		}
-	}
-}
-
-func TestPrintUpdateTextShowsWarnModeSafetyAsWarnings(t *testing.T) {
-	var buffer bytes.Buffer
-	printUpdateTextTo(&buffer, updateReport{
-		Status:   plan.StatusOK,
-		Root:     "/repo",
-		Security: "warn",
-		Steps: []updateStep{{
-			Name:    "brew",
-			Status:  plan.StatusOK,
-			Updated: []string{"mise 2026.5.16 -> 2026.5.18"},
-		}},
-		Safety: []safetyGate{{
-			Provider: "brew",
-			Status:   plan.StatusHeld,
-			Summary:  &safetySummary{Findings: 1, Hold: 1},
-			Findings: []safetyFinding{{
-				Provider:          "brew",
-				Kind:              "brew",
-				Name:              "mise",
-				InstalledVersions: []string{"2026.5.16"},
-				CurrentVersion:    "2026.5.18",
-				Decision:          "hold",
-				Reason:            "candidate release is too new",
-			}},
-		}},
-	})
-	got := buffer.String()
-	for _, want := range []string{"safety summary: 1 gates, 1 warnings", "warning", "mise", "2026.5.16 -> 2026.5.18"} {
-		if !strings.Contains(got, want) {
-			t.Fatalf("expected warn-mode update text to include %q, got %q", want, got)
-		}
-	}
-	for _, unwanted := range []string{"held", "hold"} {
-		if strings.Contains(got, unwanted) {
-			t.Fatalf("expected warn-mode update text to avoid %q wording, got %q", unwanted, got)
-		}
-	}
-}
-
-func TestPrintUpdateTextUsesCompactInventoryDashboard(t *testing.T) {
-	var buffer bytes.Buffer
-	printUpdateTextTo(&buffer, updateReport{
-		Status:   plan.StatusDrift,
-		Root:     "/repo",
-		Security: "off",
-		Steps: []updateStep{
-			{Name: "brew", Command: []string{"brew", "upgrade"}, Status: plan.StatusOK},
-		},
-		Inventory: plan.Report{
-			Status: plan.StatusDrift,
-			Providers: []plan.ProviderSummary{
-				{Name: "brew", Desired: 1, Live: 2, Extra: 1},
-				{Name: "mise", Desired: 1, Live: 1},
-			},
-			Items: []plan.Item{
-				{Provider: "brew", Kind: "brew", Name: "jq", Status: plan.StatusExtra, Live: true, Detail: "JSON processor"},
-				{Provider: "brew", Kind: "cask", Name: "warp", Status: plan.StatusExtra, Live: true, Detail: profileMismatchDetail("personal")},
-				{Provider: "mise", Kind: "tool", Name: "node", Status: plan.StatusOK, Desired: true, Live: true, Detail: "Node runtime"},
-			},
-		},
-	})
-	got := buffer.String()
-	for _, want := range []string{"inventory drift", "top inventory items", "jq", "profile", "profile-mismatch"} {
-		if !strings.Contains(got, want) {
-			t.Fatalf("expected compact update dashboard to include %q, got %q", want, got)
-		}
-	}
-	if strings.Contains(got, "updev last --format json") || strings.Contains(got, "\nnext\n") {
-		t.Fatalf("expected human update dashboard to avoid follow-up command lists, got %q", got)
-	}
-	if strings.Contains(got, "brew / brew") || strings.Contains(got, "Node runtime") {
-		t.Fatalf("expected update dashboard to avoid full inventory tables, got %q", got)
-	}
-}
-
-func TestSaveAndLoadLastUpdateReport(t *testing.T) {
-	cacheHome := t.TempDir()
-	t.Setenv("XDG_CACHE_HOME", cacheHome)
-	path := saveLastUpdateReport(updateReport{
-		Status:   plan.StatusHeld,
-		Root:     "/repo",
-		Security: "strict",
-		Steps: []updateStep{
-			{Name: "brew", Status: plan.StatusHeld, Skipped: true},
-		},
-	})
-	if path == "" {
-		t.Fatal("expected cached report path")
-	}
-	if !strings.HasPrefix(path, filepath.Join(cacheHome, "updev", "reports")) {
-		t.Fatalf("expected report under XDG cache, got %q", path)
-	}
-	entry, ok := loadLastUpdateReport()
-	if !ok {
-		t.Fatal("expected cached report to load")
-	}
-	if entry.Report.Status != plan.StatusHeld || entry.Report.Root != "/repo" || entry.Report.Report != path {
-		t.Fatalf("unexpected cached report: %#v", entry)
-	}
-}
-
-func TestPrintLastReportTextDoesNotRepeatUpdateHeader(t *testing.T) {
-	var buffer bytes.Buffer
-	printLastReportText(&buffer, updateReportCacheEntry{
-		Version:   1,
-		Type:      "update",
-		CreatedAt: time.Date(2026, 5, 30, 1, 0, 0, 0, time.UTC),
-		Report: updateReport{
-			Status:   plan.StatusOK,
-			Root:     "/repo",
-			Security: "off",
-			Steps: []updateStep{
-				{Name: "brew", Status: plan.StatusOK},
-			},
-		},
-	}, lastReportOptions{section: "summary"})
-	got := buffer.String()
-	if !strings.Contains(got, "updev last ok") || strings.Contains(got, "updev update") {
-		t.Fatalf("expected last report to reuse update body without update header, got %q", got)
-	}
-}
-
-func TestLastReportHubUsesTopAnchoredUpdateSummary(t *testing.T) {
-	report := updateReport{
-		Status:   plan.StatusHeld,
-		Root:     "/repo",
-		Security: "strict",
-		Steps: []updateStep{{
-			Name:         "mise-bump",
-			Status:       plan.StatusHeld,
-			SkippedItems: []string{"aqua:modem-dev/hunk 0.14.0 -> 0.14.1"},
-		}},
-		Report: "/tmp/last-update.json",
-	}
-	model := newUpdateHubRouterModel(report, inventoryPlanReport{}, false, backendPlanReport{}, false, lastReportHubDefaultAction("summary"), updateHubActionDashboard, false)
-	model.height = 16
-	model.applyDashboardSize(&model.dashboard)
-	view := model.View().Content
-	rootIndex := strings.Index(view, "root:")
-	outcomeIndex := strings.Index(view, "update outcome")
-	headerIndex := strings.Index(view, "type")
-	rowIndex := strings.Index(view, "skipped")
-	if rootIndex < 0 || outcomeIndex < 0 || headerIndex < 0 || rowIndex < 0 || !(rootIndex < outcomeIndex && outcomeIndex < headerIndex && headerIndex < rowIndex) {
-		t.Fatalf("expected last-report hub summary to stay top-anchored with title/header before rows:\n%s", view)
-	}
-}
-
-func TestBuildUpdateReportSectionViewFiltersInventory(t *testing.T) {
-	entry := updateReportCacheEntry{
-		Version:   1,
-		Type:      "update",
-		CreatedAt: time.Date(2026, 5, 30, 1, 0, 0, 0, time.UTC),
-		Report: updateReport{
-			Status: plan.StatusDrift,
-			Inventory: plan.Report{
-				Status: plan.StatusDrift,
-				Providers: []plan.ProviderSummary{
-					{Name: "brew", Desired: 1, Live: 2, Extra: 1},
-					{Name: "mise", Desired: 1, Live: 1},
-				},
-				Items: []plan.Item{
-					{Provider: "brew", Kind: "brew", Name: "jq", Status: plan.StatusExtra, Live: true},
-					{Provider: "mise", Kind: "tool", Name: "node", Status: plan.StatusOK, Desired: true, Live: true},
-				},
-			},
-		},
-	}
-	view := buildUpdateReportSectionView(entry, lastReportOptions{section: "inventory", provider: "brew", status: "attention"})
-	if view.Section != "inventory" || view.Inventory == nil {
-		t.Fatalf("expected inventory view, got %#v", view)
-	}
-	if view.Status != plan.StatusDrift {
-		t.Fatalf("expected inventory section status to come from inventory, got %s", view.Status)
-	}
-	if len(view.Inventory.Items) != 1 || view.Inventory.Items[0].Name != "jq" {
-		t.Fatalf("expected filtered attention inventory item, got %#v", view.Inventory.Items)
-	}
-	if view.Summary.InventoryAttention != 1 || view.Filters["provider"] != "brew" {
-		t.Fatalf("unexpected view summary/filters: %#v", view)
-	}
-}
-
-func TestFilterPlanProvidersKeepsProviderWhenOnlyItemQueryIsSet(t *testing.T) {
-	providers := []plan.ProviderSummary{{Name: "brew", Desired: 1, Live: 1}}
-	filtered := filterPlanProviders(providers, lastReportOptions{provider: "brew", query: "ripgrep"})
-	if len(filtered) != 1 || filtered[0].Name != "brew" {
-		t.Fatalf("expected provider filter to survive item query, got %#v", filtered)
-	}
-}
-
-func TestPrintLastReportSecurityDetails(t *testing.T) {
-	var buffer bytes.Buffer
-	printLastReportText(&buffer, updateReportCacheEntry{
-		Version:   1,
-		Type:      "update",
-		CreatedAt: time.Date(2026, 5, 30, 1, 0, 0, 0, time.UTC),
-		Report: updateReport{
-			Status: plan.StatusHeld,
-			Root:   "/repo",
-			Safety: []safetyGate{{
-				Provider: "brew",
-				Status:   plan.StatusHeld,
-				Findings: []safetyFinding{{
-					Provider:    "brew",
-					Kind:        "cask",
-					Name:        "demo",
-					Decision:    "hold",
-					Reason:      "needs provenance review",
-					Remediation: "verify upstream",
-					Evidence:    []string{"unsigned cask"},
-				}},
-			}},
-		},
-	}, lastReportOptions{section: "security", status: "attention", details: true})
-	got := buffer.String()
-	for _, want := range []string{"section: security", "security details", "brew/cask demo", "needs provenance review", "unsigned cask"} {
-		if !strings.Contains(got, want) {
-			t.Fatalf("expected security detail output to include %q, got %q", want, got)
-		}
-	}
-}
-
-func TestUpdateDetailRowsExposeInventorySecurityAndLogs(t *testing.T) {
-	report := updateReport{
-		Status: plan.StatusHeld,
-		Steps: []updateStep{{
-			Name:         "brew",
-			Command:      []string{"brew", "upgrade"},
-			Status:       plan.StatusHeld,
-			Reason:       "security review required",
-			Stdout:       "kept current version",
-			Updated:      []string{"jq 1.7 -> 1.8.1"},
-			SkippedItems: []string{"demo held by policy"},
-		}},
-		Safety: []safetyGate{{
-			Provider: "brew",
-			Status:   plan.StatusHeld,
-			Findings: []safetyFinding{{
-				Provider:      "brew",
-				Kind:          "cask",
-				Name:          "demo",
-				Decision:      "hold",
-				Reason:        "needs provenance review",
-				Remediation:   "verify upstream",
-				Evidence:      []string{"unsigned cask"},
-				FixedVersions: []string{"1.2.3"},
-			}, {
-				Provider: "brew",
-				Kind:     "brew",
-				Name:     "safe",
-				Decision: "allow",
-				Reason:   "already trusted",
-			}},
-		}},
-		Inventory: plan.Report{
-			Status: plan.StatusDrift,
-			Items: []plan.Item{
-				{Provider: "brew", Kind: "brew", Name: "jq", Status: plan.StatusExtra, Live: true, Detail: "extra package"},
-				{Provider: "brew", Kind: "brew", Name: "git", Status: plan.StatusOK, Desired: true, Live: true},
-			},
-		},
-	}
-	if rows := updateInventoryDetailRows(report); len(rows) != 1 || rows[0].Title != "brew/brew jq" {
-		t.Fatalf("expected attention inventory detail row, got %#v", rows)
-	}
-	securityRows := updateSecurityDetailRows(report)
-	if len(securityRows) != 1 || !strings.Contains(strings.Join(securityRows[0].Metadata, " "), "fixed: 1.2.3") || !strings.Contains(strings.Join(securityRows[0].Metadata, " "), "decision: hold") {
-		t.Fatalf("expected security finding metadata, got %#v", securityRows)
-	}
-	if len(securityRows[0].Actions) != 5 || !strings.Contains(securityRows[0].Actions[0].Value, securityDetailActionPrefix) {
-		t.Fatalf("expected held security row to expose policy actions, got %#v", securityRows[0].Actions)
-	}
-	allowRows := updateSecurityDetailRowsForFilter(report, lastReportOptions{section: "security", status: "allow"})
-	if len(allowRows) != 2 || allowRows[1].Title != "brew/brew safe" {
-		t.Fatalf("expected explicit allow filter to show allow findings, got %#v", allowRows)
-	}
-	logRows := updateLogDetailRows(report)
-	if len(logRows) != 3 {
-		t.Fatalf("expected updated item, deferred item, and provider log rows, got %#v", logRows)
-	}
-	if logRows[0].Status != "updated" || logRows[0].Summary != "jq 1.7 -> 1.8.1" {
-		t.Fatalf("expected first update detail row to be item-level updated row, got %#v", logRows[0])
-	}
-	if logRows[1].Status != "held" || logRows[1].Summary != "demo held by policy" || len(logRows[1].Actions) != 1 {
-		t.Fatalf("expected second update detail row to be held item row with security action, got %#v", logRows[1])
-	}
-	providerLog := logRows[2]
-	logMetadata := strings.Join(providerLog.Metadata, " ")
-	if !strings.Contains(logMetadata, "stdout: kept current version") || !strings.Contains(logMetadata, "updated: jq") || !strings.Contains(logMetadata, "deferred: demo held") {
-		t.Fatalf("expected update provider log metadata, got %#v", providerLog)
-	}
-	if providerLog.Summary != "security review required" {
-		t.Fatalf("expected reason to remain update log summary, got %#v", providerLog)
-	}
-	if len(providerLog.Actions) != 1 || providerLog.Actions[0].Value != updateHubActionSecurity {
-		t.Fatalf("expected held update log row to link to security detail actions, got %#v", providerLog.Actions)
-	}
-	if action, provider, kind, name, ok := parseSecurityDetailAction(securityRows[0].Actions[0].Value); !ok || action != "allow-7d-rerun" || provider != "brew" || kind != "cask" || name != "demo" {
-		t.Fatalf("unexpected security detail action parse: action=%q provider=%q kind=%q name=%q ok=%v", action, provider, kind, name, ok)
-	}
-	nonRerunnable := securityDetailActions(safetyGate{Provider: "github-repo"}, safetyFinding{Kind: "repo", Name: "owner/tool", Decision: "hold"})
-	if len(nonRerunnable) != 3 || strings.Contains(nonRerunnable[0].Value, "rerun") {
-		t.Fatalf("expected non-update provider security actions to omit rerun, got %#v", nonRerunnable)
-	}
-	if action, _, _, _, ok := parseSecurityDetailAction(nonRerunnable[0].Value); !ok || action != "allow-custom" {
-		t.Fatalf("expected custom allow to be the first non-rerunnable action, got %#v", nonRerunnable)
-	}
-	bumpReviewActions := securityDetailActions(safetyGate{Provider: miseBumpProvider}, safetyFinding{
-		Provider:       "mise",
-		Kind:           "tool",
-		Name:           "github:openai/codex",
-		CurrentVersion: "0.60.1",
-		Decision:       "review",
-		Source:         miseBumpSource,
-	})
-	for _, action := range bumpReviewActions {
-		if strings.Contains(action.Value, "rerun") {
-			t.Fatalf("expected mise-bump review actions to avoid normal provider rerun, got %#v", bumpReviewActions)
-		}
-	}
-	bumpAllowActions := securityDetailActions(safetyGate{Provider: miseBumpProvider}, safetyFinding{
-		Provider:          "mise",
-		Kind:              "tool",
-		Name:              "github:openai/codex",
-		InstalledVersions: []string{"0.60.0"},
-		CurrentVersion:    "0.60.1",
-		Decision:          "allow",
-		Source:            miseNativeReleaseAgeSource,
-	})
-	if len(bumpAllowActions) != 1 || bumpAllowActions[0].Value != miseBumpDetailActionValue("github:openai/codex") {
-		t.Fatalf("expected allowed mise-bump finding to route to scoped bump apply, got %#v", bumpAllowActions)
-	}
-}
-
-func TestHomebrewTrustSecurityDetailActionsPreferItemScopedTargets(t *testing.T) {
-	formula := safetyFinding{
-		Provider:     "brew",
-		Kind:         "brew",
-		Name:         "custom-tool",
-		Tap:          "vendor/tap",
-		Decision:     "review",
-		TrustStatus:  "needs-review",
-		TrustTarget:  "vendor/tap/custom-tool",
-		TrustCommand: "brew trust --formula vendor/tap/custom-tool",
-	}
-	actions := securityDetailActions(safetyGate{Provider: "brew"}, formula)
-	if len(actions) < 1 {
-		t.Fatalf("expected Homebrew trust action, got %#v", actions)
-	}
-	action, provider, kind, name, ok := parseSecurityDetailAction(actions[0].Value)
-	if !ok || action != securityActionBrewTrustFormula || provider != "brew" || kind != "formula" || name != "vendor/tap/custom-tool" {
-		t.Fatalf("expected item-scoped formula trust action, action=%q provider=%q kind=%q name=%q ok=%v actions=%#v", action, provider, kind, name, ok, actions)
-	}
-	if !securityDetailActionRequiresConfirmation(action) {
-		t.Fatalf("expected Homebrew trust action to require confirmation")
-	}
-	if command, ok := homebrewTrustCommandForSecurityAction(action, name); !ok || joinCommand(command) != "brew trust --formula vendor/tap/custom-tool" {
-		t.Fatalf("expected formula trust command, got command=%#v ok=%v", command, ok)
+	updateWant := "provider step 2件, 更新項目 1件, 見送り項目 1件, 保留step 1件, skip step 1件"
+	if updateGot != updateWant {
+		t.Fatalf("expected Japanese update summary %q, got %q", updateWant, updateGot)
 	}
 
-	tapActions := securityDetailActions(safetyGate{Provider: "brew"}, safetyFinding{
+	safetyGot := safetySummaryText([]safetyGate{{
 		Provider: "brew",
-		Kind:     "tap",
-		Name:     "vendor/tap",
-		Decision: "review",
-	})
-	if len(tapActions) == 0 {
-		t.Fatalf("expected whole-tap trust action for tap finding")
-	}
-	tapAction, _, tapKind, tapName, ok := parseSecurityDetailAction(tapActions[0].Value)
-	if !ok || tapAction != securityActionBrewTrustTap || tapKind != "tap" || tapName != "vendor/tap" {
-		t.Fatalf("expected tap trust action, action=%q kind=%q name=%q ok=%v actions=%#v", tapAction, tapKind, tapName, ok, tapActions)
-	}
-
-	official := securityDetailActions(safetyGate{Provider: "brew"}, safetyFinding{
-		Provider: "brew",
-		Kind:     "brew",
-		Name:     "git",
-		Tap:      "homebrew/core",
-		Decision: "review",
-	})
-	for _, action := range official {
-		if strings.Contains(action.Value, "brew-trust") {
-			t.Fatalf("expected official taps to avoid trust write actions, got %#v", official)
-		}
-	}
-	if _, ok := homebrewTrustCommandForSecurityAction(securityActionBrewTrustFormula, "--bad"); ok {
-		t.Fatalf("expected option-like Homebrew trust target to be rejected")
-	}
-}
-
-func TestUpdateLogDetailRowsDistinguishSkippedErrorAndPreserveLogLines(t *testing.T) {
-	rows := updateLogDetailRows(updateReport{Steps: []updateStep{
-		{
-			Name:    "brew",
-			Command: []string{"brew", "upgrade"},
-			Status:  plan.StatusOK,
-			Skipped: true,
-			Reason:  "dry run",
-			Stdout:  "line one\nline two",
-		},
-		{
-			Name:    "mise",
-			Command: []string{"mise", "upgrade"},
-			Status:  plan.StatusError,
-			Stderr:  "error one\nerror two",
+		Status:   plan.StatusHeld,
+		Findings: []safetyFinding{
+			{Decision: "allow"},
+			{Decision: "hold"},
 		},
 	}})
-	if len(rows) != 2 {
-		t.Fatalf("expected skipped and error provider log rows, got %#v", rows)
-	}
-	if rows[0].Status != "skipped" || !strings.Contains(strings.Join(rows[0].Metadata, " "), "skipped: true") {
-		t.Fatalf("expected skipped provider row to expose skipped state, got %#v", rows[0])
-	}
-	if rows[1].Status != string(plan.StatusError) || rows[1].Summary != "error one error two" {
-		t.Fatalf("expected error provider row to summarize stderr, got %#v", rows[1])
-	}
-	expanded := strings.Join(detailBrowserExpandedLinesWithWidth(rows[0], 80), "\n")
-	if !strings.Contains(expanded, "stdout: line one") || !strings.Contains(expanded, "line two") {
-		t.Fatalf("expected expanded update log to preserve stdout newlines, got %q", expanded)
+	safetyWant := "provider確認 1件, 保留provider 1件, 検出項目 2件 (allow 1件, hold 1件)"
+	if safetyGot != safetyWant {
+		t.Fatalf("expected Japanese safety summary %q, got %q", safetyWant, safetyGot)
 	}
 }
 
-func TestUpdateLogRouteQueryFiltersItemRows(t *testing.T) {
-	report := filterUpdateReport(updateReport{Steps: []updateStep{{
-		Name:   miseBumpProvider,
-		Status: plan.StatusDrift,
-		Reason: "mise bump candidates available; mode=manual requires item review",
-		SkippedItems: []string{
-			"aqua:modem-dev/hunk 0.14.0 -> 0.14.1",
-			"cloudflared 2026.5.0 -> 2026.5.2",
-			"copilot-cli 1.0.48 -> 1.0.61",
+func TestLocalizedUpdateStepReasonCoversStrictRefreshAndMiseBumpDrift(t *testing.T) {
+	withDefaultLanguageForTest(t, "ja")
+	cases := []struct {
+		reason string
+		want   string
+	}{
+		{
+			reason: "strict safety refreshed Homebrew metadata; no package candidates found",
+			want:   "strict safety のため Homebrew metadata を更新しました。更新対象の package 候補はありません",
 		},
-	}}}, lastReportOptions{section: "logs", provider: miseBumpProvider, query: "cloudflared"})
-	rows := updateLogDetailRows(report)
-	if len(rows) != 2 {
-		t.Fatalf("expected one matching item row plus provider summary, got %#v", rows)
-	}
-	joined := strings.Join([]string{rows[0].Summary, rows[1].Summary, strings.Join(rows[1].Metadata, " ")}, " ")
-	if !strings.Contains(joined, "cloudflared") || strings.Contains(joined, "aqua:modem-dev/hunk") || strings.Contains(joined, "copilot-cli") {
-		t.Fatalf("expected query-filtered update logs to keep only cloudflared item, got %#v", rows)
-	}
-}
-
-func TestUpdateHubChoicesExposeNavigationTargets(t *testing.T) {
-	manualPlan := inventoryPlanReport{ActionCounts: map[string]int{"adopt-brew": 2}, AttentionCount: 2}
-	backendPlan := backendPlanReport{Findings: []backendFinding{{Name: "ripgrep", RecommendedName: "ripgrep"}}}
-	choices := updateHubChoices(updateReport{Safety: []safetyGate{{Provider: "brew", Status: plan.StatusHeld}}}, manualPlan, backendPlan, updateHubActionManualPlan)
-	values := map[string]bool{}
-	for _, choice := range choices {
-		values[choice.Value] = true
-	}
-	for _, want := range []string{updateHubActionInventoryAll, updateHubActionInventoryAttention, updateHubActionInventoryDetails, updateHubActionManualPlan, updateHubActionBackends, updateHubActionUpdatesFilter, updateHubActionSecurity, updateHubActionSecurityFilter, updateHubActionLogs, updateHubActionJSON, updevActionExit} {
-		if !values[want] {
-			t.Fatalf("expected update hub choice %q in %#v", want, choices)
-		}
-	}
-	selected := ""
-	for _, choice := range choices {
-		if choice.Selected {
-			selected = choice.Value
-		}
-	}
-	if selected != updateHubActionManualPlan {
-		t.Fatalf("expected manual plan to be selected when review actions exist, got %#v", choices)
-	}
-	if manualPlan.AttentionCount != 2 {
-		t.Fatalf("expected manual plan attention count to include adoption actions")
-	}
-}
-
-func TestUpdateDashboardDetailRowsExposeHubActions(t *testing.T) {
-	report := updateReport{
-		Status:   plan.StatusHeld,
-		Root:     "/repo",
-		Report:   "/tmp/last-update.json",
-		Security: "strict",
-		Steps: []updateStep{{
-			Name:         "brew",
-			Status:       plan.StatusHeld,
-			Reason:       "security=strict held update because safety gate requires review",
-			Updated:      []string{"jq 1.7 -> 1.8.1"},
-			SkippedItems: []string{"demo held"},
-		}},
-		Safety: []safetyGate{{
-			Provider: "brew",
-			Status:   plan.StatusHeld,
-			Findings: []safetyFinding{{
-				Provider: "brew",
-				Kind:     "cask",
-				Name:     "demo",
-				Decision: "hold",
-				Reason:   "review provenance",
-			}},
-		}},
-		Inventory: plan.Report{
-			Status: plan.StatusDrift,
-			Items: []plan.Item{{
-				Provider: "brew",
-				Kind:     "brew",
-				Name:     "jq",
-				Status:   plan.StatusExtra,
-			}},
-			Providers: []plan.ProviderSummary{{Name: "brew", Desired: 1, Live: 2}},
+		{
+			reason: "strict safety refreshed Homebrew metadata before rechecking package candidates",
+			want:   "strict safety のため Homebrew metadata を更新し、package 候補を再確認しました",
+		},
+		{
+			reason: "strict safety refreshes Homebrew metadata only before rechecking package candidates",
+			want:   "strict safety のため Homebrew metadata の更新だけを実行し、package 候補を再確認します",
+		},
+		{
+			reason: "security=strict held mise update because no scoped safe candidates were found",
+			want:   "security=strict のため mise 更新を保留しました: 適用できる scoped safe 候補がありません",
+		},
+		{
+			reason: "strict safety will apply 2 safe mise candidates and hold 3 unsafe candidates",
+			want:   "strict safety は mise の safe 候補 2件だけを適用し、unsafe 候補 3件を保留します",
+		},
+		{
+			reason: "strict safety will apply 1 safe Homebrew candidates and hold 4 unsafe candidates; Homebrew cannot generally install an older intermediate release",
+			want:   "strict safety は Homebrew の safe 候補 1件だけを適用し、unsafe 候補 4件を保留します。Homebrew は通常、古い中間 version を指定して install できません",
+		},
+		{
+			reason: "mise bump candidates available; mode=manual requires item review",
+			want:   "mise bump 候補があります。mode=manual のため item ごとの確認が必要です",
+		},
+		{
+			reason: "mise bump candidates require review",
+			want:   "mise bump 候補の確認が必要です",
+		},
+		{
+			reason: "mise bump candidates require review; no safe auto candidates",
+			want:   "mise bump 候補の確認が必要です。自動適用できる safe 候補はありません",
+		},
+		{
+			reason: "mise bump candidates available; 2 safe candidates can be applied after confirmation",
+			want:   "mise bump 候補があります。確認後に safe 候補 2件を適用できます",
+		},
+		{
+			reason: "mise bump auto would apply 2 safe candidates",
+			want:   "mise bump auto は safe 候補 2件を適用します",
+		},
+		{
+			reason: "mise bump auto would apply 2 safe candidates; 3 candidates require review",
+			want:   "mise bump auto は safe 候補 2件を適用し、3件は確認待ちにします",
+		},
+		{
+			reason: "mise bump candidate set changed before apply: planned candidate github:ogulcancelik/herdr is no longer reported by mise outdated --bump",
+			want:   "mise bump の候補が適用直前に変わったため保留しました: 予定していた候補 github:ogulcancelik/herdr は現在の mise outdated --bump に出ていません",
+		},
+		{
+			reason: "mise bump candidate set changed before preview: planned candidate go changed from 1.26.3 to 1.26.4",
+			want:   "mise bump の候補が preview 直前に変わりました: 予定していた候補 go は 1.26.3 から 1.26.4 に変わりました",
+		},
+		{
+			reason: "mise bump auto found only dependency-blocked candidates",
+			want:   "mise bump auto で見つかった候補は dependency 不足で block されたものだけです",
+		},
+		{
+			reason: "mise bump dry-run preflight failed: dependency missing",
+			want:   "mise bump の dry-run preflight が失敗しました: dependency missing",
+		},
+		{
+			reason: "mise bump failed: install failed",
+			want:   "mise bump が失敗しました: install failed",
+		},
+		{
+			reason: "mise bump applied 2 safe candidates; 3 candidates require review",
+			want:   "mise bump は safe 候補 2件を適用し、3件は確認待ちです",
+		},
+		{
+			reason: "security policy reran scoped mise-bump update for mise-bump/tool github:ogulcancelik/herdr",
+			want:   "security policy に従い、mise-bump の scoped update を再実行しました: mise-bump/tool github:ogulcancelik/herdr",
 		},
 	}
-	manualPlan := inventoryPlanReport{ActionCounts: map[string]int{"needs-review": 1}, AttentionCount: 1}
-	backendPlan := backendPlanReport{Status: plan.StatusDrift, Findings: []backendFinding{{Type: "mise-backend-rewrite"}}}
-	rows := updateDashboardDetailRows(report, manualPlan, backendPlan)
-	byTitle := map[string]detailBrowserRow{}
-	for _, row := range rows {
-		byTitle[row.Title] = row
+	for _, tt := range cases {
+		if got := localizedUpdateStepReason(tt.reason); got != tt.want {
+			t.Fatalf("expected localized reason %q, got %q", tt.want, got)
+		}
 	}
-	for _, tc := range []struct {
-		title string
-		want  string
+}
+
+func TestLocalizedUpdateStepReasonForStepUsesReasonCode(t *testing.T) {
+	withDefaultLanguageForTest(t, "ja")
+	step := updateStep{}
+	setUpdateStepReason(&step, updatereason.MiseBumpCandidateChangedApplyReason("planned candidate go changed from 1.26.3 to 1.26.4"))
+	got := localizedUpdateStepReasonForStep(step)
+	want := "mise bump の候補が適用直前に変わったため保留しました: 予定していた候補 go は 1.26.3 から 1.26.4 に変わりました"
+	if got != want {
+		t.Fatalf("expected localized reason %q, got %q", want, got)
+	}
+}
+
+func TestSetUpdateStepReasonOverwritesStaleCode(t *testing.T) {
+	step := updateStep{}
+	setUpdateStepReason(&step, updatereason.StrictBrewRefreshDoneReason())
+	setUpdateStepReason(&step, updatereason.StrictBrewRefreshFailedReason("api unavailable"))
+	if step.ReasonCode != updatereason.StrictBrewRefreshFailed || step.ReasonArgs["error"] != "api unavailable" {
+		t.Fatalf("expected refresh failure reason to replace stale code, got %#v", step)
+	}
+}
+
+func TestLocalizedUpdateStepReasonForStepUsesRefreshFailureCode(t *testing.T) {
+	withDefaultLanguageForTest(t, "ja")
+	step := updateStep{}
+	setUpdateStepReason(&step, updatereason.StrictBrewRefreshDoneReason())
+	setUpdateStepReason(&step, updatereason.StrictBrewRefreshFailedReason("brew update failed"))
+	got := localizedUpdateStepReasonForStep(step)
+	want := "Homebrew metadata 更新後の safety gate が失敗しました: brew update failed"
+	if got != want {
+		t.Fatalf("expected localized reason %q, got %q", want, got)
+	}
+}
+
+func TestGitHubRepoTagFromURLSupportsArchiveForms(t *testing.T) {
+	tests := []struct {
+		raw  string
+		repo string
+		tag  string
 	}{
-		{"Update steps", updateHubActionUpdatesFilter},
-		{"Security", updateHubActionSecurity},
-		{"Inventory", updateHubActionInventoryAll},
-		{"Manual review", updateHubActionManualPlan},
-		{"Backend convergence", updateHubActionBackends},
-		{"Full report", updateHubActionFull},
-	} {
-		row := byTitle[tc.title]
-		if len(row.Actions) == 0 || row.Actions[0].Value != tc.want {
-			t.Fatalf("expected dashboard row %q to expose action %q, got %#v", tc.title, tc.want, row.Actions)
-		}
+		{raw: "https://github.com/owner/tool/releases/download/v1.0.0/tool.tar.gz", repo: "owner/tool", tag: "v1.0.0"},
+		{raw: "https://github.com/owner/tool/archive/refs/tags/v1.0.0.tar.gz", repo: "owner/tool", tag: "v1.0.0"},
+		{raw: "https://github.com/owner/tool/archive/v1.0.0.zip", repo: "owner/tool", tag: "v1.0.0"},
 	}
-	backendMetadata := strings.Join(byTitle["Backend convergence"].Metadata, " ")
-	if !strings.Contains(backendMetadata, "mise/github") || !strings.Contains(backendMetadata, "safe actions:") {
-		t.Fatalf("expected backend preference metadata to include mise/github, got %#v", byTitle["Backend convergence"].Metadata)
-	}
-	dashboardView := newDetailBrowserModel("updev dashboard", rows, detailBrowserState{}, false).View().Content
-	if !strings.Contains(dashboardView, "focused actions: a/1=filter updates") {
-		t.Fatalf("expected dashboard view to expose focused row action hint:\n%s", dashboardView)
-	}
-	summaryModel := newUpdateSummaryBrowserModel(updateHubTitle(report), report, manualPlan, backendPlan, detailBrowserState{}, updateHubActionLogs, false)
-	summaryModel.Height = 80
-	dashboardView = summaryModel.View().Content
-	for _, want := range []string{"updev update held", "root: /repo", "security: strict", "safety summary:", "update summary:", "focused actions:", "a/1=open update details", "updates", "security attention", "inventory drift", "review actions"} {
-		if !strings.Contains(dashboardView, want) {
-			t.Fatalf("expected update hub view to contain %q:\n%s", want, dashboardView)
-		}
-	}
-	if !strings.Contains(dashboardView, "\n  provider") || !strings.Contains(dashboardView, "\n  brew") || strings.Contains(dashboardView, "\n    brew") {
-		t.Fatalf("expected selectable table rows to align with table headers:\n%s", dashboardView)
-	}
-	if strings.Contains(dashboardView, "\n  report:") || strings.Contains(dashboardView, "\n  レポート:") {
-		t.Fatalf("expected report metadata line to stay flush with summary labels:\n%s", dashboardView)
-	}
-	for _, line := range summaryModel.Lines {
-		if strings.HasPrefix(strings.TrimSpace(line.Text), "reason:") || strings.HasPrefix(strings.TrimSpace(line.Text), "理由:") {
-			if line.Action != "" {
-				t.Fatalf("expected reason line to be non-selectable metadata, got %#v", line)
-			}
-		}
-	}
-	focusedLowerSummary := newUpdateSummaryBrowserModel(updateHubTitle(report), report, manualPlan, backendPlan, detailBrowserState{}, updateHubActionManualPlan, false)
-	focusedLowerSummary.Height = 16
-	focusedLowerSummary.ensureSelectedVisible()
-	focusedLowerView := focusedLowerSummary.View().Content
-	rootIndex := strings.Index(focusedLowerView, "root:")
-	outcomeIndex := strings.Index(focusedLowerView, "update outcome")
-	headerIndex := strings.Index(focusedLowerView, "type")
-	rowIndex := strings.Index(focusedLowerView, "skipped")
-	if rootIndex < 0 || outcomeIndex < 0 || headerIndex < 0 || rowIndex < 0 || !(rootIndex < outcomeIndex && outcomeIndex < headerIndex && headerIndex < rowIndex) {
-		t.Fatalf("expected initial summary to stay top-anchored with outcome title/header before rows:\n%s", focusedLowerView)
-	}
-	router := newUpdateHubRouterModel(report, manualPlan, false, backendPlan, false, updateHubActionDashboard, updateHubActionDashboard, false)
-	router.detailStates["dashboard"] = detailBrowserState{Selected: 5, Offset: 8}
-	router.showDashboard(updateHubActionDashboard)
-	returnedView := router.View().Content
-	if router.dashboard.State.Offset != 0 || !strings.Contains(returnedView, "root: /repo") {
-		t.Fatalf("expected dashboard return to reset scroll to the report top, offset=%d:\n%s", router.dashboard.State.Offset, returnedView)
-	}
-	summaryActions := updateSummaryActionsByText(summaryModel.Lines)
-	for _, tc := range []struct {
-		contains string
-		want     string
-	}{
-		{"updates", updateHubActionLogs},
-		{"security attention", updateHubActionSecurity},
-		{"inventory drift", updateHubActionInventoryAll},
-		{"top inventory items", updateHubActionInventoryDetails},
-		{"report:", updateHubActionFull},
-		{"manual review", updateHubActionManualPlan},
-		{"backend convergence", updateHubActionBackends},
-	} {
-		if got := summaryActions[tc.contains]; got != tc.want {
-			t.Fatalf("expected summary row containing %q to route to %q, got %q", tc.contains, tc.want, got)
-		}
-	}
-	if route, ok := firstUpdateSummaryRoute(summaryModel.Lines, "brew"); !ok || route.Base != updateHubActionLogs || route.Provider != "brew" {
-		t.Fatalf("expected brew update row to route to provider-filtered logs, route=%+v ok=%v", route, ok)
-	}
-	reviewFocused := newUpdateSummaryBrowserModel(updateHubTitle(report), report, manualPlan, backendPlan, detailBrowserState{}, updateHubActionManualPlan, false)
-	reviewFocused.Height = 80
-	reviewView := reviewFocused.View().Content
-	if !strings.Contains(reviewView, "action") || !strings.Contains(reviewView, "summary") {
-		t.Fatalf("expected review actions to render as a small table:\n%s", reviewView)
-	}
-	if strings.Contains(reviewView, "[Enter: open manual review]") {
-		t.Fatalf("expected review action row to avoid inline Enter badge:\n%s", reviewView)
-	}
-	coloredSummaryModel := newUpdateSummaryBrowserModel(updateHubTitle(report), report, manualPlan, backendPlan, detailBrowserState{}, updateHubActionLogs, true)
-	coloredSummaryModel.Height = 80
-	coloredSummaryView := coloredSummaryModel.View().Content
-	if !strings.Contains(coloredSummaryView, "\033[1m\033[35mupdates") || !strings.Contains(coloredSummaryView, "\033[1m\033[35mreview actions") {
-		t.Fatalf("expected summary section titles to be visually styled:\n%q", coloredSummaryView)
-	}
-	if !updateHubActionExists(updateHubActionBackends) || updateHubActionExists("unknown") {
-		t.Fatalf("unexpected update hub action existence result")
-	}
-	for _, tc := range []struct {
-		action string
-		index  int
-		title  string
-	}{
-		{updateHubActionManualPlan, 3, "Manual review"},
-		{updateHubActionBackends, 4, "Backend convergence"},
-		{updateHubActionSecurity, 1, "Security"},
-		{updateHubActionInventoryDetails, 2, "Inventory"},
-		{updateHubActionUpdatesFilter, 0, "Update steps"},
-	} {
-		index := updateDashboardRowIndexForAction(tc.action)
-		if index != tc.index || rows[index].Title != tc.title {
-			t.Fatalf("expected dashboard action %q to focus row %d/%q, got %d/%q", tc.action, tc.index, tc.title, index, rows[index].Title)
-		}
-	}
-	for _, tc := range []struct {
-		listAction string
-		want       string
-	}{
-		{listHubActionManual, updateHubActionManualPlan},
-		{listHubActionBackends, updateHubActionBackends},
-		{listHubActionUpdates, updateHubActionLogs},
-		{listHubActionSecurity, updateHubActionSecurity},
-		{"unknown", ""},
-	} {
-		if got := updateHubActionFromListAction(tc.listAction); got != tc.want {
-			t.Fatalf("list action %q mapped to %q, want %q", tc.listAction, got, tc.want)
-		}
-	}
-	if got := initialUpdateHubAction("", updateHubActionManualPlan); got != updateHubActionDashboard {
-		t.Fatalf("expected bare update hub to open summary first, got %q", got)
-	}
-	if got := initialUpdateHubAction(updateHubActionSecurity, updateHubActionSecurity); got != updateHubActionSecurity {
-		t.Fatalf("expected explicit preferred section to open directly, got %q", got)
-	}
-}
-
-func updateSummaryActionsByText(lines []updateSummaryLine) map[string]string {
-	out := map[string]string{}
-	for _, line := range lines {
-		plain := strings.ToLower(line.Text)
-		for _, key := range []string{"updates", "security attention", "inventory drift", "top inventory items", "report:", "manual review", "backend convergence"} {
-			if strings.Contains(plain, key) && line.Action != "" {
-				action := line.Action
-				if route, ok := parseUpdateSummaryRoute(action); ok {
-					action = route.Base
-				}
-				out[key] = action
-			}
-		}
-	}
-	return out
-}
-
-func firstUpdateSummaryRoute(lines []updateSummaryLine, contains string) (updateSummaryRoute, bool) {
-	for _, line := range lines {
-		if !strings.Contains(strings.ToLower(line.Text), strings.ToLower(contains)) {
-			continue
-		}
-		if route, ok := parseUpdateSummaryRoute(line.Action); ok {
-			return route, true
-		}
-	}
-	return updateSummaryRoute{}, false
-}
-
-func TestUpdateSummarySecurityRoutesOpenNonEmptyDetails(t *testing.T) {
-	providerRoute, _, ok := updateSummaryRouteForTableLine("security", "brew held 1 review Homebrew cask host mismatch")
-	if !ok || providerRoute.Provider != "brew" || providerRoute.Query != "" {
-		t.Fatalf("expected provider summary security row to route by provider only, route=%+v ok=%v", providerRoute, ok)
-	}
-	itemRoute, _, ok := updateSummaryRouteForTableLine("security", "hold mise-bump tool/aqua:modem-dev/hunk 0.14.0 -> 0.15.0 release age")
-	if !ok || itemRoute.Provider != "mise-bump" || itemRoute.Query != "tool/aqua:modem-dev/hunk" {
-		t.Fatalf("expected security item row to route by provider and item identity, route=%+v ok=%v", itemRoute, ok)
-	}
-	report := updateReport{Security: "strict", Safety: []safetyGate{
-		{Provider: "brew", Status: plan.StatusHeld, Findings: []safetyFinding{{Provider: "brew", Kind: "cask", Name: "wezterm@nightly", Decision: "review", Reason: "host mismatch"}}},
-		{Provider: "mise", Status: plan.StatusOK},
-		{Provider: "mise-bump", Status: plan.StatusHeld, Findings: []safetyFinding{{Provider: "mise-bump", Kind: "tool", Name: "aqua:modem-dev/hunk", Decision: "hold", Reason: "release age"}}},
-	}}
-	for _, route := range []updateSummaryRoute{
-		providerRoute,
-		{Base: updateHubActionSecurity, Provider: "mise"},
-		itemRoute,
-		{Base: updateHubActionSecurity, Provider: "brew", Query: "cask/wezterm@nightly"},
-	} {
-		opts := lastReportOptions{section: "security", provider: route.Provider, query: route.Query}
-		filtered := filterUpdateReport(report, opts)
-		if rows := updateSecurityDetailRowsForFilter(filtered, opts); len(rows) == 0 {
-			t.Fatalf("expected non-empty security detail rows for route %+v", route)
+	for _, tt := range tests {
+		repo, tag, ok := githubrepo.RepoTagFromURL(tt.raw)
+		if !ok || repo != tt.repo || tag != tt.tag {
+			t.Fatalf("unexpected github repo/tag for %s: repo=%q tag=%q ok=%v", tt.raw, repo, tag, ok)
 		}
 	}
 }
 
-func TestUpdateFacetCounts(t *testing.T) {
-	steps := []updateStep{
-		{Name: "brew", Status: plan.StatusOK},
-		{Name: "brew", Status: plan.StatusHeld},
-		{Name: "mise", Status: plan.StatusError},
+func TestSecurityFiltersProviderAndEcosystem(t *testing.T) {
+	items := []plan.Item{
+		{Provider: "mise", Name: "npm:pnpm", Version: "11.1.2", Kind: "tool", Category: "npm"},
+		{Provider: "mise", Name: "cargo:fd-find", Version: "10.4.2", Kind: "tool", Category: "cargo"},
+		{Provider: "brew", Name: "jq", Version: "1.8.1", Kind: "brew"},
 	}
-	if counts := updateStepProviderCounts(steps); counts["brew"] != 2 || counts["mise"] != 1 {
-		t.Fatalf("unexpected update provider counts: %#v", counts)
+	filtered := filterSecurityItems(items, securityOptions{provider: "mise"})
+	packages, skipped := securityScopeFromItems(filtered)
+	packages = filterSecurityPackages(packages, securityOptions{ecosystem: "npm"})
+	if len(packages) != 1 || packages[0].Package != "pnpm" {
+		t.Fatalf("expected npm package only, got %#v", packages)
 	}
-	if counts := updateStepStatusCounts(steps); counts["ok"] != 1 || counts["held"] != 1 || counts["error"] != 1 || counts["attention"] != 2 {
-		t.Fatalf("unexpected update status counts: %#v", counts)
+	if len(skipped) != 0 {
+		t.Fatalf("provider filter should exclude brew skip entries, got %#v", skipped)
 	}
-	gates := []safetyGate{{
-		Provider: "brew",
-		Status:   plan.StatusError,
-		Error:    "brew metadata unavailable",
-	}, {
-		Provider: "vscode",
-		Status:   plan.StatusHeld,
-		Warnings: []string{"publisher unverified"},
-		Findings: []safetyFinding{
-			{Decision: "hold"},
-			{Decision: "review"},
-			{Decision: "allow"},
-		},
-	}}
-	if counts := safetyProviderCounts(gates); counts["brew"] != 1 || counts["vscode"] != 4 {
-		t.Fatalf("unexpected safety provider counts: %#v", counts)
+	allItems := filterSecurityItems(items, securityOptions{provider: "all"})
+	if len(allItems) != len(items) {
+		t.Fatalf("provider all should keep all items, got %#v", allItems)
 	}
-	if counts := safetyDecisionCounts(gates); counts["error"] != 1 || counts["hold"] != 1 || counts["review"] != 1 || counts["allow"] != 1 || counts["attention"] != 4 {
-		t.Fatalf("unexpected safety decision counts: %#v", counts)
+	if !securityScanIncludesBrewProvider("all") || !securityScanIncludesBrewProvider("brew") || securityScanIncludesBrewProvider("") || securityScanIncludesBrewProvider("mise") {
+		t.Fatalf("unexpected brew posture provider selection")
 	}
-}
-
-func TestUpdateExitCodeTreatsHeldAsNonSuccess(t *testing.T) {
-	if got := updateExitCode(plan.StatusHeld); got != 2 {
-		t.Fatalf("expected held exit code 2, got %d", got)
+	if !securityScanIncludesProjectProvider("") || !securityScanIncludesProjectProvider("all") || !securityScanIncludesProjectProvider("project") || securityScanIncludesProjectProvider("brew") {
+		t.Fatalf("unexpected project provider selection")
 	}
-	if got := updateExitCode(plan.StatusBlocked); got != 3 {
-		t.Fatalf("expected blocked exit code 3, got %d", got)
-	}
-	if got := updateExitCode(plan.StatusError); got != 1 {
-		t.Fatalf("expected error exit code 1, got %d", got)
-	}
-	if got := updateExitCode(plan.StatusOK); got != 0 {
-		t.Fatalf("expected ok exit code 0, got %d", got)
+	npmItems := filterSecurityItemsForEcosystem(items, "npm")
+	if len(npmItems) != 1 || npmItems[0].Name != "npm:pnpm" {
+		t.Fatalf("expected npm posture items only, got %#v", npmItems)
 	}
 }
 
@@ -2711,6 +916,512 @@ Adjust how often this is run with $HOMEBREW_AUTO_UPDATE_SECS.
 	}
 	if len(findings) != 1 || findings[0].Name != "jq" {
 		t.Fatalf("expected JSON payload to be parsed after prefix logs, got %#v", findings)
+	}
+}
+
+func TestBrewOutdatedCachedErrorRejectsProviderLogNoise(t *testing.T) {
+	if brewOutdatedCachedErrorIsReusable("==> Auto-updating Homebrew... Adjust how often this is run with $HOMEBREW_AUTO_UPDATE_SECS.") {
+		t.Fatal("expected Homebrew auto-update log cache to be ignored")
+	}
+	if brewOutdatedCachedErrorIsReusable("==> Tapping homebrew/core\nCloning into '/usr/local/Homebrew/Library/Taps/homebrew/homebrew-core'...\nUpdating files: 100%") {
+		t.Fatal("expected Homebrew tap clone log cache to be ignored")
+	}
+	if !brewOutdatedCachedErrorIsReusable("brew outdated --json=v2 --greedy timed out after 15s") {
+		t.Fatal("expected real unavailable cache to be reusable")
+	}
+}
+
+func TestBrewSafetyManifestAddsProvenanceFindings(t *testing.T) {
+	manifest, err := parseBrewSafetyManifest(strings.NewReader(`
+brew "jq"
+cask "muxy-app/tap/muxy"
+cask "https://example.com/custom-app.rb"
+`), "/tmp/Brewfile")
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw := `{
+  "formulae": [
+    {"name": "jq", "installed_versions": ["1.7"], "current_version": "1.8.1"}
+  ],
+  "casks": [
+    {"name": "muxy", "installed_versions": "1.0", "current_version": "1.1"}
+  ]
+}`
+	findings, err := parseBrewOutdated(raw, manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if findings[0].Name != "jq" || findings[0].Decision != "unknown" {
+		t.Fatalf("expected core formula to remain release-age unknown, got %#v", findings[0])
+	}
+	if findings[1].Name != "muxy" || findings[1].Decision != "review" || findings[1].Tap != "muxy-app/tap" {
+		t.Fatalf("expected custom tap cask review finding, got %#v", findings[1])
+	}
+	if findings[1].TrustTarget != "muxy-app/tap/muxy" || findings[1].TrustCommand != "brew trust --cask muxy-app/tap/muxy" {
+		t.Fatalf("expected item-scoped Homebrew trust metadata, got %#v", findings[1])
+	}
+	if got := strings.Join(findings[1].TrustCommandArgv, "\x00"); got != "brew\x00trust\x00--cask\x00muxy-app/tap/muxy" {
+		t.Fatalf("expected structured Homebrew trust argv, got %#v", findings[1].TrustCommandArgv)
+	}
+	if !strings.Contains(findings[1].Remediation, "brew trust --cask muxy-app/tap/muxy") {
+		t.Fatalf("expected tap trust remediation, got %#v", findings[1])
+	}
+	warnings := manifestWarnings(manifest)
+	if len(warnings) != 1 || warnings[0].Name != "https://example.com/custom-app.rb" || warnings[0].Decision != "review" {
+		t.Fatalf("expected URL cask manifest warning, got %#v", warnings)
+	}
+	if !strings.Contains(warnings[0].Remediation, "cask source URL") {
+		t.Fatalf("expected URL cask remediation, got %#v", warnings[0])
+	}
+}
+
+func TestApplyHomebrewSafetyMetadataAllowsOfficialFormula(t *testing.T) {
+	finding := safetyFinding{
+		Provider:          "brew",
+		Kind:              "brew",
+		Name:              "jq",
+		InstalledVersions: []string{"1.7"},
+		CurrentVersion:    "1.8.1",
+		Decision:          "unknown",
+		Reason:            "release-age and provenance evidence are not available in the first Go safety slice",
+		Evidence:          []string{"brew outdated --json=v2 --greedy"},
+		Confidence:        "low",
+	}
+	metadata := homebrewMetadata{
+		Name:     []string{"jq"},
+		Tap:      "homebrew/core",
+		Homepage: "https://jqlang.github.io/jq/",
+		Versions: homebrewVersions{Stable: "1.8.1"},
+		URLs:     homebrewURLs{Stable: homebrewURL{URL: "https://github.com/jqlang/jq/releases/download/jq-1.8.1/jq-1.8.1.tar.gz"}},
+		Autobump: true,
+	}
+	enriched := applyHomebrewSafetyMetadata(finding, metadata)
+	if enriched.Decision != "allow" || enriched.Confidence != "medium" {
+		t.Fatalf("expected official formula to be allowed, got %#v", enriched)
+	}
+	if enriched.Tap != "homebrew/core" || enriched.Version != "1.8.1" || enriched.URL == "" {
+		t.Fatalf("expected metadata evidence, got %#v", enriched)
+	}
+	if !containsString(enriched.Evidence, "formulae.brew.sh metadata") {
+		t.Fatalf("expected metadata evidence source, got %#v", enriched.Evidence)
+	}
+	if enriched.ReasonCode != securityreason.HomebrewOfficialFormula || enriched.ReasonArgs["name"] != "jq" {
+		t.Fatalf("expected structured official formula reason, got %#v", enriched)
+	}
+}
+
+func TestApplyHomebrewSafetyMetadataReviewsDeprecatedFormula(t *testing.T) {
+	finding := safetyFinding{Provider: "brew", Kind: "brew", Name: "oldtool", Decision: "unknown", Confidence: "low"}
+	metadata := homebrewMetadata{
+		Name:              []string{"oldtool"},
+		Tap:               "homebrew/core",
+		Deprecated:        true,
+		DeprecationReason: "use newtool",
+	}
+	enriched := applyHomebrewSafetyMetadata(finding, metadata)
+	if enriched.Decision != "review" || enriched.Reason != "use newtool" || enriched.Confidence != "medium" {
+		t.Fatalf("expected deprecated formula review, got %#v", enriched)
+	}
+	if enriched.ReasonCode != securityreason.HomebrewEntryDeprecated || enriched.ReasonArgs["reason_text"] != "use newtool" {
+		t.Fatalf("expected structured deprecated formula reason, got %#v", enriched)
+	}
+}
+
+func TestEnrichBrewSafetyFindingsKeepsMetadataFailuresAuditable(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "not found", http.StatusNotFound)
+	}))
+	defer server.Close()
+	findings := []safetyFinding{
+		{Provider: "brew", Kind: "brew", Name: "missing", Decision: "unknown", Confidence: "low"},
+	}
+	enriched := enrichBrewSafetyFindings(context.Background(), server.Client(), server.URL, findings, minHomebrewReleaseAge())
+	if len(enriched) != 1 {
+		t.Fatalf("expected one finding, got %#v", enriched)
+	}
+	if enriched[0].Decision != "review" || !strings.Contains(enriched[0].Reason, "metadata unavailable") {
+		t.Fatalf("expected metadata failure review, got %#v", enriched[0])
+	}
+	if enriched[0].ReasonCode != securityreason.HomebrewMetadataUnavailable || enriched[0].ReasonArgs["error"] == "" {
+		t.Fatalf("expected structured metadata failure reason, got %#v", enriched[0])
+	}
+}
+
+func TestCollectBrewSafetyWarnsWhenManifestUnavailable(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	root := t.TempDir()
+	fake := &fakeCommandRunner{result: runner.Result{Stdout: `{}`}}
+	gate := collectBrewSafety(context.Background(), fake, root)
+	if gate.Status != plan.StatusOK {
+		t.Fatalf("expected safety gate ok, got %#v", gate)
+	}
+	if len(gate.Warnings) != 1 || !strings.Contains(gate.Warnings[0], "manifest unavailable") {
+		t.Fatalf("expected manifest warning, got %#v", gate.Warnings)
+	}
+}
+
+func TestCollectBrewSafetyAllowsOfficialFormulaWithMetadata(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("UPDEV_CONFIG", filepath.Join(t.TempDir(), "missing-config.toml"))
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "Brewfile.tmpl"), []byte(`brew "jq"`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			_, _ = w.Write([]byte(`{"results":[{}]}`))
+			return
+		}
+		switch r.URL.Path {
+		case "/formula/jq.json":
+			_, _ = w.Write([]byte(`{
+  "name": "jq",
+  "tap": "homebrew/core",
+  "homepage": "https://jqlang.github.io/jq/",
+  "versions": {"stable": "1.8.1"},
+  "urls": {"stable": {"url": "https://github.com/jqlang/jq/releases/download/jq-1.8.1/jq-1.8.1.tar.gz"}}
+}`))
+		case "/repos/jqlang/jq/releases/tags/jq-1.8.1":
+			_, _ = w.Write([]byte(`{"published_at":"2026-05-20T00:00:00Z"}`))
+		default:
+			t.Fatalf("unexpected API path: %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+	t.Setenv("UPDEV_HOMEBREW_API_URL", server.URL)
+	t.Setenv("UPDEV_GITHUB_API_URL", server.URL)
+	t.Setenv("UPDEV_OSV_API_URL", server.URL)
+	fake := &fakeCommandRunner{result: runner.Result{Stdout: `{"formulae":[{"name":"jq","installed_versions":["1.7"],"current_version":"1.8.1"}],"casks":[]}`}}
+	gate := collectBrewSafety(context.Background(), fake, root)
+	if gate.Status != plan.StatusOK {
+		t.Fatalf("expected safety gate ok, got %#v", gate)
+	}
+	if len(gate.Findings) != 1 || gate.Findings[0].Decision != "allow" || gate.Findings[0].Confidence != "medium" {
+		t.Fatalf("expected formula allow finding, got %#v", gate.Findings)
+	}
+	if gate.Summary == nil || gate.Summary.Allow != 1 || gate.Summary.Findings != 1 {
+		t.Fatalf("expected safety gate summary, got %#v", gate.Summary)
+	}
+	if gate.Findings[0].Remediation != "" {
+		t.Fatalf("expected allowed formula to clear remediation, got %#v", gate.Findings[0])
+	}
+	if gate.Findings[0].ReleaseDate == "" || gate.Findings[0].MinReleaseAgeDays != 3 {
+		t.Fatalf("expected release-age evidence, got %#v", gate.Findings[0])
+	}
+}
+
+func TestCollectBrewSafetyHoldsTooNewGitHubFormulaRelease(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("UPDEV_CONFIG", filepath.Join(t.TempDir(), "missing-config.toml"))
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "Brewfile.tmpl"), []byte(`brew "jq"`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			_, _ = w.Write([]byte(`{"results":[{}]}`))
+			return
+		}
+		switch r.URL.Path {
+		case "/formula/jq.json":
+			_, _ = w.Write([]byte(`{
+  "name": "jq",
+  "tap": "homebrew/core",
+  "homepage": "https://jqlang.github.io/jq/",
+  "versions": {"stable": "1.8.1"},
+  "urls": {"stable": {"url": "https://github.com/jqlang/jq/releases/download/jq-1.8.1/jq-1.8.1.tar.gz"}}
+}`))
+		case "/repos/jqlang/jq/releases/tags/jq-1.8.1":
+			_, _ = w.Write([]byte(`{"published_at":"` + time.Now().UTC().Format(time.RFC3339) + `"}`))
+		default:
+			t.Fatalf("unexpected API path: %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+	t.Setenv("UPDEV_HOMEBREW_API_URL", server.URL)
+	t.Setenv("UPDEV_GITHUB_API_URL", server.URL)
+	t.Setenv("UPDEV_OSV_API_URL", server.URL)
+	fake := &fakeCommandRunner{result: runner.Result{Stdout: `{"formulae":[{"name":"jq","installed_versions":["1.7"],"current_version":"1.8.1"}],"casks":[]}`}}
+	gate := collectBrewSafety(context.Background(), fake, root)
+	if gate.Status != plan.StatusHeld {
+		t.Fatalf("expected safety gate held, got %#v", gate)
+	}
+	if len(gate.Findings) != 1 || gate.Findings[0].Decision != "hold" || gate.Findings[0].ReleaseAgeDays != 0 {
+		t.Fatalf("expected too-new formula hold finding, got %#v", gate.Findings)
+	}
+	if !strings.Contains(gate.Findings[0].Remediation, "minimum age") {
+		t.Fatalf("expected release-age remediation, got %#v", gate.Findings[0])
+	}
+	if gate.Findings[0].ReasonCode != securityreason.CandidateReleaseTooNew || gate.Findings[0].ReasonArgs["age_days"] != "0" {
+		t.Fatalf("expected structured release-age reason, got %#v", gate.Findings[0])
+	}
+}
+
+func TestCollectBrewSafetyUsesTOMLConfigMinReleaseAge(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	configPath := filepath.Join(t.TempDir(), "config.toml")
+	if err := os.WriteFile(configPath, []byte("[security.homebrew]\nmin_release_age_days = 0\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("UPDEV_CONFIG", configPath)
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "Brewfile.tmpl"), []byte(`brew "jq"`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			_, _ = w.Write([]byte(`{"results":[{}]}`))
+			return
+		}
+		switch r.URL.Path {
+		case "/formula/jq.json":
+			_, _ = w.Write([]byte(`{
+  "name": "jq",
+  "tap": "homebrew/core",
+  "homepage": "https://jqlang.github.io/jq/",
+  "versions": {"stable": "1.8.1"},
+  "urls": {"stable": {"url": "https://github.com/jqlang/jq/releases/download/jq-1.8.1/jq-1.8.1.tar.gz"}}
+}`))
+		case "/repos/jqlang/jq/releases/tags/jq-1.8.1":
+			_, _ = w.Write([]byte(`{"published_at":"` + time.Now().UTC().Format(time.RFC3339) + `"}`))
+		default:
+			t.Fatalf("unexpected API path: %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+	t.Setenv("UPDEV_HOMEBREW_API_URL", server.URL)
+	t.Setenv("UPDEV_GITHUB_API_URL", server.URL)
+	t.Setenv("UPDEV_OSV_API_URL", server.URL)
+	fake := &fakeCommandRunner{result: runner.Result{Stdout: `{"formulae":[{"name":"jq","installed_versions":["1.7"],"current_version":"1.8.1"}],"casks":[]}`}}
+	gate := collectBrewSafety(context.Background(), fake, root)
+	if gate.Status != plan.StatusOK {
+		t.Fatalf("expected TOML min release age to allow fresh release, got %#v", gate)
+	}
+	if len(gate.Findings) != 1 || gate.Findings[0].Decision != "allow" || gate.Findings[0].MinReleaseAgeDays != 0 {
+		t.Fatalf("expected TOML min release age evidence, got %#v", gate.Findings)
+	}
+}
+
+func TestCollectBrewSafetyFallsBackToGitHubTagDate(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "Brewfile.tmpl"), []byte(`brew "demo"`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			_, _ = w.Write([]byte(`{"results":[{}]}`))
+			return
+		}
+		switch r.URL.Path {
+		case "/formula/demo.json":
+			_, _ = w.Write([]byte(`{
+  "name": "demo",
+  "tap": "homebrew/core",
+  "homepage": "https://github.com/example/demo",
+  "versions": {"stable": "2.0.0"},
+  "urls": {"stable": {"url": "https://github.com/example/demo/releases/download/v2.0.0/demo.tar.gz"}}
+}`))
+		case "/repos/example/demo/releases/tags/v2.0.0":
+			http.NotFound(w, r)
+		case "/repos/example/demo/git/ref/tags/v2.0.0":
+			_, _ = w.Write([]byte(`{"ref":"refs/tags/v2.0.0","object":{"type":"tag","sha":"tag-sha"}}`))
+		case "/repos/example/demo/git/tags/tag-sha":
+			_, _ = w.Write([]byte(`{"tagger":{"date":"` + time.Now().UTC().Format(time.RFC3339) + `"},"object":{"type":"commit","sha":"commit-sha"}}`))
+		default:
+			t.Fatalf("unexpected API path: %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+	t.Setenv("UPDEV_HOMEBREW_API_URL", server.URL)
+	t.Setenv("UPDEV_GITHUB_API_URL", server.URL)
+	t.Setenv("UPDEV_OSV_API_URL", server.URL)
+	fake := &fakeCommandRunner{result: runner.Result{Stdout: `{"formulae":[{"name":"demo","installed_versions":["1.0.0"],"current_version":"2.0.0"}],"casks":[]}`}}
+	gate := collectBrewSafety(context.Background(), fake, root)
+	if gate.Status != plan.StatusHeld {
+		t.Fatalf("expected safety gate held, got %#v", gate)
+	}
+	if len(gate.Findings) != 1 || gate.Findings[0].Decision != "hold" || gate.Findings[0].ReleaseAgeDays != 0 {
+		t.Fatalf("expected tag-date release-age hold, got %#v", gate.Findings)
+	}
+	if !containsString(gate.Findings[0].Evidence, "GitHub tag metadata") {
+		t.Fatalf("expected tag metadata evidence, got %#v", gate.Findings[0].Evidence)
+	}
+}
+
+func TestCollectBrewSafetyInfersGitHubFormulaReleaseTag(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "Brewfile.tmpl"), []byte(`brew "jq"`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	releasePaths := []string{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			_, _ = w.Write([]byte(`{"results":[{}]}`))
+			return
+		}
+		switch r.URL.Path {
+		case "/formula/jq.json":
+			_, _ = w.Write([]byte(`{
+  "name": "jq",
+  "tap": "homebrew/core",
+  "homepage": "https://jqlang.github.io/jq/",
+  "versions": {"stable": "1.8.1"},
+  "urls": {"stable": {"url": "https://github.com/jqlang/jq"}}
+}`))
+		case "/repos/jqlang/jq/releases/tags/1.8.1", "/repos/jqlang/jq/releases/tags/v1.8.1",
+			"/repos/jqlang/jq/git/ref/tags/1.8.1", "/repos/jqlang/jq/git/ref/tags/v1.8.1":
+			releasePaths = append(releasePaths, r.URL.Path)
+			http.NotFound(w, r)
+		case "/repos/jqlang/jq/releases/tags/jq-1.8.1":
+			releasePaths = append(releasePaths, r.URL.Path)
+			_, _ = w.Write([]byte(`{"published_at":"` + time.Now().UTC().Format(time.RFC3339) + `"}`))
+		default:
+			t.Fatalf("unexpected API path: %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+	t.Setenv("UPDEV_HOMEBREW_API_URL", server.URL)
+	t.Setenv("UPDEV_GITHUB_API_URL", server.URL)
+	t.Setenv("UPDEV_OSV_API_URL", server.URL)
+	fake := &fakeCommandRunner{result: runner.Result{Stdout: `{"formulae":[{"name":"jq","installed_versions":["1.7"],"current_version":"1.8.1"}],"casks":[]}`}}
+	gate := collectBrewSafety(context.Background(), fake, root)
+	if gate.Status != plan.StatusHeld {
+		t.Fatalf("expected inferred release-age hold, got %#v", gate)
+	}
+	if len(gate.Findings) != 1 || gate.Findings[0].Decision != "hold" || gate.Findings[0].ReleaseAgeDays != 0 {
+		t.Fatalf("expected inferred too-new formula hold finding, got %#v", gate.Findings)
+	}
+	if !containsString(gate.Findings[0].Evidence, "GitHub inferred release metadata") {
+		t.Fatalf("expected inferred release evidence, got %#v", gate.Findings[0].Evidence)
+	}
+	if !containsString(releasePaths, "/repos/jqlang/jq/releases/tags/jq-1.8.1") {
+		t.Fatalf("expected jq-version tag candidate query, got %#v", releasePaths)
+	}
+}
+
+func TestCollectBrewSafetyInfersGitHubReleaseFromHomepage(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "Brewfile.tmpl"), []byte(`brew "demo"`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			_, _ = w.Write([]byte(`{"results":[{}]}`))
+			return
+		}
+		switch r.URL.Path {
+		case "/formula/demo.json":
+			_, _ = w.Write([]byte(`{
+  "name": "demo",
+  "tap": "homebrew/core",
+  "homepage": "https://github.com/example/demo",
+  "versions": {"stable": "2.0.0"},
+  "urls": {"stable": {"url": "https://downloads.example.com/demo-2.0.0.tar.gz"}}
+}`))
+		case "/repos/example/demo/releases/tags/2.0.0", "/repos/example/demo/git/ref/tags/2.0.0":
+			http.NotFound(w, r)
+		case "/repos/example/demo/releases/tags/v2.0.0":
+			_, _ = w.Write([]byte(`{"published_at":"` + time.Now().UTC().Format(time.RFC3339) + `"}`))
+		default:
+			t.Fatalf("unexpected API path: %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+	t.Setenv("UPDEV_HOMEBREW_API_URL", server.URL)
+	t.Setenv("UPDEV_GITHUB_API_URL", server.URL)
+	t.Setenv("UPDEV_OSV_API_URL", server.URL)
+	fake := &fakeCommandRunner{result: runner.Result{Stdout: `{"formulae":[{"name":"demo","installed_versions":["1.0.0"],"current_version":"2.0.0"}],"casks":[]}`}}
+	gate := collectBrewSafety(context.Background(), fake, root)
+	if gate.Status != plan.StatusHeld {
+		t.Fatalf("expected homepage inferred release-age hold, got %#v", gate)
+	}
+	if len(gate.Findings) != 1 || gate.Findings[0].Decision != "hold" || gate.Findings[0].ReleaseAgeDays != 0 {
+		t.Fatalf("expected homepage inferred too-new formula hold finding, got %#v", gate.Findings)
+	}
+	if !containsString(gate.Findings[0].Evidence, "GitHub inferred release metadata") {
+		t.Fatalf("expected inferred release evidence, got %#v", gate.Findings[0].Evidence)
+	}
+}
+
+func TestCollectBrewSafetyHoldsCasksEvenWithMetadata(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "Brewfile.tmpl"), []byte(`cask "firefox"`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/cask/firefox.json" {
+			t.Fatalf("unexpected Homebrew API path: %s", r.URL.Path)
+		}
+		_, _ = w.Write([]byte(`{
+  "token": "firefox",
+  "name": ["Firefox"],
+  "tap": "homebrew/cask",
+  "homepage": "https://www.mozilla.org/firefox/",
+  "url": "https://download-installer.cdn.mozilla.net/pub/firefox/releases/151.0.2/mac/en-US/Firefox%20151.0.2.dmg",
+  "version": "151.0.2"
+}`))
+	}))
+	defer server.Close()
+	t.Setenv("UPDEV_HOMEBREW_API_URL", server.URL)
+	fake := &fakeCommandRunner{result: runner.Result{Stdout: `{"formulae":[],"casks":[{"name":"firefox","installed_versions":"150.0","current_version":"151.0.2"}]}`}}
+	gate := collectBrewSafety(context.Background(), fake, root)
+	if gate.Status != plan.StatusHeld {
+		t.Fatalf("expected safety gate held, got %#v", gate)
+	}
+	if len(gate.Findings) != 1 || gate.Findings[0].Decision != "review" || gate.Findings[0].Confidence != "low" {
+		t.Fatalf("expected cask review finding, got %#v", gate.Findings)
+	}
+	remediation := gate.Findings[0].Remediation
+	if !strings.Contains(remediation, "mozilla.org") ||
+		!strings.Contains(remediation, "download-installer.cdn.mozilla.net") {
+		t.Fatalf("expected cask remediation, got %#v", gate.Findings[0])
+	}
+	if gate.Findings[0].HomepageHost != "mozilla.org" || gate.Findings[0].URLHost != "download-installer.cdn.mozilla.net" || gate.Findings[0].HostMatched {
+		t.Fatalf("expected cask provenance hosts, got %#v", gate.Findings[0])
+	}
+}
+
+func TestCollectBrewSafetyHoldsTooNewGitHubCaskRelease(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "Brewfile.tmpl"), []byte(`cask "demo-app"`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/cask/demo-app.json":
+			_, _ = w.Write([]byte(`{
+  "token": "demo-app",
+  "name": ["Demo App"],
+  "tap": "homebrew/cask",
+  "homepage": "https://example.com/demo-app/",
+  "url": "https://github.com/example/demo-app/releases/download/v2.0.0/demo-app.dmg",
+  "version": "2.0.0"
+}`))
+		case "/repos/example/demo-app/releases/tags/v2.0.0":
+			_, _ = w.Write([]byte(`{"published_at":"` + time.Now().UTC().Format(time.RFC3339) + `"}`))
+		default:
+			t.Fatalf("unexpected API path: %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+	t.Setenv("UPDEV_HOMEBREW_API_URL", server.URL)
+	t.Setenv("UPDEV_GITHUB_API_URL", server.URL)
+	fake := &fakeCommandRunner{result: runner.Result{Stdout: `{"formulae":[],"casks":[{"name":"demo-app","installed_versions":"1.0.0","current_version":"2.0.0"}]}`}}
+	gate := collectBrewSafety(context.Background(), fake, root)
+	if gate.Status != plan.StatusHeld {
+		t.Fatalf("expected safety gate held, got %#v", gate)
+	}
+	if len(gate.Findings) != 1 || gate.Findings[0].Decision != "hold" || gate.Findings[0].ReleaseDate == "" || gate.Findings[0].ReleaseAgeDays != 0 {
+		t.Fatalf("expected too-new cask release hold finding, got %#v", gate.Findings)
+	}
+	if !containsString(gate.Findings[0].Evidence, "GitHub release metadata") {
+		t.Fatalf("expected cask release-age evidence, got %#v", gate.Findings[0].Evidence)
 	}
 }
 
@@ -3292,6 +2003,9 @@ func TestCollectMiseSafetyReviewsUnsupportedBackend(t *testing.T) {
 	if len(gate.Findings) != 1 || gate.Findings[0].Decision != "review" || !strings.Contains(gate.Findings[0].Reason, "unsupported or opaque") {
 		t.Fatalf("expected unsupported backend review, got %#v", gate.Findings)
 	}
+	if gate.Findings[0].ReasonCode != securityreason.MiseOpaqueBackend {
+		t.Fatalf("expected structured opaque backend reason, got %#v", gate.Findings[0])
+	}
 }
 
 func TestMinMiseReleaseAgeEnvOverridesTOMLConfig(t *testing.T) {
@@ -3304,148 +2018,353 @@ func TestMinMiseReleaseAgeEnvOverridesTOMLConfig(t *testing.T) {
 	}
 }
 
-func TestBrewOutdatedCachedErrorRejectsProviderLogNoise(t *testing.T) {
-	if brewOutdatedCachedErrorIsReusable("==> Auto-updating Homebrew... Adjust how often this is run with $HOMEBREW_AUTO_UPDATE_SECS.") {
-		t.Fatal("expected Homebrew auto-update log cache to be ignored")
+func TestSecurityPackageFromMiseItems(t *testing.T) {
+	items := []plan.Item{
+		{Provider: "mise", Name: "npm:pnpm", Version: "11.1.2"},
+		{Provider: "mise", Name: "cargo:fd-find", Version: "10.4.2"},
+		{Provider: "mise", Name: "pipx:frogmouth", Version: "0.9.2"},
+		{Provider: "mise", Name: "github:owner/tool", Version: "1.0.0"},
 	}
-	if brewOutdatedCachedErrorIsReusable("==> Tapping homebrew/core\nCloning into '/usr/local/Homebrew/Library/Taps/homebrew/homebrew-core'...\nUpdating files: 100%") {
-		t.Fatal("expected Homebrew tap clone log cache to be ignored")
+	packages := securityPackagesFromItems(items)
+	if len(packages) != 3 {
+		t.Fatalf("expected three high-confidence packages, got %#v", packages)
 	}
-	if !brewOutdatedCachedErrorIsReusable("brew outdated --json=v2 --greedy timed out after 15s") {
-		t.Fatal("expected real unavailable cache to be reusable")
+	if packages[0].Ecosystem != "PyPI" || packages[0].Package != "frogmouth" {
+		t.Fatalf("unexpected PyPI package mapping: %#v", packages[0])
+	}
+	if packages[1].Ecosystem != "crates.io" || packages[1].Package != "fd-find" {
+		t.Fatalf("unexpected crates package mapping: %#v", packages[1])
+	}
+	if packages[2].Ecosystem != "npm" || packages[2].Package != "pnpm" {
+		t.Fatalf("unexpected npm package mapping: %#v", packages[2])
 	}
 }
 
-func TestBrewSafetyManifestAddsProvenanceFindings(t *testing.T) {
-	manifest, err := parseBrewSafetyManifest(strings.NewReader(`
-brew "jq"
-cask "muxy-app/tap/muxy"
-cask "https://example.com/custom-app.rb"
-`), "/tmp/Brewfile")
+func TestAnnotateSecurityPackagePathUsesConservativeBinaryCandidates(t *testing.T) {
+	binDir := t.TempDir()
+	binaryPath := filepath.Join(binDir, "pnpm")
+	if err := os.WriteFile(binaryPath, []byte("#!/bin/sh\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	cargoBinaryPath := filepath.Join(binDir, "fd")
+	if err := os.WriteFile(cargoBinaryPath, []byte("#!/bin/sh\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", binDir)
+	packages := annotateSecurityPackagePath([]securityPackage{
+		{Ecosystem: "npm", Package: "pnpm"},
+		{Ecosystem: "npm", Package: "@scope/tool"},
+		{Ecosystem: "crates.io", Package: "fd-find"},
+	}, []npmPosture{
+		{Package: "pnpm", Binaries: []string{"pn", "pnpm"}},
+		{Package: "@scope/tool", Binaries: []string{"scope-tool"}},
+	})
+	if packages[0].BinaryName != "pnpm" || packages[0].PathState != "on-path" || packages[0].BinaryPath == "" {
+		t.Fatalf("expected npm package on PATH, got %#v", packages[0])
+	}
+	if packages[1].PathState != "not-found" || packages[1].BinaryName != "scope-tool" {
+		t.Fatalf("expected scoped npm registry binary to be used, got %#v", packages[1])
+	}
+	if packages[2].PathState != "on-path" || packages[2].BinaryName != "fd" || packages[2].BinaryPath == "" {
+		t.Fatalf("expected cargo binary to be found conservatively, got %#v", packages[2])
+	}
+}
+
+func TestSecurityScopeReportsSkippedAutomaticMappingGaps(t *testing.T) {
+	items := []plan.Item{
+		{Provider: "mise", Name: "npm:pnpm", Version: "11.1.2", Kind: "tool", Category: "npm"},
+		{Provider: "mise", Name: "npm:missing-version", Kind: "tool", Category: "npm"},
+		{Provider: "mise", Name: "github:owner/tool", Version: "1.0.0", Kind: "tool", Category: "github"},
+		{Provider: "mise", Name: "aqua:owner/tool", Version: "1.0.0", Kind: "tool", Category: "aqua"},
+		{Provider: "brew", Name: "jq", Version: "1.8.1", Kind: "brew"},
+		{Provider: "brew", Name: "github.copilot", Kind: "vscode"},
+	}
+	packages, skipped := securityScopeFromItems(items)
+	if len(packages) != 1 || packages[0].Package != "pnpm" {
+		t.Fatalf("unexpected packages: %#v", packages)
+	}
+	reasons := map[string]int{}
+	for _, entry := range skipped {
+		reasons[entry.Reason] += entry.Count
+	}
+	if reasons["missing version for high-confidence ecosystem"] != 1 {
+		t.Fatalf("expected missing version skip, got %#v", skipped)
+	}
+	if reasons["unsupported mise backend ecosystem"] != 1 {
+		t.Fatalf("expected unsupported mise backend skip, got %#v", skipped)
+	}
+	if reasons["homebrew requires curated advisory mapping"] != 1 {
+		t.Fatalf("expected homebrew mapping skip, got %#v", skipped)
+	}
+	for _, entry := range skipped {
+		if entry.Reason == "homebrew requires curated advisory mapping" && !containsString(entry.Examples, "jq") {
+			t.Fatalf("expected skipped examples to include jq, got %#v", entry)
+		}
+	}
+	if reasons["vscode extensions require marketplace advisory mapping"] != 1 {
+		t.Fatalf("expected vscode mapping skip, got %#v", skipped)
+	}
+}
+
+func TestGitHubRepoFromMiseName(t *testing.T) {
+	repo, ok := githubrepo.RepoFromMiseName("github:owner/tool@1.2.3")
+	if !ok || repo != "owner/tool" {
+		t.Fatalf("unexpected repo parse: %q %v", repo, ok)
+	}
+	if _, ok := githubrepo.RepoFromMiseName("github:owner/tool;rm"); ok {
+		t.Fatal("expected unsafe repository name to be rejected")
+	}
+}
+
+func TestGitHubTokenPrefersEnvironment(t *testing.T) {
+	t.Setenv("UPDEV_GITHUB_TOKEN", "updev-token")
+	t.Setenv("GITHUB_API_TOKEN", "github-api-token")
+	t.Setenv("GITHUB_TOKEN", "github-token")
+	t.Setenv("GH_TOKEN", "gh-token")
+	if got := githubToken(); got != "updev-token" {
+		t.Fatalf("expected UPDEV_GITHUB_TOKEN to win, got %q", got)
+	}
+	t.Setenv("UPDEV_GITHUB_TOKEN", "")
+	if got := githubToken(); got != "github-api-token" {
+		t.Fatalf("expected GITHUB_API_TOKEN to win after UPDEV_GITHUB_TOKEN, got %q", got)
+	}
+}
+
+func TestFetchNPMMetadataUsesSecurityMetadataCache(t *testing.T) {
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		if r.URL.Path != "/left-pad" {
+			t.Fatalf("unexpected npm registry path: %s", r.URL.Path)
+		}
+		_, _ = w.Write([]byte(`{
+  "name": "left-pad",
+  "description": "cached package",
+  "dist-tags": {"latest": "1.0.0"},
+  "versions": {"1.0.0": {"version": "1.0.0"}}
+}`))
+	}))
+	defer server.Close()
+	first, err := registryaudit.FetchNPMMetadata(context.Background(), server.Client(), server.URL, "left-pad")
 	if err != nil {
 		t.Fatal(err)
 	}
-	raw := `{
-  "formulae": [
-    {"name": "jq", "installed_versions": ["1.7"], "current_version": "1.8.1"}
-  ],
-  "casks": [
-    {"name": "muxy", "installed_versions": "1.0", "current_version": "1.1"}
-  ]
-}`
-	findings, err := parseBrewOutdated(raw, manifest)
+	second, err := registryaudit.FetchNPMMetadata(context.Background(), server.Client(), server.URL, "left-pad")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if findings[0].Name != "jq" || findings[0].Decision != "unknown" {
-		t.Fatalf("expected core formula to remain release-age unknown, got %#v", findings[0])
+	if requests != 1 {
+		t.Fatalf("expected second metadata fetch to use cache, got %d requests", requests)
 	}
-	if findings[1].Name != "muxy" || findings[1].Decision != "review" || findings[1].Tap != "muxy-app/tap" {
-		t.Fatalf("expected custom tap cask review finding, got %#v", findings[1])
-	}
-	if findings[1].TrustTarget != "muxy-app/tap/muxy" || findings[1].TrustCommand != "brew trust --cask muxy-app/tap/muxy" {
-		t.Fatalf("expected item-scoped Homebrew trust metadata, got %#v", findings[1])
-	}
-	if !strings.Contains(findings[1].Remediation, "brew trust --cask muxy-app/tap/muxy") {
-		t.Fatalf("expected tap trust remediation, got %#v", findings[1])
-	}
-	warnings := manifestWarnings(manifest)
-	if len(warnings) != 1 || warnings[0].Name != "https://example.com/custom-app.rb" || warnings[0].Decision != "review" {
-		t.Fatalf("expected URL cask manifest warning, got %#v", warnings)
-	}
-	if !strings.Contains(warnings[0].Remediation, "cask source URL") {
-		t.Fatalf("expected URL cask remediation, got %#v", warnings[0])
+	if first.Name != "left-pad" || second.Description != "cached package" {
+		t.Fatalf("unexpected cached metadata: %#v %#v", first, second)
 	}
 }
 
-func TestApplyHomebrewSafetyMetadataAllowsOfficialFormula(t *testing.T) {
-	finding := safetyFinding{
-		Provider:          "brew",
-		Kind:              "brew",
-		Name:              "jq",
-		InstalledVersions: []string{"1.7"},
-		CurrentVersion:    "1.8.1",
-		Decision:          "unknown",
-		Reason:            "release-age and provenance evidence are not available in the first Go safety slice",
-		Evidence:          []string{"brew outdated --json=v2 --greedy"},
-		Confidence:        "low",
+func TestFetchGitHubRepositoryUsesMetadataCache(t *testing.T) {
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		if r.URL.Path != "/repos/owner/tool" {
+			t.Fatalf("unexpected GitHub path: %s", r.URL.Path)
+		}
+		_, _ = w.Write([]byte(`{
+  "full_name": "owner/tool",
+  "html_url": "https://github.com/owner/tool",
+  "default_branch": "main",
+  "stargazers_count": 42
+}`))
+	}))
+	defer server.Close()
+	first, err := fetchGitHubRepository(context.Background(), server.Client(), server.URL, "owner/tool")
+	if err != nil {
+		t.Fatal(err)
 	}
-	metadata := homebrewMetadata{
-		Name:     flexStringSlice{"jq"},
-		Tap:      "homebrew/core",
-		Homepage: "https://jqlang.github.io/jq/",
-		Versions: homebrewVersions{Stable: "1.8.1"},
-		URLs:     homebrewURLs{Stable: homebrewURL{URL: "https://github.com/jqlang/jq/releases/download/jq-1.8.1/jq-1.8.1.tar.gz"}},
-		Autobump: true,
+	second, err := fetchGitHubRepository(context.Background(), server.Client(), server.URL, "owner/tool")
+	if err != nil {
+		t.Fatal(err)
 	}
-	enriched := applyHomebrewSafetyMetadata(finding, metadata)
-	if enriched.Decision != "allow" || enriched.Confidence != "medium" {
-		t.Fatalf("expected official formula to be allowed, got %#v", enriched)
+	if requests != 1 {
+		t.Fatalf("expected second GitHub fetch to use cache, got %d requests", requests)
 	}
-	if enriched.Tap != "homebrew/core" || enriched.Version != "1.8.1" || enriched.URL == "" {
-		t.Fatalf("expected metadata evidence, got %#v", enriched)
-	}
-	if !containsString(enriched.Evidence, "formulae.brew.sh metadata") {
-		t.Fatalf("expected metadata evidence source, got %#v", enriched.Evidence)
-	}
-}
-
-func TestApplyHomebrewSafetyMetadataReviewsDeprecatedFormula(t *testing.T) {
-	finding := safetyFinding{Provider: "brew", Kind: "brew", Name: "oldtool", Decision: "unknown", Confidence: "low"}
-	metadata := homebrewMetadata{
-		Name:              flexStringSlice{"oldtool"},
-		Tap:               "homebrew/core",
-		Deprecated:        true,
-		DeprecationReason: "use newtool",
-	}
-	enriched := applyHomebrewSafetyMetadata(finding, metadata)
-	if enriched.Decision != "review" || enriched.Reason != "use newtool" || enriched.Confidence != "medium" {
-		t.Fatalf("expected deprecated formula review, got %#v", enriched)
+	if first.FullName != "owner/tool" || second.StargazersCount != 42 {
+		t.Fatalf("unexpected cached GitHub repo: %#v %#v", first, second)
 	}
 }
 
-func TestEnrichBrewSafetyFindingsKeepsMetadataFailuresAuditable(t *testing.T) {
+func TestGitHubPosturesFromItemsReportsArchivedRepos(t *testing.T) {
+	var gotPath string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		_, _ = w.Write([]byte(`{
+  "full_name": "owner/tool",
+  "html_url": "https://github.com/owner/tool",
+  "default_branch": "main",
+  "archived": true,
+  "pushed_at": "2026-05-20T00:00:00Z",
+  "updated_at": "2026-05-21T00:00:00Z",
+  "open_issues_count": 7,
+  "stargazers_count": 42
+}`))
+	}))
+	defer server.Close()
+	items := []plan.Item{
+		{Provider: "mise", Name: "github:owner/tool", Version: "1.0.0", Kind: "tool", Category: "github"},
+		{Provider: "mise", Name: "github:owner/tool", Version: "1.0.0", Kind: "tool", Category: "github"},
+		{Provider: "mise", Name: "npm:pnpm", Version: "11.1.2", Kind: "tool", Category: "npm"},
+	}
+	postures, err := githubPosturesFromItems(context.Background(), server.Client(), server.URL, items)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotPath != "/repos/owner/tool" {
+		t.Fatalf("unexpected GitHub path: %s", gotPath)
+	}
+	if len(postures) != 1 {
+		t.Fatalf("expected one unique repo posture, got %#v", postures)
+	}
+	if postures[0].Decision != "review" || postures[0].Reason != "repository is archived" {
+		t.Fatalf("expected archived repo review, got %#v", postures[0])
+	}
+	if !strings.Contains(postures[0].Remediation, "archived") {
+		t.Fatalf("expected GitHub posture remediation, got %#v", postures[0])
+	}
+	if postures[0].StargazersCount != 42 || postures[0].OpenIssuesCount != 7 {
+		t.Fatalf("expected GitHub metadata, got %#v", postures[0])
+	}
+}
+
+func TestGitHubPostureReviewsDisabledSecurityFeatures(t *testing.T) {
+	posture := githubrepo.PostureFromRepository("mise", "github:owner/tool", "owner/tool", githubRepository{
+		FullName: "owner/tool",
+		SecurityAndAnalysis: githubSecurityAndAnalysis{
+			DependabotSecurityUpdates: githubSecurityFeature{Status: "disabled"},
+			SecretScanning:            githubSecurityFeature{Status: "enabled"},
+		},
+	}, minHomebrewTapRepositoryAge())
+	if posture.Decision != "review" || posture.Reason != "Dependabot security updates are disabled" {
+		t.Fatalf("expected disabled dependabot review, got %#v", posture)
+	}
+	if !strings.Contains(posture.Remediation, "Dependabot") {
+		t.Fatalf("expected dependabot remediation, got %#v", posture)
+	}
+	if posture.SecretScanning != "enabled" || posture.DependabotSecurityUpdates != "disabled" {
+		t.Fatalf("expected security feature evidence, got %#v", posture)
+	}
+}
+
+func TestGitHubPostureReviewsNewHomebrewTapRepository(t *testing.T) {
+	t.Setenv("UPDEV_HOMEBREW_MIN_TAP_AGE_DAYS", "30")
+	posture := githubrepo.PostureFromRepository("brew", "tap:vendor/tap", "vendor/homebrew-tap", githubRepository{
+		FullName:  "vendor/homebrew-tap",
+		HTMLURL:   "https://github.com/vendor/homebrew-tap",
+		CreatedAt: time.Now().Add(-48 * time.Hour).UTC().Format(time.RFC3339),
+	}, minHomebrewTapRepositoryAge())
+	if posture.Decision != "review" || !strings.Contains(posture.Reason, "newly created") {
+		t.Fatalf("expected new tap repository review, got %#v", posture)
+	}
+	if !strings.Contains(posture.Remediation, "minimum age") {
+		t.Fatalf("expected new tap remediation, got %#v", posture)
+	}
+	if posture.RepositoryAgeDays != 2 || posture.MinRepositoryAgeDays != 30 || !containsString(posture.Evidence, "GitHub repository age") {
+		t.Fatalf("expected tap repository age evidence, got %#v", posture)
+	}
+}
+
+func TestGitHubPosturesFromItemsKeepsUnavailableReposAuditable(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "not found", http.StatusNotFound)
 	}))
 	defer server.Close()
-	findings := []safetyFinding{
-		{Provider: "brew", Kind: "brew", Name: "missing", Decision: "unknown", Confidence: "low"},
+	items := []plan.Item{
+		{Provider: "mise", Name: "github:owner/missing", Version: "1.0.0", Kind: "tool", Category: "github"},
 	}
-	enriched := enrichBrewSafetyFindings(context.Background(), server.Client(), server.URL, findings, minHomebrewReleaseAge())
-	if len(enriched) != 1 {
-		t.Fatalf("expected one finding, got %#v", enriched)
+	postures, err := githubPosturesFromItems(context.Background(), server.Client(), server.URL, items)
+	if err == nil {
+		t.Fatal("expected GitHub metadata warning error")
 	}
-	if enriched[0].Decision != "review" || !strings.Contains(enriched[0].Reason, "metadata unavailable") {
-		t.Fatalf("expected metadata failure review, got %#v", enriched[0])
+	if len(postures) != 1 {
+		t.Fatalf("expected unavailable repo posture, got %#v", postures)
 	}
-}
-
-func TestCollectBrewSafetyWarnsWhenManifestUnavailable(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
-	root := t.TempDir()
-	fake := &fakeCommandRunner{result: runner.Result{Stdout: `{}`}}
-	gate := collectBrewSafety(context.Background(), fake, root)
-	if gate.Status != plan.StatusOK {
-		t.Fatalf("expected safety gate ok, got %#v", gate)
-	}
-	if len(gate.Warnings) != 1 || !strings.Contains(gate.Warnings[0], "manifest unavailable") {
-		t.Fatalf("expected manifest warning, got %#v", gate.Warnings)
+	if postures[0].Decision != "review" || !strings.Contains(postures[0].Reason, "metadata unavailable") {
+		t.Fatalf("expected unavailable repo review posture, got %#v", postures[0])
 	}
 }
 
-func TestCollectBrewSafetyAllowsOfficialFormulaWithMetadata(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
-	t.Setenv("UPDEV_CONFIG", filepath.Join(t.TempDir(), "missing-config.toml"))
+func TestGitHubPosturesFromHomebrewUsesMetadataURLs(t *testing.T) {
+	var gotPath string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		_, _ = w.Write([]byte(`{
+  "full_name": "owner/tool",
+  "html_url": "https://github.com/owner/tool",
+  "default_branch": "main",
+  "archived": false,
+  "pushed_at": "2026-05-20T00:00:00Z",
+  "updated_at": "2026-05-21T00:00:00Z",
+  "stargazers_count": 123
+}`))
+	}))
+	defer server.Close()
+	postures, err := githubPosturesFromHomebrew(context.Background(), server.Client(), server.URL, []homebrewPosture{
+		{Kind: "brew", Name: "tool", URL: "https://github.com/owner/tool/archive/refs/tags/v1.0.0.tar.gz"},
+		{Kind: "cask", Name: "tool-app", Homepage: "https://github.com/owner/tool"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotPath != "/repos/owner/tool" {
+		t.Fatalf("unexpected GitHub path: %s", gotPath)
+	}
+	if len(postures) != 1 {
+		t.Fatalf("expected deduplicated repo posture, got %#v", postures)
+	}
+	if postures[0].Provider != "brew" || postures[0].Name != "brew:tool" || postures[0].Repository != "owner/tool" {
+		t.Fatalf("unexpected Homebrew GitHub posture: %#v", postures[0])
+	}
+}
+
+func TestGitHubPosturesFromHomebrewUsesTapURLs(t *testing.T) {
+	var gotPath string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		_, _ = w.Write([]byte(`{
+  "full_name": "vendor/homebrew-tap",
+  "html_url": "https://github.com/vendor/homebrew-tap",
+  "default_branch": "main",
+  "archived": false,
+  "pushed_at": "2026-05-20T00:00:00Z",
+  "updated_at": "2026-05-21T00:00:00Z"
+}`))
+	}))
+	defer server.Close()
+	postures, err := githubPosturesFromHomebrew(context.Background(), server.Client(), server.URL, []homebrewPosture{
+		homebrewTapPosture(plan.Item{Provider: "brew", Kind: "tap", Name: "vendor/tap"}),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotPath != "/repos/vendor/homebrew-tap" {
+		t.Fatalf("unexpected GitHub path: %s", gotPath)
+	}
+	if len(postures) != 1 || postures[0].Name != "tap:vendor/tap" || postures[0].Repository != "vendor/homebrew-tap" {
+		t.Fatalf("expected tap GitHub posture, got %#v", postures)
+	}
+}
+
+func TestHomebrewPosturesFromItemsReportsMetadataRisks(t *testing.T) {
 	root := t.TempDir()
-	if err := os.WriteFile(filepath.Join(root, "Brewfile.tmpl"), []byte(`brew "jq"`), 0o600); err != nil {
+	t.Setenv("HOME", t.TempDir())
+	if err := os.WriteFile(filepath.Join(root, "Brewfile.tmpl"), []byte(`
+brew "jq"
+cask "visual-studio-code"
+cask "vendor/tap/custom-app"
+`), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodPost {
-			_, _ = w.Write([]byte(`{"results":[{}]}`))
-			return
-		}
 		switch r.URL.Path {
 		case "/formula/jq.json":
 			_, _ = w.Write([]byte(`{
@@ -3453,776 +2372,136 @@ func TestCollectBrewSafetyAllowsOfficialFormulaWithMetadata(t *testing.T) {
   "tap": "homebrew/core",
   "homepage": "https://jqlang.github.io/jq/",
   "versions": {"stable": "1.8.1"},
-  "urls": {"stable": {"url": "https://github.com/jqlang/jq/releases/download/jq-1.8.1/jq-1.8.1.tar.gz"}}
+  "urls": {"stable": {"url": "https://github.com/jqlang/jq/releases/download/jq-1.8.1/jq-1.8.1.tar.gz"}},
+  "deprecated": true,
+  "deprecation_reason": "use yq"
 }`))
-		case "/repos/jqlang/jq/releases/tags/jq-1.8.1":
-			_, _ = w.Write([]byte(`{"published_at":"2026-05-20T00:00:00Z"}`))
-		default:
-			t.Fatalf("unexpected API path: %s", r.URL.Path)
-		}
-	}))
-	defer server.Close()
-	t.Setenv("UPDEV_HOMEBREW_API_URL", server.URL)
-	t.Setenv("UPDEV_GITHUB_API_URL", server.URL)
-	t.Setenv("UPDEV_OSV_API_URL", server.URL)
-	fake := &fakeCommandRunner{result: runner.Result{Stdout: `{"formulae":[{"name":"jq","installed_versions":["1.7"],"current_version":"1.8.1"}],"casks":[]}`}}
-	gate := collectBrewSafety(context.Background(), fake, root)
-	if gate.Status != plan.StatusOK {
-		t.Fatalf("expected safety gate ok, got %#v", gate)
-	}
-	if len(gate.Findings) != 1 || gate.Findings[0].Decision != "allow" || gate.Findings[0].Confidence != "medium" {
-		t.Fatalf("expected formula allow finding, got %#v", gate.Findings)
-	}
-	if gate.Summary == nil || gate.Summary.Allow != 1 || gate.Summary.Findings != 1 {
-		t.Fatalf("expected safety gate summary, got %#v", gate.Summary)
-	}
-	if gate.Findings[0].Remediation != "" {
-		t.Fatalf("expected allowed formula to clear remediation, got %#v", gate.Findings[0])
-	}
-	if gate.Findings[0].ReleaseDate == "" || gate.Findings[0].MinReleaseAgeDays != 3 {
-		t.Fatalf("expected release-age evidence, got %#v", gate.Findings[0])
-	}
-}
-
-func TestCollectBrewSafetyHoldsTooNewGitHubFormulaRelease(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
-	t.Setenv("UPDEV_CONFIG", filepath.Join(t.TempDir(), "missing-config.toml"))
-	root := t.TempDir()
-	if err := os.WriteFile(filepath.Join(root, "Brewfile.tmpl"), []byte(`brew "jq"`), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodPost {
-			_, _ = w.Write([]byte(`{"results":[{}]}`))
-			return
-		}
-		switch r.URL.Path {
-		case "/formula/jq.json":
+		case "/cask/visual-studio-code.json":
 			_, _ = w.Write([]byte(`{
-  "name": "jq",
-  "tap": "homebrew/core",
-  "homepage": "https://jqlang.github.io/jq/",
-  "versions": {"stable": "1.8.1"},
-  "urls": {"stable": {"url": "https://github.com/jqlang/jq/releases/download/jq-1.8.1/jq-1.8.1.tar.gz"}}
+  "token": "visual-studio-code",
+  "name": ["Visual Studio Code"],
+  "tap": "homebrew/cask",
+  "homepage": "https://code.visualstudio.com/",
+  "url": "https://update.code.visualstudio.com/latest/darwin/stable",
+  "version": "1.101.0"
 }`))
-		case "/repos/jqlang/jq/releases/tags/jq-1.8.1":
-			_, _ = w.Write([]byte(`{"published_at":"` + time.Now().UTC().Format(time.RFC3339) + `"}`))
 		default:
-			t.Fatalf("unexpected API path: %s", r.URL.Path)
-		}
-	}))
-	defer server.Close()
-	t.Setenv("UPDEV_HOMEBREW_API_URL", server.URL)
-	t.Setenv("UPDEV_GITHUB_API_URL", server.URL)
-	t.Setenv("UPDEV_OSV_API_URL", server.URL)
-	fake := &fakeCommandRunner{result: runner.Result{Stdout: `{"formulae":[{"name":"jq","installed_versions":["1.7"],"current_version":"1.8.1"}],"casks":[]}`}}
-	gate := collectBrewSafety(context.Background(), fake, root)
-	if gate.Status != plan.StatusHeld {
-		t.Fatalf("expected safety gate held, got %#v", gate)
-	}
-	if len(gate.Findings) != 1 || gate.Findings[0].Decision != "hold" || gate.Findings[0].ReleaseAgeDays != 0 {
-		t.Fatalf("expected too-new formula hold finding, got %#v", gate.Findings)
-	}
-	if !strings.Contains(gate.Findings[0].Remediation, "minimum age") {
-		t.Fatalf("expected release-age remediation, got %#v", gate.Findings[0])
-	}
-}
-
-func TestCollectBrewSafetyUsesTOMLConfigMinReleaseAge(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
-	configPath := filepath.Join(t.TempDir(), "config.toml")
-	if err := os.WriteFile(configPath, []byte("[security.homebrew]\nmin_release_age_days = 0\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("UPDEV_CONFIG", configPath)
-	root := t.TempDir()
-	if err := os.WriteFile(filepath.Join(root, "Brewfile.tmpl"), []byte(`brew "jq"`), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodPost {
-			_, _ = w.Write([]byte(`{"results":[{}]}`))
-			return
-		}
-		switch r.URL.Path {
-		case "/formula/jq.json":
-			_, _ = w.Write([]byte(`{
-  "name": "jq",
-  "tap": "homebrew/core",
-  "homepage": "https://jqlang.github.io/jq/",
-  "versions": {"stable": "1.8.1"},
-  "urls": {"stable": {"url": "https://github.com/jqlang/jq/releases/download/jq-1.8.1/jq-1.8.1.tar.gz"}}
-}`))
-		case "/repos/jqlang/jq/releases/tags/jq-1.8.1":
-			_, _ = w.Write([]byte(`{"published_at":"` + time.Now().UTC().Format(time.RFC3339) + `"}`))
-		default:
-			t.Fatalf("unexpected API path: %s", r.URL.Path)
-		}
-	}))
-	defer server.Close()
-	t.Setenv("UPDEV_HOMEBREW_API_URL", server.URL)
-	t.Setenv("UPDEV_GITHUB_API_URL", server.URL)
-	t.Setenv("UPDEV_OSV_API_URL", server.URL)
-	fake := &fakeCommandRunner{result: runner.Result{Stdout: `{"formulae":[{"name":"jq","installed_versions":["1.7"],"current_version":"1.8.1"}],"casks":[]}`}}
-	gate := collectBrewSafety(context.Background(), fake, root)
-	if gate.Status != plan.StatusOK {
-		t.Fatalf("expected TOML min release age to allow fresh release, got %#v", gate)
-	}
-	if len(gate.Findings) != 1 || gate.Findings[0].Decision != "allow" || gate.Findings[0].MinReleaseAgeDays != 0 {
-		t.Fatalf("expected TOML min release age evidence, got %#v", gate.Findings)
-	}
-}
-
-func TestCollectBrewSafetyFallsBackToGitHubTagDate(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
-	root := t.TempDir()
-	if err := os.WriteFile(filepath.Join(root, "Brewfile.tmpl"), []byte(`brew "demo"`), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodPost {
-			_, _ = w.Write([]byte(`{"results":[{}]}`))
-			return
-		}
-		switch r.URL.Path {
-		case "/formula/demo.json":
-			_, _ = w.Write([]byte(`{
-  "name": "demo",
-  "tap": "homebrew/core",
-  "homepage": "https://github.com/example/demo",
-  "versions": {"stable": "2.0.0"},
-  "urls": {"stable": {"url": "https://github.com/example/demo/releases/download/v2.0.0/demo.tar.gz"}}
-}`))
-		case "/repos/example/demo/releases/tags/v2.0.0":
-			http.NotFound(w, r)
-		case "/repos/example/demo/git/ref/tags/v2.0.0":
-			_, _ = w.Write([]byte(`{"ref":"refs/tags/v2.0.0","object":{"type":"tag","sha":"tag-sha"}}`))
-		case "/repos/example/demo/git/tags/tag-sha":
-			_, _ = w.Write([]byte(`{"tagger":{"date":"` + time.Now().UTC().Format(time.RFC3339) + `"},"object":{"type":"commit","sha":"commit-sha"}}`))
-		default:
-			t.Fatalf("unexpected API path: %s", r.URL.Path)
-		}
-	}))
-	defer server.Close()
-	t.Setenv("UPDEV_HOMEBREW_API_URL", server.URL)
-	t.Setenv("UPDEV_GITHUB_API_URL", server.URL)
-	t.Setenv("UPDEV_OSV_API_URL", server.URL)
-	fake := &fakeCommandRunner{result: runner.Result{Stdout: `{"formulae":[{"name":"demo","installed_versions":["1.0.0"],"current_version":"2.0.0"}],"casks":[]}`}}
-	gate := collectBrewSafety(context.Background(), fake, root)
-	if gate.Status != plan.StatusHeld {
-		t.Fatalf("expected safety gate held, got %#v", gate)
-	}
-	if len(gate.Findings) != 1 || gate.Findings[0].Decision != "hold" || gate.Findings[0].ReleaseAgeDays != 0 {
-		t.Fatalf("expected tag-date release-age hold, got %#v", gate.Findings)
-	}
-	if !containsString(gate.Findings[0].Evidence, "GitHub tag metadata") {
-		t.Fatalf("expected tag metadata evidence, got %#v", gate.Findings[0].Evidence)
-	}
-}
-
-func TestCollectBrewSafetyInfersGitHubFormulaReleaseTag(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
-	root := t.TempDir()
-	if err := os.WriteFile(filepath.Join(root, "Brewfile.tmpl"), []byte(`brew "jq"`), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	releasePaths := []string{}
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodPost {
-			_, _ = w.Write([]byte(`{"results":[{}]}`))
-			return
-		}
-		switch r.URL.Path {
-		case "/formula/jq.json":
-			_, _ = w.Write([]byte(`{
-  "name": "jq",
-  "tap": "homebrew/core",
-  "homepage": "https://jqlang.github.io/jq/",
-  "versions": {"stable": "1.8.1"},
-  "urls": {"stable": {"url": "https://github.com/jqlang/jq"}}
-}`))
-		case "/repos/jqlang/jq/releases/tags/1.8.1", "/repos/jqlang/jq/releases/tags/v1.8.1",
-			"/repos/jqlang/jq/git/ref/tags/1.8.1", "/repos/jqlang/jq/git/ref/tags/v1.8.1":
-			releasePaths = append(releasePaths, r.URL.Path)
-			http.NotFound(w, r)
-		case "/repos/jqlang/jq/releases/tags/jq-1.8.1":
-			releasePaths = append(releasePaths, r.URL.Path)
-			_, _ = w.Write([]byte(`{"published_at":"` + time.Now().UTC().Format(time.RFC3339) + `"}`))
-		default:
-			t.Fatalf("unexpected API path: %s", r.URL.Path)
-		}
-	}))
-	defer server.Close()
-	t.Setenv("UPDEV_HOMEBREW_API_URL", server.URL)
-	t.Setenv("UPDEV_GITHUB_API_URL", server.URL)
-	t.Setenv("UPDEV_OSV_API_URL", server.URL)
-	fake := &fakeCommandRunner{result: runner.Result{Stdout: `{"formulae":[{"name":"jq","installed_versions":["1.7"],"current_version":"1.8.1"}],"casks":[]}`}}
-	gate := collectBrewSafety(context.Background(), fake, root)
-	if gate.Status != plan.StatusHeld {
-		t.Fatalf("expected inferred release-age hold, got %#v", gate)
-	}
-	if len(gate.Findings) != 1 || gate.Findings[0].Decision != "hold" || gate.Findings[0].ReleaseAgeDays != 0 {
-		t.Fatalf("expected inferred too-new formula hold finding, got %#v", gate.Findings)
-	}
-	if !containsString(gate.Findings[0].Evidence, "GitHub inferred release metadata") {
-		t.Fatalf("expected inferred release evidence, got %#v", gate.Findings[0].Evidence)
-	}
-	if !containsString(releasePaths, "/repos/jqlang/jq/releases/tags/jq-1.8.1") {
-		t.Fatalf("expected jq-version tag candidate query, got %#v", releasePaths)
-	}
-}
-
-func TestCollectBrewSafetyInfersGitHubReleaseFromHomepage(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
-	root := t.TempDir()
-	if err := os.WriteFile(filepath.Join(root, "Brewfile.tmpl"), []byte(`brew "demo"`), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodPost {
-			_, _ = w.Write([]byte(`{"results":[{}]}`))
-			return
-		}
-		switch r.URL.Path {
-		case "/formula/demo.json":
-			_, _ = w.Write([]byte(`{
-  "name": "demo",
-  "tap": "homebrew/core",
-  "homepage": "https://github.com/example/demo",
-  "versions": {"stable": "2.0.0"},
-  "urls": {"stable": {"url": "https://downloads.example.com/demo-2.0.0.tar.gz"}}
-}`))
-		case "/repos/example/demo/releases/tags/2.0.0", "/repos/example/demo/git/ref/tags/2.0.0":
-			http.NotFound(w, r)
-		case "/repos/example/demo/releases/tags/v2.0.0":
-			_, _ = w.Write([]byte(`{"published_at":"` + time.Now().UTC().Format(time.RFC3339) + `"}`))
-		default:
-			t.Fatalf("unexpected API path: %s", r.URL.Path)
-		}
-	}))
-	defer server.Close()
-	t.Setenv("UPDEV_HOMEBREW_API_URL", server.URL)
-	t.Setenv("UPDEV_GITHUB_API_URL", server.URL)
-	t.Setenv("UPDEV_OSV_API_URL", server.URL)
-	fake := &fakeCommandRunner{result: runner.Result{Stdout: `{"formulae":[{"name":"demo","installed_versions":["1.0.0"],"current_version":"2.0.0"}],"casks":[]}`}}
-	gate := collectBrewSafety(context.Background(), fake, root)
-	if gate.Status != plan.StatusHeld {
-		t.Fatalf("expected homepage inferred release-age hold, got %#v", gate)
-	}
-	if len(gate.Findings) != 1 || gate.Findings[0].Decision != "hold" || gate.Findings[0].ReleaseAgeDays != 0 {
-		t.Fatalf("expected homepage inferred too-new formula hold finding, got %#v", gate.Findings)
-	}
-	if !containsString(gate.Findings[0].Evidence, "GitHub inferred release metadata") {
-		t.Fatalf("expected inferred release evidence, got %#v", gate.Findings[0].Evidence)
-	}
-}
-
-func TestCollectBrewSafetyHoldsCasksEvenWithMetadata(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
-	root := t.TempDir()
-	if err := os.WriteFile(filepath.Join(root, "Brewfile.tmpl"), []byte(`cask "firefox"`), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/cask/firefox.json" {
 			t.Fatalf("unexpected Homebrew API path: %s", r.URL.Path)
 		}
-		_, _ = w.Write([]byte(`{
-  "token": "firefox",
-  "name": ["Firefox"],
-  "tap": "homebrew/cask",
-  "homepage": "https://www.mozilla.org/firefox/",
-  "url": "https://download-installer.cdn.mozilla.net/pub/firefox/releases/151.0.2/mac/en-US/Firefox%20151.0.2.dmg",
-  "version": "151.0.2"
-}`))
 	}))
 	defer server.Close()
-	t.Setenv("UPDEV_HOMEBREW_API_URL", server.URL)
-	fake := &fakeCommandRunner{result: runner.Result{Stdout: `{"formulae":[],"casks":[{"name":"firefox","installed_versions":"150.0","current_version":"151.0.2"}]}`}}
-	gate := collectBrewSafety(context.Background(), fake, root)
-	if gate.Status != plan.StatusHeld {
-		t.Fatalf("expected safety gate held, got %#v", gate)
+	items := []plan.Item{
+		{Provider: "brew", Kind: "brew", Name: "jq"},
+		{Provider: "brew", Kind: "cask", Name: "visual-studio-code"},
+		{Provider: "brew", Kind: "cask", Name: "custom-app"},
+		{Provider: "brew", Kind: "tap", Name: "vendor/tap"},
+		{Provider: "brew", Kind: "tap", Name: "homebrew/core"},
 	}
-	if len(gate.Findings) != 1 || gate.Findings[0].Decision != "review" || gate.Findings[0].Confidence != "low" {
-		t.Fatalf("expected cask review finding, got %#v", gate.Findings)
-	}
-	remediation := gate.Findings[0].Remediation
-	if !strings.Contains(remediation, "mozilla.org") ||
-		!strings.Contains(remediation, "download-installer.cdn.mozilla.net") {
-		t.Fatalf("expected cask remediation, got %#v", gate.Findings[0])
-	}
-	if gate.Findings[0].HomepageHost != "mozilla.org" || gate.Findings[0].URLHost != "download-installer.cdn.mozilla.net" || gate.Findings[0].HostMatched {
-		t.Fatalf("expected cask provenance hosts, got %#v", gate.Findings[0])
-	}
-}
-
-func TestCollectBrewSafetyHoldsTooNewGitHubCaskRelease(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
-	root := t.TempDir()
-	if err := os.WriteFile(filepath.Join(root, "Brewfile.tmpl"), []byte(`cask "demo-app"`), 0o600); err != nil {
+	postures, err := homebrewPosturesFromItems(context.Background(), server.Client(), server.URL, root, items)
+	if err != nil {
 		t.Fatal(err)
 	}
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/cask/demo-app.json":
-			_, _ = w.Write([]byte(`{
-  "token": "demo-app",
-  "name": ["Demo App"],
-  "tap": "homebrew/cask",
-  "homepage": "https://example.com/demo-app/",
-  "url": "https://github.com/example/demo-app/releases/download/v2.0.0/demo-app.dmg",
-  "version": "2.0.0"
-}`))
-		case "/repos/example/demo-app/releases/tags/v2.0.0":
-			_, _ = w.Write([]byte(`{"published_at":"` + time.Now().UTC().Format(time.RFC3339) + `"}`))
-		default:
-			t.Fatalf("unexpected API path: %s", r.URL.Path)
+	if len(postures) != 5 {
+		t.Fatalf("expected five Homebrew posture entries, got %#v", postures)
+	}
+	reasons := map[string]string{}
+	for _, posture := range postures {
+		reasons[posture.Name] = posture.Reason
+	}
+	if reasons["jq"] != "use yq" {
+		t.Fatalf("expected deprecated formula reason, got %#v", postures)
+	}
+	if reasons["visual-studio-code"] != "Homebrew cask download host differs from homepage host; vendor provenance review required" {
+		t.Fatalf("expected cask review reason, got %#v", postures)
+	}
+	if reasons["vendor/tap/custom-app"] != "non-official Homebrew tap needs provenance review" {
+		t.Fatalf("expected custom tap review reason, got %#v", postures)
+	}
+	trustCommands := map[string]string{}
+	trustArgv := map[string][]string{}
+	for _, posture := range postures {
+		trustCommands[posture.Name] = posture.TrustCommand
+		trustArgv[posture.Name] = posture.TrustCommandArgv
+	}
+	if trustCommands["vendor/tap/custom-app"] != "brew trust --cask vendor/tap/custom-app" ||
+		trustCommands["vendor/tap"] != "brew trust --tap vendor/tap" {
+		t.Fatalf("expected Homebrew 6 trust commands on non-official entries, got %#v", postures)
+	}
+	if strings.Join(trustArgv["vendor/tap/custom-app"], "\x00") != "brew\x00trust\x00--cask\x00vendor/tap/custom-app" ||
+		strings.Join(trustArgv["vendor/tap"], "\x00") != "brew\x00trust\x00--tap\x00vendor/tap" {
+		t.Fatalf("expected structured Homebrew 6 trust argv on non-official entries, got %#v", postures)
+	}
+	remediations := map[string]string{}
+	for _, posture := range postures {
+		remediations[posture.Name] = posture.Remediation
+	}
+	if !strings.Contains(remediations["visual-studio-code"], "visualstudio.com") ||
+		!strings.Contains(remediations["visual-studio-code"], "update.code.visualstudio.com") ||
+		!strings.Contains(remediations["vendor/tap"], "tap repository") {
+		t.Fatalf("expected Homebrew posture remediation, got %#v", postures)
+	}
+	if reasons["vendor/tap"] != "non-official Homebrew tap needs provenance review" {
+		t.Fatalf("expected custom tap review posture, got %#v", postures)
+	}
+	if reasons["homebrew/core"] != "" {
+		t.Fatalf("expected official tap allow posture, got %#v", postures)
+	}
+	for _, posture := range postures {
+		if posture.Name == "vendor/tap" && posture.URL != "https://github.com/vendor/homebrew-tap" {
+			t.Fatalf("expected inferred tap GitHub URL, got %#v", posture)
 		}
+	}
+}
+
+func TestHomebrewAdvisoryPackagesFromPosturesMapsGitHubFormulaTags(t *testing.T) {
+	packages := homebrewAdvisoryPackagesFromPostures([]homebrewPosture{
+		{Kind: "brew", Name: "jq", Version: "1.8.1", URL: "https://github.com/jqlang/jq/releases/download/jq-1.8.1/jq-1.8.1.tar.gz"},
+		{Kind: "brew", Name: "jq", Version: "1.8.1", URL: "https://github.com/jqlang/jq/releases/download/jq-1.8.1/jq-1.8.1.tar.gz"},
+		{Kind: "cask", Name: "tool", URL: "https://github.com/owner/tool/releases/download/v1.0.0/tool.dmg"},
+		{Kind: "brew", Name: "nongit", URL: "https://example.com/tool.tar.gz"},
+		{Kind: "brew", Name: "pnpm", Version: "11.4.0", URL: "https://registry.npmjs.org/pnpm/-/pnpm-11.4.0.tgz"},
+	})
+	if len(packages) != 3 {
+		t.Fatalf("expected three mapped Homebrew advisory packages, got %#v", packages)
+	}
+	if packages[0].Provider != "brew" || packages[0].Name != "jq" || packages[0].Ecosystem != "GIT" || packages[0].Package != "https://github.com/jqlang/jq.git" || packages[0].Version != "jq-1.8.1" || packages[0].Confidence != "medium" {
+		t.Fatalf("unexpected Homebrew advisory package mapping: %#v", packages[0])
+	}
+	if packages[1].Provider != "brew" || packages[1].Name != "tool" || packages[1].Ecosystem != "GIT" || packages[1].Package != "https://github.com/owner/tool.git" || packages[1].Version != "v1.0.0" || packages[1].Confidence != "medium" {
+		t.Fatalf("unexpected Homebrew cask advisory package mapping: %#v", packages[1])
+	}
+	if packages[2].Provider != "brew" || packages[2].Name != "pnpm" || packages[2].Ecosystem != "npm" || packages[2].Package != "pnpm" || packages[2].Version != "11.4.0" || packages[2].Confidence != "medium" {
+		t.Fatalf("unexpected curated Homebrew advisory package mapping: %#v", packages[2])
+	}
+}
+
+func TestGitHubPosturesFromRegistryUsesRepositoryURLs(t *testing.T) {
+	var gotPath string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		_, _ = w.Write([]byte(`{
+  "full_name": "scope/tool",
+  "html_url": "https://github.com/scope/tool",
+  "default_branch": "main",
+  "archived": true
+}`))
 	}))
 	defer server.Close()
-	t.Setenv("UPDEV_HOMEBREW_API_URL", server.URL)
-	t.Setenv("UPDEV_GITHUB_API_URL", server.URL)
-	fake := &fakeCommandRunner{result: runner.Result{Stdout: `{"formulae":[],"casks":[{"name":"demo-app","installed_versions":"1.0.0","current_version":"2.0.0"}]}`}}
-	gate := collectBrewSafety(context.Background(), fake, root)
-	if gate.Status != plan.StatusHeld {
-		t.Fatalf("expected safety gate held, got %#v", gate)
+	postures, err := githubPosturesFromRegistry(context.Background(), server.Client(), server.URL,
+		[]npmPosture{{Provider: "mise", Name: "npm:@scope/tool", RepositoryURL: "https://github.com/scope/tool"}},
+		[]cargoPosture{{Provider: "mise", Name: "cargo:fd-find", RepositoryURL: "https://github.com/scope/tool"}},
+		[]pypiPosture{{Provider: "mise", Name: "pipx:frogmouth", ProjectURL: "https://example.com/frogmouth"}},
+	)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if len(gate.Findings) != 1 || gate.Findings[0].Decision != "hold" || gate.Findings[0].ReleaseDate == "" || gate.Findings[0].ReleaseAgeDays != 0 {
-		t.Fatalf("expected too-new cask release hold finding, got %#v", gate.Findings)
+	if gotPath != "/repos/scope/tool" {
+		t.Fatalf("unexpected github path: %s", gotPath)
 	}
-	if !containsString(gate.Findings[0].Evidence, "GitHub release metadata") {
-		t.Fatalf("expected cask release-age evidence, got %#v", gate.Findings[0].Evidence)
+	if len(postures) != 1 {
+		t.Fatalf("expected one deduped GitHub posture, got %#v", postures)
 	}
-}
-
-func TestSecurityReviewCandidatesFromReportBuildsPrompts(t *testing.T) {
-	report := securityReport{
-		Findings: []securityFinding{{
-			Provider:    "mise",
-			Name:        "npm:pnpm",
-			Package:     "pnpm",
-			Version:     "11.1.2",
-			Ecosystem:   "npm",
-			VulnID:      "GHSA-test",
-			Decision:    "hold",
-			Reason:      "GitHub Advisory vulnerability match",
-			Remediation: "upgrade to a fixed version",
-			URL:         "https://github.com/advisories/GHSA-test",
-		}},
-		VSCode: []vscodePosture{{
-			Provider:    "brew",
-			Kind:        "vscode",
-			Name:        "publisher.extension",
-			Version:     "1.0.0",
-			Decision:    "review",
-			Reason:      "publisher domain is not verified",
-			Remediation: "verify publisher identity",
-		}},
-		Scanners: []scannerEvidence{{
-			Tool: "osv-scanner",
-			Findings: []scannerFinding{{
-				Kind:           "vulnerability",
-				Ecosystem:      "npm",
-				Package:        "left-pad",
-				Version:        "1.0.0",
-				DependencyKind: "direct",
-				VulnID:         "GHSA-scanner",
-				SourcePath:     "package-lock.json",
-				Decision:       "hold",
-				Reason:         "osv-scanner reported vulnerability in a directly managed package",
-				Remediation:    "update left-pad",
-			}},
-		}},
-		Audits: []nativeAudit{{
-			Provider: "project",
-			Tool:     "maven-native-audit",
-			Target:   "pom.xml",
-			Decision: "review",
-			Reason:   "Maven project audit unavailable",
-			Error:    "no configured provider-native Maven vulnerability audit",
-		}},
-		NPM: []npmPosture{{
-			Provider: "mise",
-			Kind:     "npm",
-			Package:  "safe-package",
-			Decision: "allow",
-		}},
-	}
-	candidates := securityReviewCandidatesFromReport(report)
-	if len(candidates) != 4 {
-		t.Fatalf("expected four review candidates, got %#v", candidates)
-	}
-	if candidates[0].Decision != "hold" || candidates[0].Name != "pnpm" || !strings.Contains(candidates[0].Prompt, "recommend allow/review/hold/block") {
-		t.Fatalf("expected advisory review prompt first, got %#v", candidates)
-	}
-	if !strings.Contains(candidates[0].PolicyCommand, "updev security policy hold --provider npm --name pnpm") || !strings.Contains(candidates[0].PolicyCommand, "--ttl-days 30") {
-		t.Fatalf("expected advisory policy command, got %#v", candidates[0])
-	}
-	var nativeCandidate securityReviewCandidate
-	var scannerCandidate securityReviewCandidate
-	var vscodeCandidate securityReviewCandidate
-	for _, candidate := range candidates {
-		switch {
-		case candidate.Provider == "project" && candidate.Kind == "native-audit":
-			nativeCandidate = candidate
-		case candidate.Provider == "scanner" && candidate.Kind == "osv-scanner":
-			scannerCandidate = candidate
-		case candidate.Provider == "brew" && candidate.Kind == "vscode":
-			vscodeCandidate = candidate
-		}
-	}
-	if nativeCandidate.Name != "maven-native-audit" || !strings.Contains(nativeCandidate.Prompt, "pom.xml") || !strings.Contains(nativeCandidate.Prompt, "no configured provider-native") {
-		t.Fatalf("expected native audit review prompt with source and remediation, got %#v", nativeCandidate)
-	}
-	if nativeCandidate.PolicyCommand != "" {
-		t.Fatalf("expected native audit not to produce policy command, got %#v", nativeCandidate)
-	}
-	if scannerCandidate.Name != "GHSA-scanner" || scannerCandidate.Ecosystem != "npm" || scannerCandidate.Package != "left-pad" || scannerCandidate.DependencyKind != "direct" {
-		t.Fatalf("expected scanner review candidate to target scanner tool, got %#v", scannerCandidate)
-	}
-	if !strings.Contains(scannerCandidate.Prompt, "package left-pad") || !strings.Contains(scannerCandidate.Prompt, "dependency role direct") {
-		t.Fatalf("expected scanner prompt package context, got %#v", scannerCandidate)
-	}
-	if !strings.Contains(scannerCandidate.PolicyCommand, "updev security policy hold --provider scanner --kind osv-scanner --name GHSA-scanner") || !strings.Contains(scannerCandidate.PolicyCommand, "--ttl-days 30") {
-		t.Fatalf("expected scanner policy command, got %#v", scannerCandidate)
-	}
-	if vscodeCandidate.Name != "publisher.extension" || !strings.Contains(vscodeCandidate.Prompt, "publisher domain") {
-		t.Fatalf("expected VS Code review prompt, got %#v", candidates)
-	}
-	if !strings.Contains(vscodeCandidate.PolicyCommand, "updev security policy review --provider brew --kind vscode --name publisher.extension") || !strings.Contains(vscodeCandidate.PolicyCommand, "--ttl-days 30") {
-		t.Fatalf("expected VS Code policy command, got %#v", vscodeCandidate)
-	}
-	summary := securityReviewSummaryFromCandidates(candidates)
-	if summary == nil || summary.Candidates != 4 || summary.Decisions["hold"] != 2 || summary.Decisions["review"] != 2 || summary.Providers["mise"] != 1 || summary.Providers["brew"] != 1 || summary.Providers["scanner"] != 1 || summary.Providers["project"] != 1 {
-		t.Fatalf("expected review candidate summary, got %#v", summary)
-	}
-	held := filterSecurityReviewCandidates(candidates, securityReviewOptions{decision: "hold"})
-	if len(held) != 2 {
-		t.Fatalf("expected two held candidates, got %#v", held)
-	}
-	scannerFiltered := filterSecurityReviewCandidates(candidates, securityReviewOptions{kind: "osv-scanner", name: "GHSA"})
-	if len(scannerFiltered) != 1 || scannerFiltered[0].Name != "GHSA-scanner" {
-		t.Fatalf("expected scanner candidate name substring match, got %#v", scannerFiltered)
-	}
-}
-
-func TestSecurityReviewStatusReflectsFilteredCandidates(t *testing.T) {
-	scan := securityReport{Status: plan.StatusHeld}
-	if got := securityReviewStatus(scan, nil); got != plan.StatusOK {
-		t.Fatalf("expected filtered review with no candidates to be ok, got %s", got)
-	}
-	if got := securityReviewStatus(scan, []securityReviewCandidate{{Name: "candidate"}}); got != plan.StatusHeld {
-		t.Fatalf("expected review candidates to hold review status, got %s", got)
-	}
-	if got := securityReviewStatus(securityReport{Status: plan.StatusError}, nil); got != plan.StatusError {
-		t.Fatalf("expected scan errors to remain errors, got %s", got)
-	}
-}
-
-func TestPrintSecurityReviewTextIncludesCandidates(t *testing.T) {
-	var buffer bytes.Buffer
-	printSecurityReviewText(&buffer, securityReviewReport{
-		Status:  plan.StatusHeld,
-		Root:    "/repo",
-		Filters: &securityReviewFilters{Decision: "review", Kind: "cask", Name: "demo"},
-		Summary: &securityReviewSummary{Candidates: 1, Decisions: map[string]int{"review": 1}, Providers: map[string]int{"brew": 1}},
-		Candidates: []securityReviewCandidate{{
-			Provider:      "brew",
-			Kind:          "cask",
-			Name:          "demo-app",
-			Decision:      "review",
-			Reason:        "needs provenance review",
-			Remediation:   "verify upstream provenance",
-			Evidence:      []string{"unsigned cask", "non-official tap"},
-			Source:        "Brewfile.tmpl",
-			URL:           "https://example.com/demo-app",
-			Prompt:        "Review updev security candidate brew/cask demo-app.",
-			PolicyCommand: "updev security policy review --provider brew --kind cask --name demo-app --reason \"needs provenance review\"",
-		}},
-	})
-	got := buffer.String()
-	for _, want := range []string{"filters: decision=review, kind=cask, name=demo", "review candidates: 1", "decisions: review=1", "providers: brew=1", "brew/cask demo-app", "needs provenance review", "remediation: verify upstream provenance", "source: Brewfile.tmpl", "url: https://example.com/demo-app", "evidence: unsigned cask; non-official tap", "policy:", "prompt:"} {
-		if !strings.Contains(got, want) {
-			t.Fatalf("expected review text to include %q, got %q", want, got)
-		}
-	}
-}
-
-func TestPrintSecurityTextIncludesSkippedDetails(t *testing.T) {
-	var buffer bytes.Buffer
-	printSecurityText(&buffer, securityReport{
-		Status:  plan.StatusOK,
-		Root:    "/repo",
-		Sources: []string{"osv"},
-		Skipped: []securitySkipped{{
-			Provider: "brew",
-			Kind:     "brew",
-			Reason:   "homebrew requires curated advisory mapping",
-			Count:    2,
-			Examples: []string{"jq", "gh"},
-		}},
-	}, false)
-	got := buffer.String()
-	if !strings.Contains(got, "skipped automatic matching") || !strings.Contains(got, "brew") || !strings.Contains(got, "2") || !strings.Contains(got, "jq,gh") || !strings.Contains(got, "curated advisory mapping") {
-		t.Fatalf("expected skipped details in text output, got %q", got)
-	}
-}
-
-func TestPrintSafetyTextIncludesWarningsWithErrors(t *testing.T) {
-	var buffer bytes.Buffer
-	printSafetyTextTo(&buffer, []safetyGate{{
-		Provider: "brew",
-		Status:   plan.StatusError,
-		Warnings: []string{"Homebrew manifest unavailable; provenance checks may be incomplete"},
-		Error:    "brew outdated failed",
-	}})
-	got := buffer.String()
-	if !strings.Contains(got, "warning: Homebrew manifest unavailable") || !strings.Contains(got, "error: brew outdated failed") {
-		t.Fatalf("expected safety warnings and error, got %q", got)
-	}
-}
-
-func TestPrintSafetyTextIncludesRemediation(t *testing.T) {
-	var buffer bytes.Buffer
-	printSafetyTextTo(&buffer, []safetyGate{{
-		Provider: "brew",
-		Status:   plan.StatusHeld,
-		Findings: []safetyFinding{{
-			Kind:        "cask",
-			Name:        "firefox",
-			Decision:    "review",
-			Reason:      "needs review",
-			Remediation: "review vendor homepage and download host",
-		}},
-	}})
-	got := buffer.String()
-	if !strings.Contains(got, "next: review vendor homepage and download host") {
-		t.Fatalf("expected remediation in safety text, got %q", got)
-	}
-}
-
-func TestPrintSafetyTextLocalizesReleaseAgeWarnings(t *testing.T) {
-	withDefaultLanguageForTest(t, "ja")
-	var buffer bytes.Buffer
-	printSafetyTextTo(&buffer, []safetyGate{{
-		Provider: "brew",
-		Status:   plan.StatusHeld,
-		Findings: []safetyFinding{{
-			Kind:              "brew",
-			Name:              "libomp",
-			InstalledVersions: []string{"22.1.6"},
-			CurrentVersion:    "22.1.7",
-			Decision:          "hold",
-			Reason:            "candidate release is too new: age 0 days, minimum 3 days",
-			Remediation:       "wait until the release reaches the minimum age or allow temporarily by policy after review",
-		}},
-	}})
-	got := buffer.String()
-	if !strings.Contains(got, "候補リリースが新しすぎます") || !strings.Contains(got, "リリースが最小経過日数に達するまで") || strings.Contains(got, "candidate release is too new") {
-		t.Fatalf("expected localized safety gate text, got %q", got)
-	}
-}
-
-func TestSafetySummaryTextReportsHeldAndDecisionCounts(t *testing.T) {
-	got := safetySummaryText([]safetyGate{{
-		Provider: "brew",
-		Status:   plan.StatusHeld,
-		Findings: []safetyFinding{
-			{Decision: "allow"},
-			{Decision: "review"},
-			{Decision: "hold"},
-			{},
-		},
-	}})
-	want := "1 provider gates, 1 held providers, 4 findings (1 allow, 1 review, 1 hold, 1 unknown)"
-	if got != want {
-		t.Fatalf("expected safety summary %q, got %q", want, got)
-	}
-}
-
-func TestJapaneseSummaryTextUsesDistinctCountLabels(t *testing.T) {
-	withDefaultLanguageForTest(t, "ja")
-	updateGot := updateStepSummaryText([]updateStep{
-		{Name: "brew", Status: plan.StatusHeld, Skipped: true, SkippedItems: []string{"security held"}},
-		{Name: "mise", Status: plan.StatusOK, Updated: []string{"node 22 -> 24"}},
-	})
-	updateWant := "provider step 2件, 更新項目 1件, 見送り項目 1件, 保留step 1件, skip step 1件"
-	if updateGot != updateWant {
-		t.Fatalf("expected Japanese update summary %q, got %q", updateWant, updateGot)
-	}
-
-	safetyGot := safetySummaryText([]safetyGate{{
-		Provider: "brew",
-		Status:   plan.StatusHeld,
-		Findings: []safetyFinding{
-			{Decision: "allow"},
-			{Decision: "hold"},
-		},
-	}})
-	safetyWant := "provider確認 1件, 保留provider 1件, 検出項目 2件 (allow 1件, hold 1件)"
-	if safetyGot != safetyWant {
-		t.Fatalf("expected Japanese safety summary %q, got %q", safetyWant, safetyGot)
-	}
-}
-
-func TestLocalizedUpdateStepReasonCoversStrictRefreshAndMiseBumpDrift(t *testing.T) {
-	withDefaultLanguageForTest(t, "ja")
-	cases := []struct {
-		reason string
-		want   string
-	}{
-		{
-			reason: "strict safety refreshed Homebrew metadata; no package candidates found",
-			want:   "strict safety のため Homebrew metadata を更新しました。更新対象の package 候補はありません",
-		},
-		{
-			reason: "strict safety refreshed Homebrew metadata before rechecking package candidates",
-			want:   "strict safety のため Homebrew metadata を更新し、package 候補を再確認しました",
-		},
-		{
-			reason: "strict safety refreshes Homebrew metadata only before rechecking package candidates",
-			want:   "strict safety のため Homebrew metadata の更新だけを実行し、package 候補を再確認します",
-		},
-		{
-			reason: "security=strict held mise update because no scoped safe candidates were found",
-			want:   "security=strict のため mise 更新を保留しました: 適用できる scoped safe 候補がありません",
-		},
-		{
-			reason: "strict safety will apply 2 safe mise candidates and hold 3 unsafe candidates",
-			want:   "strict safety は mise の safe 候補 2件だけを適用し、unsafe 候補 3件を保留します",
-		},
-		{
-			reason: "strict safety will apply 1 safe Homebrew candidates and hold 4 unsafe candidates; Homebrew cannot generally install an older intermediate release",
-			want:   "strict safety は Homebrew の safe 候補 1件だけを適用し、unsafe 候補 4件を保留します。Homebrew は通常、古い中間 version を指定して install できません",
-		},
-		{
-			reason: "mise bump candidates available; mode=manual requires item review",
-			want:   "mise bump 候補があります。mode=manual のため item ごとの確認が必要です",
-		},
-		{
-			reason: "mise bump candidates require review",
-			want:   "mise bump 候補の確認が必要です",
-		},
-		{
-			reason: "mise bump candidates require review; no safe auto candidates",
-			want:   "mise bump 候補の確認が必要です。自動適用できる safe 候補はありません",
-		},
-		{
-			reason: "mise bump candidates available; 2 safe candidates can be applied after confirmation",
-			want:   "mise bump 候補があります。確認後に safe 候補 2件を適用できます",
-		},
-		{
-			reason: "mise bump auto would apply 2 safe candidates",
-			want:   "mise bump auto は safe 候補 2件を適用します",
-		},
-		{
-			reason: "mise bump auto would apply 2 safe candidates; 3 candidates require review",
-			want:   "mise bump auto は safe 候補 2件を適用し、3件は確認待ちにします",
-		},
-		{
-			reason: "mise bump candidate set changed before apply: planned candidate github:ogulcancelik/herdr is no longer reported by mise outdated --bump",
-			want:   "mise bump の候補が適用直前に変わったため保留しました: 予定していた候補 github:ogulcancelik/herdr は現在の mise outdated --bump に出ていません",
-		},
-		{
-			reason: "mise bump candidate set changed before preview: planned candidate go changed from 1.26.3 to 1.26.4",
-			want:   "mise bump の候補が preview 直前に変わりました: 予定していた候補 go は 1.26.3 から 1.26.4 に変わりました",
-		},
-		{
-			reason: "mise bump auto found only dependency-blocked candidates",
-			want:   "mise bump auto で見つかった候補は dependency 不足で block されたものだけです",
-		},
-		{
-			reason: "mise bump dry-run preflight failed: dependency missing",
-			want:   "mise bump の dry-run preflight が失敗しました: dependency missing",
-		},
-		{
-			reason: "mise bump failed: install failed",
-			want:   "mise bump が失敗しました: install failed",
-		},
-		{
-			reason: "mise bump applied 2 safe candidates; 3 candidates require review",
-			want:   "mise bump は safe 候補 2件を適用し、3件は確認待ちです",
-		},
-		{
-			reason: "security policy reran scoped mise-bump update for mise-bump/tool github:ogulcancelik/herdr",
-			want:   "security policy に従い、mise-bump の scoped update を再実行しました: mise-bump/tool github:ogulcancelik/herdr",
-		},
-	}
-	for _, tt := range cases {
-		if got := localizedUpdateStepReason(tt.reason); got != tt.want {
-			t.Fatalf("expected localized reason %q, got %q", tt.want, got)
-		}
-	}
-}
-
-func TestGitHubRepoTagFromURLSupportsArchiveForms(t *testing.T) {
-	tests := []struct {
-		raw  string
-		repo string
-		tag  string
-	}{
-		{raw: "https://github.com/owner/tool/releases/download/v1.0.0/tool.tar.gz", repo: "owner/tool", tag: "v1.0.0"},
-		{raw: "https://github.com/owner/tool/archive/refs/tags/v1.0.0.tar.gz", repo: "owner/tool", tag: "v1.0.0"},
-		{raw: "https://github.com/owner/tool/archive/v1.0.0.zip", repo: "owner/tool", tag: "v1.0.0"},
-	}
-	for _, tt := range tests {
-		repo, tag, ok := githubRepoTagFromURL(tt.raw)
-		if !ok || repo != tt.repo || tag != tt.tag {
-			t.Fatalf("unexpected github repo/tag for %s: repo=%q tag=%q ok=%v", tt.raw, repo, tag, ok)
-		}
-	}
-}
-
-func TestVSCodeSafetyHoldsNewMarketplaceUpdate(t *testing.T) {
-	t.Setenv(vscodeMinUpdateAgeDaysEnvName, "7")
-	posture := vscodePosture{
-		Provider:          "brew",
-		Kind:              "vscode",
-		Name:              "publisher.extension",
-		Version:           "1.2.0",
-		LastUpdated:       time.Now().AddDate(0, 0, -2).UTC().Format(time.RFC3339),
-		Publisher:         "publisher",
-		PublisherVerified: true,
-		Decision:          "allow",
-		Confidence:        "medium",
-		Evidence:          []string{"vscode-marketplace"},
-	}
-	finding := vscodeSafetyFinding(posture, "1.1.0")
-	if finding.Decision != "hold" || !strings.Contains(finding.Reason, "update is too new") {
-		t.Fatalf("expected new Marketplace update hold, got %#v", finding)
-	}
-	if finding.ReleaseDate == "" || finding.MinReleaseAgeDays != 7 || !containsString(finding.Evidence, "vscode-marketplace update-age") {
-		t.Fatalf("expected update-age evidence, got %#v", finding)
-	}
-}
-
-func TestSecurityFiltersProviderAndEcosystem(t *testing.T) {
-	items := []plan.Item{
-		{Provider: "mise", Name: "npm:pnpm", Version: "11.1.2", Kind: "tool", Category: "npm"},
-		{Provider: "mise", Name: "cargo:fd-find", Version: "10.4.2", Kind: "tool", Category: "cargo"},
-		{Provider: "brew", Name: "jq", Version: "1.8.1", Kind: "brew"},
-	}
-	filtered := filterSecurityItems(items, securityOptions{provider: "mise"})
-	packages, skipped := securityScopeFromItems(filtered)
-	packages = filterSecurityPackages(packages, securityOptions{ecosystem: "npm"})
-	if len(packages) != 1 || packages[0].Package != "pnpm" {
-		t.Fatalf("expected npm package only, got %#v", packages)
-	}
-	if len(skipped) != 0 {
-		t.Fatalf("provider filter should exclude brew skip entries, got %#v", skipped)
-	}
-	allItems := filterSecurityItems(items, securityOptions{provider: "all"})
-	if len(allItems) != len(items) {
-		t.Fatalf("provider all should keep all items, got %#v", allItems)
-	}
-	if !securityScanIncludesBrewProvider("all") || !securityScanIncludesBrewProvider("brew") || securityScanIncludesBrewProvider("") || securityScanIncludesBrewProvider("mise") {
-		t.Fatalf("unexpected brew posture provider selection")
-	}
-	if !securityScanIncludesProjectProvider("") || !securityScanIncludesProjectProvider("all") || !securityScanIncludesProjectProvider("project") || securityScanIncludesProjectProvider("brew") {
-		t.Fatalf("unexpected project provider selection")
-	}
-	npmItems := filterSecurityItemsForEcosystem(items, "npm")
-	if len(npmItems) != 1 || npmItems[0].Name != "npm:pnpm" {
-		t.Fatalf("expected npm posture items only, got %#v", npmItems)
+	if postures[0].Name != "npm:@scope/tool" || postures[0].Decision != "review" {
+		t.Fatalf("expected registry GitHub posture, got %#v", postures[0])
 	}
 }

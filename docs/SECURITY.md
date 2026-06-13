@@ -241,10 +241,11 @@ mutation. `updev doctor dependencies` reads `brew trust --json=v1` with
 `HOMEBREW_NO_INSTALL_FROM_API=1` and compares it with non-official entries in
 the configured `Brewfile.tmpl`. Security posture rows for non-official taps and
 qualified formula/cask entries include the preferred item-scoped `brew trust`
-command. `updev`, `updev last`, and `updev list` security detail views can run
-confirmed item-scoped `brew trust --formula` / `brew trust --cask` actions.
-Whole-tap `brew trust --tap` is offered only from tap findings, requires an
-explicit confirmation, and never runs automatically during update.
+command and a structured `trust_command_argv` array so agents do not need to
+parse shell text. `updev`, `updev last`, and `updev list` security detail views
+can run confirmed item-scoped `brew trust --formula` / `brew trust --cask`
+actions. Whole-tap `brew trust --tap` is offered only from tap findings,
+requires an explicit confirmation, and never runs automatically during update.
 
 Scanner scope:
 

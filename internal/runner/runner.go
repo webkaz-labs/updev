@@ -3,6 +3,7 @@ package runner
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -14,6 +15,10 @@ type Result struct {
 	Stderr string
 	Code   int
 	Err    error
+}
+
+type ResultDetailOption struct {
+	IncludeExitStatus bool
 }
 
 type Runner interface {
@@ -71,4 +76,25 @@ func (Local) RunStreamingWithEnv(ctx context.Context, env []string, stdout io.Wr
 	}
 	result.Code = 1
 	return result
+}
+
+func ResultDetail(result Result, fallback string, option ResultDetailOption) string {
+	values := []string{result.Stderr, result.Stdout}
+	if result.Err != nil {
+		values = append(values, result.Err.Error())
+	}
+	if option.IncludeExitStatus && result.Code != 0 {
+		values = append(values, fmt.Sprintf("exit status %d", result.Code))
+	}
+	values = append(values, fallback)
+	return firstNonEmpty(values...)
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
 }

@@ -1,39 +1,22 @@
 package cmd
 
 import (
-	"bufio"
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
-	"regexp"
-	"sort"
 	"strings"
 	"time"
 
+	"github.com/webkaz-labs/updev/internal/brew"
 	"github.com/webkaz-labs/updev/internal/plan"
 	"github.com/webkaz-labs/updev/internal/runner"
 	"github.com/webkaz-labs/updev/internal/textui"
+	"github.com/webkaz-labs/updev/internal/updevpath"
 )
 
-type homebrewTrustTarget struct {
-	Kind         string `json:"kind"`
-	Name         string `json:"name"`
-	Tap          string `json:"tap"`
-	Trusted      bool   `json:"trusted"`
-	TrustSource  string `json:"trust_source,omitempty"`
-	TrustCommand string `json:"trust_command"`
-	Source       string `json:"source,omitempty"`
-}
-
-type homebrewTrustState struct {
-	Taps     []string `json:"taps"`
-	Formulae []string `json:"formulae"`
-	Casks    []string `json:"casks"`
-	Commands []string `json:"commands"`
-}
+type homebrewTrustTarget = brew.TrustTarget
+type homebrewTrustState = brew.TrustState
 
 func homebrewTapTrustDependencyCheck(ctx context.Context, commandRunner runner.Runner, root string) dependencyContractCheck {
 	check := dependencyContractCheck{
@@ -107,174 +90,31 @@ func homebrewTrustTargetsFromRoot(root string) ([]homebrewTrustTarget, error) {
 }
 
 func homebrewTrustBrewfilePath(root string) string {
-	return filepath.Join(root, "Brewfile.tmpl")
+	return updevpath.RootBrewfileTemplate(root)
 }
 
 func parseHomebrewTrustTargets(reader io.Reader, source string) ([]homebrewTrustTarget, error) {
-	lineRe := regexp.MustCompile(`^\s*(brew|cask|tap)\s+"([^"]+)"`)
-	targets := []homebrewTrustTarget{}
-	seen := map[string]bool{}
-	scanner := bufio.NewScanner(reader)
-	for scanner.Scan() {
-		match := lineRe.FindStringSubmatch(scanner.Text())
-		if match == nil {
-			continue
-		}
-		kind := match[1]
-		rawName := strings.TrimSpace(match[2])
-		if rawName == "" || isURLBrewName(rawName) {
-			continue
-		}
-		var target homebrewTrustTarget
-		switch kind {
-		case "tap":
-			if isOfficialBrewTap(rawName) {
-				continue
-			}
-			target = homebrewTrustTarget{
-				Kind:         "tap",
-				Name:         rawName,
-				Tap:          rawName,
-				TrustCommand: "brew trust --tap " + rawName,
-				Source:       source,
-			}
-		case "brew", "cask":
-			tap := brewSafetyTap(kind, rawName)
-			if tap == "" || isOfficialBrewTap(tap) {
-				continue
-			}
-			trustKind := "formula"
-			if kind == "cask" {
-				trustKind = "cask"
-			}
-			target = homebrewTrustTarget{
-				Kind:         trustKind,
-				Name:         rawName,
-				Tap:          tap,
-				TrustCommand: "brew trust --" + trustKind + " " + rawName,
-				Source:       source,
-			}
-		}
-		key := target.Kind + "\x00" + target.Name
-		if target.Name == "" || seen[key] {
-			continue
-		}
-		seen[key] = true
-		targets = append(targets, target)
-	}
-	sort.Slice(targets, func(i, j int) bool {
-		if targets[i].Kind != targets[j].Kind {
-			return targets[i].Kind < targets[j].Kind
-		}
-		return targets[i].Name < targets[j].Name
-	})
-	return targets, scanner.Err()
+	return brew.ParseTrustTargets(reader, source)
 }
 
 func parseHomebrewTrustState(raw string) (homebrewTrustState, error) {
-	payload := strings.TrimSpace(raw)
-	if payload == "" {
-		return homebrewTrustState{}, fmt.Errorf("empty trust JSON")
-	}
-	start := strings.Index(payload, "{")
-	end := strings.LastIndex(payload, "}")
-	if start < 0 || end < start {
-		return homebrewTrustState{}, fmt.Errorf("no JSON object")
-	}
-	var state homebrewTrustState
-	if err := json.Unmarshal([]byte(payload[start:end+1]), &state); err != nil {
-		return homebrewTrustState{}, err
-	}
-	return state, nil
+	return brew.ParseTrustState(raw)
 }
 
 func applyHomebrewTrustState(targets []homebrewTrustTarget, state homebrewTrustState) []homebrewTrustTarget {
-	taps := stringSet(state.Taps)
-	formulae := stringSet(state.Formulae)
-	casks := stringSet(state.Casks)
-	out := append([]homebrewTrustTarget(nil), targets...)
-	for i := range out {
-		switch out[i].Kind {
-		case "tap":
-			if taps[out[i].Name] {
-				out[i].Trusted = true
-				out[i].TrustSource = "tap"
-			}
-		case "formula":
-			if formulae[out[i].Name] {
-				out[i].Trusted = true
-				out[i].TrustSource = "formula"
-			} else if taps[out[i].Tap] {
-				out[i].Trusted = true
-				out[i].TrustSource = "tap"
-			}
-		case "cask":
-			if casks[out[i].Name] {
-				out[i].Trusted = true
-				out[i].TrustSource = "cask"
-			} else if taps[out[i].Tap] {
-				out[i].Trusted = true
-				out[i].TrustSource = "tap"
-			}
-		}
-	}
-	return out
-}
-
-func stringSet(values []string) map[string]bool {
-	set := map[string]bool{}
-	for _, value := range values {
-		value = strings.TrimSpace(value)
-		if value != "" {
-			set[value] = true
-		}
-	}
-	return set
+	return brew.ApplyTrustState(targets, state)
 }
 
 func homebrewTrustTargetCounts(targets []homebrewTrustTarget) (int, int) {
-	trusted := 0
-	untrusted := 0
-	for _, target := range targets {
-		if target.Trusted {
-			trusted++
-		} else {
-			untrusted++
-		}
-	}
-	return trusted, untrusted
+	return brew.TrustTargetCounts(targets)
 }
 
 func homebrewUntrustedTargetNames(targets []homebrewTrustTarget, limit int) []string {
-	names := []string{}
-	for _, target := range targets {
-		if target.Trusted {
-			continue
-		}
-		names = append(names, target.Kind+" "+target.Name)
-		if limit > 0 && len(names) == limit {
-			break
-		}
-	}
-	remaining := 0
-	for _, target := range targets {
-		if !target.Trusted {
-			remaining++
-		}
-	}
-	if limit > 0 && remaining > len(names) {
-		names = append(names, fmt.Sprintf("...%d more", remaining-len(names)))
-	}
-	return names
+	return brew.UntrustedTargetNames(targets, limit)
 }
 
 func firstHomebrewUntrustedTrustCommand(targets []homebrewTrustTarget) string {
-	for _, target := range targets {
-		if !target.Trusted && strings.TrimSpace(target.TrustCommand) != "" {
-			return target.TrustCommand
-		}
-	}
-	return ""
+	return brew.FirstUntrustedTrustCommand(targets)
 }
 
 func isHomebrewTrustSecurityAction(action string) bool {
@@ -338,11 +178,15 @@ func homebrewTrustActionParts(finding safetyFinding) (string, string, string, st
 	default:
 		return "", "", "", "", false
 	}
-	command := strings.TrimSpace(finding.TrustCommand)
+	command := ""
+	if args, ok := homebrewTrustCommandForSecurityAction(action, target); ok {
+		command = joinCommand(args)
+	}
 	if command == "" {
-		if args, ok := homebrewTrustCommandForSecurityAction(action, target); ok {
-			command = joinCommand(args)
-		}
+		command = joinCommand(finding.TrustCommandArgv)
+	}
+	if command == "" {
+		command = strings.TrimSpace(finding.TrustCommand)
 	}
 	if command == "" {
 		return "", "", "", "", false
@@ -350,12 +194,12 @@ func homebrewTrustActionParts(finding safetyFinding) (string, string, string, st
 	return action, trustKind, target, command, true
 }
 
+func homebrewTrustCommandArgv(kind string, target string) []string {
+	return brew.TrustCommandArgv(kind, target)
+}
+
 func validHomebrewTrustTarget(target string) bool {
-	target = strings.TrimSpace(target)
-	if target == "" || strings.HasPrefix(target, "-") || isURLBrewName(target) {
-		return false
-	}
-	return !strings.ContainsAny(target, "\t\r\n")
+	return brew.ValidTrustTarget(target)
 }
 
 func homebrewTrustCommandForSecurityAction(action string, target string) ([]string, bool) {

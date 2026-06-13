@@ -1,23 +1,19 @@
 package cmd
 
 import (
-	"bytes"
-	"encoding/json"
 	"fmt"
-	"os"
-	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/webkaz-labs/updev/internal/plan"
+	"github.com/webkaz-labs/updev/internal/securitygate"
+	"github.com/webkaz-labs/updev/internal/securitypolicy"
+	"github.com/webkaz-labs/updev/internal/securityreason"
 	"github.com/webkaz-labs/updev/internal/updevpath"
 )
 
-type securityPolicy struct {
-	Rules []securityPolicyRule `json:"rules"`
-}
+type securityPolicy = securitypolicy.Policy
 
 type securityPolicyLoadResult struct {
 	Policy   securityPolicy
@@ -26,15 +22,7 @@ type securityPolicyLoadResult struct {
 	Warnings []string
 }
 
-type securityPolicyRule struct {
-	Provider string `json:"provider"`
-	Kind     string `json:"kind,omitempty"`
-	Name     string `json:"name"`
-	Decision string `json:"decision"`
-	Reason   string `json:"reason,omitempty"`
-	Expires  string `json:"expires,omitempty"`
-	Line     int    `json:"-"`
-}
+type securityPolicyRule = securitypolicy.Rule
 
 func loadSecurityPolicy() securityPolicy {
 	path := securityPolicyPath()
@@ -88,14 +76,14 @@ func (result securityPolicyLoadResult) View() *securityPolicyUse {
 		Path:            result.Path,
 		Loaded:          result.Loaded,
 		RuleCount:       len(result.Policy.Rules),
-		ActiveRules:     summary.active,
-		ExpiredRules:    summary.expired,
-		InvalidRules:    summary.invalid,
-		DuplicateRules:  summary.duplicate,
-		ShadowedRules:   summary.shadowed,
-		MissingReasons:  summary.missingReason,
-		MissingExpiries: summary.missingExpiry,
-		BroadRules:      summary.broad,
+		ActiveRules:     summary.Active,
+		ExpiredRules:    summary.Expired,
+		InvalidRules:    summary.Invalid,
+		DuplicateRules:  summary.Duplicate,
+		ShadowedRules:   summary.Shadowed,
+		MissingReasons:  summary.MissingReason,
+		MissingExpiries: summary.MissingExpiry,
+		BroadRules:      summary.Broad,
 	}
 	if len(result.Warnings) > 0 && strings.HasPrefix(result.Warnings[0], "security policy ignored: ") {
 		view.Error = strings.TrimPrefix(result.Warnings[0], "security policy ignored: ")
@@ -135,127 +123,20 @@ func securityPolicyUseSummary(policy *securityPolicyUse) string {
 	return strings.Join(parts, ", ")
 }
 
-type securityPolicyRuleCounts struct {
-	active        int
-	expired       int
-	invalid       int
-	duplicate     int
-	shadowed      int
-	missingReason int
-	missingExpiry int
-	broad         int
-}
+type securityPolicyRuleCounts = securitypolicy.RuleCounts
 
 func securityPolicyRuleViews(policy securityPolicy) []securityPolicyRuleView {
-	views := make([]securityPolicyRuleView, 0, len(policy.Rules))
-	seenRules := map[string]bool{}
-	activeRules := []indexedSecurityPolicyRule{}
-	for index, rawRule := range policy.Rules {
-		rule := normalizeSecurityPolicyRule(rawRule)
-		view := securityPolicyRuleView{
-			Index:    index + 1,
-			Line:     rawRule.Line,
-			Provider: rule.Provider,
-			Kind:     rule.Kind,
-			Name:     rule.Name,
-			Decision: rule.Decision,
-			Reason:   rule.Reason,
-			Expires:  rule.Expires,
-		}
-		expired, invalidExpires := securityPolicyRuleExpiryState(rule)
-		view.Expired = expired
-		view.Invalid = invalidExpires || !validSecurityPolicyDecision(view.Decision) || rule.Name == ""
-		key := securityPolicyRuleKey(rule)
-		if !view.Invalid && !view.Expired {
-			view.Duplicate = seenRules[key]
-		}
-		if !view.Invalid && !view.Expired && !view.Duplicate {
-			view.ShadowedBy = securityPolicyRuleShadowedBy(rule, activeRules)
-			view.Shadowed = view.ShadowedBy > 0
-		}
-		view.Active = !view.Invalid && !view.Expired && !view.Duplicate && !view.Shadowed
-		view.MissingReason = securityPolicyRuleMissingReason(view)
-		view.MissingExpiry = securityPolicyRuleMissingExpiry(view)
-		view.Broad = securityPolicyRuleBroad(view)
-		view.State = securityPolicyRuleState(view)
+	views := securitypolicy.RuleViews(policy)
+	for index := range views {
+		view := views[index]
 		view.Remediation = securityPolicyRuleRemediation(view)
-		if view.Active {
-			activeRules = append(activeRules, indexedSecurityPolicyRule{index: view.Index, rule: rule})
-			seenRules[key] = true
-		}
-		views = append(views, view)
+		views[index] = view
 	}
 	return views
 }
 
-type indexedSecurityPolicyRule struct {
-	index int
-	rule  securityPolicyRule
-}
-
-func securityPolicyRuleShadowedBy(rule securityPolicyRule, previous []indexedSecurityPolicyRule) int {
-	for _, earlier := range previous {
-		if securityPolicyRuleCovers(earlier.rule, rule) {
-			return earlier.index
-		}
-	}
-	return 0
-}
-
-func securityPolicyRuleCovers(earlier securityPolicyRule, later securityPolicyRule) bool {
-	return securityPolicyFieldCovers(earlier.Provider, later.Provider) &&
-		securityPolicyFieldCovers(earlier.Kind, later.Kind) &&
-		securityPolicyNameCovers(earlier.Name, later.Name)
-}
-
-func securityPolicyFieldCovers(earlier string, later string) bool {
-	if earlier == "" {
-		return true
-	}
-	return later != "" && strings.EqualFold(earlier, later)
-}
-
-func securityPolicyNameCovers(earlier string, later string) bool {
-	if earlier == "*" {
-		return true
-	}
-	return later != "*" && strings.EqualFold(earlier, later)
-}
-
-func securityPolicyRuleMissingReason(view securityPolicyRuleView) bool {
-	return view.Active && view.Decision == "allow" && strings.TrimSpace(view.Reason) == ""
-}
-
-func securityPolicyRuleMissingExpiry(view securityPolicyRuleView) bool {
-	return view.Active && securityPolicyDecisionNeedsExpiry(view.Decision) && strings.TrimSpace(view.Expires) == ""
-}
-
 func securityPolicyDecisionNeedsExpiry(decision string) bool {
-	switch strings.ToLower(strings.TrimSpace(decision)) {
-	case "allow", "review", "hold":
-		return true
-	default:
-		return false
-	}
-}
-
-func securityPolicyRuleBroad(view securityPolicyRuleView) bool {
-	return view.Active && (strings.TrimSpace(view.Provider) == "" || strings.TrimSpace(view.Name) == "*")
-}
-
-func securityPolicyRuleState(view securityPolicyRuleView) string {
-	switch {
-	case view.Invalid:
-		return "invalid"
-	case view.Expired:
-		return "expired"
-	case view.Duplicate:
-		return "duplicate"
-	case view.Shadowed:
-		return "shadowed"
-	default:
-		return "active"
-	}
+	return securitypolicy.DecisionNeedsExpiry(decision)
 }
 
 func validSecurityPolicyStateFilter(state string) bool {
@@ -287,13 +168,7 @@ func securityPolicyStateFilterForAction(opts securityPolicyOptions) string {
 }
 
 func securityPolicyRuleNeedsCleanup(view securityPolicyRuleView) bool {
-	return view.Invalid ||
-		view.Expired ||
-		view.Duplicate ||
-		view.Shadowed ||
-		view.MissingReason ||
-		view.MissingExpiry ||
-		view.Broad
+	return securitypolicy.RuleNeedsCleanup(view)
 }
 
 func securityPolicyRuleMatchesListFilters(view securityPolicyRuleView, opts securityPolicyOptions) bool {
@@ -351,99 +226,40 @@ func securityPolicyNameFilterMatches(value string, filter string) bool {
 	return strings.EqualFold(strings.TrimSpace(value), filter)
 }
 
-func securityPolicyRuleSummaryForViews(views []securityPolicyRuleView) securityPolicyRuleCounts {
-	var summary securityPolicyRuleCounts
-	for _, view := range views {
-		switch {
-		case view.Invalid:
-			summary.invalid++
-		case view.Expired:
-			summary.expired++
-		case view.Duplicate:
-			summary.duplicate++
-		case view.Shadowed:
-			summary.shadowed++
-		case view.Active:
-			summary.active++
-		}
-		if view.MissingReason {
-			summary.missingReason++
-		}
-		if view.MissingExpiry {
-			summary.missingExpiry++
-		}
-		if view.Broad {
-			summary.broad++
-		}
-	}
-	return summary
-}
-
 func securityPolicyRuleSummary(policy securityPolicy) securityPolicyRuleCounts {
-	return securityPolicyRuleSummaryForViews(securityPolicyRuleViews(policy))
+	return securitypolicy.RuleCountsForPolicy(policy)
 }
 
 func securityPolicySummaryFromViews(views []securityPolicyRuleView) *securityPolicySummary {
-	counts := securityPolicyRuleSummaryForViews(views)
-	return &securityPolicySummary{
-		RuleCount:       len(views),
-		ActiveRules:     counts.active,
-		ExpiredRules:    counts.expired,
-		InvalidRules:    counts.invalid,
-		DuplicateRules:  counts.duplicate,
-		ShadowedRules:   counts.shadowed,
-		MissingReasons:  counts.missingReason,
-		MissingExpiries: counts.missingExpiry,
-		BroadRules:      counts.broad,
-	}
+	return securitypolicy.SummaryFromViews(views)
 }
 
 func securityPolicyDiagnosticWarnings(policy securityPolicy) []string {
 	summary := securityPolicyRuleSummary(policy)
 	warnings := []string{}
-	if summary.invalid > 0 {
+	if summary.Invalid > 0 {
 		warnings = append(warnings, "security policy has invalid rules; run updev security policy for details")
 	}
-	if summary.duplicate > 0 {
+	if summary.Duplicate > 0 {
 		warnings = append(warnings, "security policy has duplicate active rules; run updev security policy for details")
 	}
-	if summary.shadowed > 0 {
+	if summary.Shadowed > 0 {
 		warnings = append(warnings, "security policy has shadowed rules; run updev security policy for details")
 	}
-	if summary.missingReason > 0 {
+	if summary.MissingReason > 0 {
 		warnings = append(warnings, "security policy has allow rules without reason; run updev security policy for details")
 	}
-	if summary.missingExpiry > 0 {
+	if summary.MissingExpiry > 0 {
 		warnings = append(warnings, "security policy has temporary rules without expiry; run updev security policy for details")
 	}
-	if summary.broad > 0 {
+	if summary.Broad > 0 {
 		warnings = append(warnings, "security policy has broad active rules; run updev security policy for details")
 	}
 	return warnings
 }
 
 func readSecurityPolicy(path string) (securityPolicy, error) {
-	if strings.TrimSpace(path) == "" {
-		return securityPolicy{}, nil
-	}
-	data, err := os.ReadFile(path)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return securityPolicy{}, nil
-		}
-		return securityPolicy{}, err
-	}
-	var policy securityPolicy
-	if err := json.Unmarshal(data, &policy); err != nil {
-		return securityPolicy{}, err
-	}
-	lines := securityPolicyRuleLineNumbers(data)
-	for index := range policy.Rules {
-		if index < len(lines) {
-			policy.Rules[index].Line = lines[index]
-		}
-	}
-	return policy, nil
+	return securitypolicy.Read(path)
 }
 
 func addSecurityPolicyRule(path string, rule securityPolicyRule) error {
@@ -626,67 +442,7 @@ func validateSecurityPolicyRuleForAdd(rule securityPolicyRule) error {
 }
 
 func writeSecurityPolicy(path string, policy securityPolicy) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return err
-	}
-	data, err := json.MarshalIndent(policy, "", "  ")
-	if err != nil {
-		return err
-	}
-	data = append(data, '\n')
-	return os.WriteFile(path, data, 0o600)
-}
-
-func securityPolicyRuleLineNumbers(data []byte) []int {
-	var raw struct {
-		Rules json.RawMessage `json:"rules"`
-	}
-	if err := json.Unmarshal(data, &raw); err != nil || len(raw.Rules) == 0 {
-		return nil
-	}
-	start := bytes.Index(data, raw.Rules)
-	if start < 0 {
-		return nil
-	}
-	baseLine := 1 + bytes.Count(data[:start], []byte("\n"))
-	lines := []int{}
-	inString := false
-	escaped := false
-	arrayDepth := 0
-	objectDepth := 0
-	for index, char := range raw.Rules {
-		if inString {
-			switch {
-			case escaped:
-				escaped = false
-			case char == '\\':
-				escaped = true
-			case char == '"':
-				inString = false
-			}
-			continue
-		}
-		switch char {
-		case '"':
-			inString = true
-		case '[':
-			arrayDepth++
-		case ']':
-			if arrayDepth > 0 {
-				arrayDepth--
-			}
-		case '{':
-			if arrayDepth == 1 && objectDepth == 0 {
-				lines = append(lines, baseLine+bytes.Count(raw.Rules[:index], []byte("\n")))
-			}
-			objectDepth++
-		case '}':
-			if objectDepth > 0 {
-				objectDepth--
-			}
-		}
-	}
-	return lines
+	return securitypolicy.Write(path, policy)
 }
 
 func securityPolicyPath() string {
@@ -701,7 +457,7 @@ func applySecurityPolicyToSafetyFindings(policy securityPolicy, findings []safet
 	for _, finding := range findings {
 		if rule, ok := matchingSecurityPolicyRule(policy, finding.Provider, finding.Kind, finding.Name); ok {
 			finding.Decision = rule.Decision
-			finding.Reason = firstNonEmpty(rule.Reason, "security policy override")
+			setSafetyFindingReason(&finding, securityreason.SecurityPolicyOverrideReason(rule.Decision, firstNonEmpty(rule.Reason, "security policy override")))
 			finding.Confidence = "policy"
 			if rule.Decision == "allow" {
 				finding.Remediation = ""
@@ -756,6 +512,9 @@ func applySecurityPolicyToScanners(policy securityPolicy, scanners []scannerEvid
 			if rule, ok := matchingScannerPolicyRule(policy, scanner.Tool, finding); ok {
 				finding.Decision = rule.Decision
 				finding.Reason = firstNonEmpty(rule.Reason, "security policy override")
+				reason := securityreason.SecurityPolicyOverrideReason(rule.Decision, finding.Reason)
+				finding.ReasonCode = reason.Code
+				finding.ReasonArgs = reason.Args
 				if rule.Decision == "allow" {
 					finding.Remediation = ""
 				} else {
@@ -810,6 +569,9 @@ func applySecurityPolicyToGitHubPostures(policy securityPolicy, postures []githu
 		if ok {
 			posture.Decision = rule.Decision
 			posture.Reason = firstNonEmpty(rule.Reason, "security policy override")
+			reason := securityreason.SecurityPolicyOverrideReason(rule.Decision, posture.Reason)
+			posture.ReasonCode = reason.Code
+			posture.ReasonArgs = reason.Args
 			posture.Confidence = "policy"
 			posture.Remediation = securityPolicyPostureRemediation(rule.Decision, "repository")
 			posture.Evidence = appendEvidence(posture.Evidence, "security-policy")
@@ -828,6 +590,9 @@ func applySecurityPolicyToHomebrewPostures(policy securityPolicy, postures []hom
 		if rule, ok := matchingSecurityPolicyRule(policy, posture.Provider, posture.Kind, posture.Name); ok {
 			posture.Decision = rule.Decision
 			posture.Reason = firstNonEmpty(rule.Reason, "security policy override")
+			reason := securityreason.SecurityPolicyOverrideReason(rule.Decision, posture.Reason)
+			posture.ReasonCode = reason.Code
+			posture.ReasonArgs = reason.Args
 			posture.Confidence = "policy"
 			posture.Remediation = securityPolicyPostureRemediation(rule.Decision, "Homebrew entry")
 			posture.Evidence = appendEvidence(posture.Evidence, "security-policy")
@@ -846,6 +611,9 @@ func applySecurityPolicyToVSCodePostures(policy securityPolicy, postures []vscod
 		if rule, ok := matchingSecurityPolicyRule(policy, posture.Provider, posture.Kind, posture.Name); ok {
 			posture.Decision = rule.Decision
 			posture.Reason = firstNonEmpty(rule.Reason, "security policy override")
+			reason := securityreason.SecurityPolicyOverrideReason(rule.Decision, posture.Reason)
+			posture.ReasonCode = reason.Code
+			posture.ReasonArgs = reason.Args
 			posture.Confidence = "policy"
 			posture.Remediation = securityPolicyPostureRemediation(rule.Decision, "VS Code extension")
 			posture.Evidence = appendEvidence(posture.Evidence, "security-policy")
@@ -868,6 +636,9 @@ func applySecurityPolicyToNPMPostures(policy securityPolicy, postures []npmPostu
 		if ok {
 			posture.Decision = rule.Decision
 			posture.Reason = firstNonEmpty(rule.Reason, "security policy override")
+			reason := securityreason.SecurityPolicyOverrideReason(rule.Decision, posture.Reason)
+			posture.ReasonCode = reason.Code
+			posture.ReasonArgs = reason.Args
 			posture.Confidence = "policy"
 			posture.Remediation = securityPolicyPostureRemediation(rule.Decision, "npm package")
 			posture.Evidence = appendEvidence(posture.Evidence, "security-policy")
@@ -890,6 +661,9 @@ func applySecurityPolicyToCargoPostures(policy securityPolicy, postures []cargoP
 		if ok {
 			posture.Decision = rule.Decision
 			posture.Reason = firstNonEmpty(rule.Reason, "security policy override")
+			reason := securityreason.SecurityPolicyOverrideReason(rule.Decision, posture.Reason)
+			posture.ReasonCode = reason.Code
+			posture.ReasonArgs = reason.Args
 			posture.Confidence = "policy"
 			posture.Remediation = securityPolicyPostureRemediation(rule.Decision, "Cargo crate")
 			posture.Evidence = appendEvidence(posture.Evidence, "security-policy")
@@ -912,6 +686,9 @@ func applySecurityPolicyToPyPIPostures(policy securityPolicy, postures []pypiPos
 		if ok {
 			posture.Decision = rule.Decision
 			posture.Reason = firstNonEmpty(rule.Reason, "security policy override")
+			reason := securityreason.SecurityPolicyOverrideReason(rule.Decision, posture.Reason)
+			posture.ReasonCode = reason.Code
+			posture.ReasonArgs = reason.Args
 			posture.Confidence = "policy"
 			posture.Remediation = securityPolicyPostureRemediation(rule.Decision, "PyPI package")
 			posture.Evidence = appendEvidence(posture.Evidence, "security-policy")
@@ -929,54 +706,15 @@ func securityPolicyPostureRemediation(decision string, target string) string {
 }
 
 func matchingSecurityPolicyRule(policy securityPolicy, provider string, kind string, name string) (securityPolicyRule, bool) {
-	for _, rawRule := range policy.Rules {
-		rule := normalizeSecurityPolicyRule(rawRule)
-		expired, invalidExpires := securityPolicyRuleExpiryState(rule)
-		if expired || invalidExpires {
-			continue
-		}
-		if rule.Provider != "" && !strings.EqualFold(rule.Provider, provider) {
-			continue
-		}
-		if rule.Kind != "" && !strings.EqualFold(rule.Kind, kind) {
-			continue
-		}
-		if rule.Name != "*" && !strings.EqualFold(rule.Name, name) {
-			continue
-		}
-		decision := strings.ToLower(strings.TrimSpace(rule.Decision))
-		if !validSecurityPolicyDecision(decision) {
-			continue
-		}
-		rule.Decision = decision
-		return rule, true
-	}
-	return securityPolicyRule{}, false
+	return securitypolicy.MatchingRule(policy, provider, kind, name)
 }
 
 func normalizeSecurityPolicyRule(rule securityPolicyRule) securityPolicyRule {
-	rule.Provider = strings.TrimSpace(rule.Provider)
-	rule.Kind = strings.TrimSpace(rule.Kind)
-	rule.Name = strings.TrimSpace(rule.Name)
-	rule.Decision = strings.ToLower(strings.TrimSpace(rule.Decision))
-	if rule.Decision == "deny" {
-		rule.Decision = "block"
-	}
-	rule.Reason = strings.TrimSpace(rule.Reason)
-	rule.Expires = strings.TrimSpace(rule.Expires)
-	return rule
-}
-
-func securityPolicyRuleKey(rule securityPolicyRule) string {
-	return strings.Join([]string{
-		strings.ToLower(rule.Provider),
-		strings.ToLower(rule.Kind),
-		strings.ToLower(rule.Name),
-	}, "\x00")
+	return securitypolicy.NormalizeRule(rule)
 }
 
 func validSecurityPolicyDecision(decision string) bool {
-	return decision == "allow" || decision == "review" || decision == "hold" || decision == "block"
+	return securitygate.ValidDecision(decision)
 }
 
 func securityPolicyDecisionAction(action string) bool {
@@ -984,20 +722,11 @@ func securityPolicyDecisionAction(action string) bool {
 }
 
 func securityDecisionNeedsAttention(decision string) bool {
-	return !strings.EqualFold(strings.TrimSpace(decision), "allow")
+	return securitygate.DecisionNeedsAttention(decision)
 }
 
 func securityPolicyProviderForEcosystem(ecosystem string) string {
-	switch strings.ToLower(strings.TrimSpace(ecosystem)) {
-	case "npm":
-		return "npm"
-	case "crates.io":
-		return "cargo"
-	case "pypi":
-		return "pypi"
-	default:
-		return ecosystem
-	}
+	return securitypolicy.ProviderForEcosystem(ecosystem)
 }
 
 func securityStatusFromPolicyFindingDecision(decision string) plan.Status {
@@ -1011,18 +740,6 @@ func securityStatusFromPolicyFindingDecision(decision string) plan.Status {
 	}
 }
 
-func securityPolicyRuleExpired(rule securityPolicyRule) bool {
-	expired, invalid := securityPolicyRuleExpiryState(rule)
-	return expired || invalid
-}
-
 func securityPolicyRuleExpiryState(rule securityPolicyRule) (bool, bool) {
-	if strings.TrimSpace(rule.Expires) == "" {
-		return false, false
-	}
-	expires, err := time.Parse("2006-01-02", strings.TrimSpace(rule.Expires))
-	if err != nil {
-		return false, true
-	}
-	return !time.Now().Before(expires.Add(24 * time.Hour)), false
+	return securitypolicy.RuleExpiryState(rule)
 }

@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/webkaz-labs/updev/internal/backend"
+	"github.com/webkaz-labs/updev/internal/reviewui"
 	"github.com/webkaz-labs/updev/internal/runner"
 	"github.com/webkaz-labs/updev/internal/textui"
 )
@@ -281,7 +282,7 @@ func backendToolSections(report backendPlanReport) []toolSection {
 			indexByName[name] = sectionIndex
 			sections = append(sections, toolSection{Name: name, Title: "backend / " + kind})
 		}
-		sections[sectionIndex].Rows = append(sections[sectionIndex].Rows, detailRowToToolRow(backendFindingDetailRow(finding)))
+		sections[sectionIndex].Rows = append(sections[sectionIndex].Rows, reviewui.DetailRowToRow(backendFindingDetailRow(finding)))
 	}
 	return sections
 }

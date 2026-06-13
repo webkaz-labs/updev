@@ -2,231 +2,43 @@ package cmd
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"net/url"
 	"os"
-	"path/filepath"
-	"sort"
 	"strings"
 	"sync"
 
 	"github.com/webkaz-labs/updev/internal/plan"
 	"github.com/webkaz-labs/updev/internal/runner"
+	"github.com/webkaz-labs/updev/internal/securityreason"
+	"github.com/webkaz-labs/updev/internal/securityscanner"
 )
 
-type scannerEvidence struct {
-	Tool               string           `json:"tool"`
-	Target             string           `json:"target"`
-	Command            []string         `json:"command,omitempty"`
-	Status             plan.Status      `json:"status"`
-	Decision           string           `json:"decision"`
-	Reason             string           `json:"reason,omitempty"`
-	SourceCount        int              `json:"source_count,omitempty"`
-	PackageCount       int              `json:"package_count,omitempty"`
-	FindingCount       int              `json:"finding_count,omitempty"`
-	VulnerabilityCount int              `json:"vulnerability_count,omitempty"`
-	Findings           []scannerFinding `json:"findings,omitempty"`
-	Error              string           `json:"error,omitempty"`
-}
+type scannerEvidence = securityscanner.Evidence
+type scannerFinding = securityscanner.Finding
 
-type scannerFinding struct {
-	Kind           string   `json:"kind,omitempty"`
-	SourcePath     string   `json:"source_path,omitempty"`
-	SourceType     string   `json:"source_type,omitempty"`
-	Ecosystem      string   `json:"ecosystem,omitempty"`
-	Package        string   `json:"package,omitempty"`
-	Version        string   `json:"version,omitempty"`
-	DependencyKind string   `json:"dependency_kind,omitempty"`
-	VulnID         string   `json:"vuln_id,omitempty"`
-	RuleID         string   `json:"rule_id,omitempty"`
-	File           string   `json:"file,omitempty"`
-	StartLine      int      `json:"start_line,omitempty"`
-	EndLine        int      `json:"end_line,omitempty"`
-	Commit         string   `json:"commit,omitempty"`
-	Fingerprint    string   `json:"fingerprint,omitempty"`
-	Description    string   `json:"description,omitempty"`
-	URL            string   `json:"url,omitempty"`
-	Decision       string   `json:"decision,omitempty"`
-	Reason         string   `json:"reason,omitempty"`
-	Remediation    string   `json:"remediation,omitempty"`
-	Confidence     string   `json:"confidence,omitempty"`
-	Evidence       []string `json:"evidence,omitempty"`
-	Aliases        []string `json:"aliases,omitempty"`
-	Severity       string   `json:"severity,omitempty"`
-	FixedVersions  []string `json:"fixed_versions,omitempty"`
-}
-
-type osvScannerReport struct {
-	Results []osvScannerResult `json:"results"`
-}
-
-type osvScannerResult struct {
-	Source   osvScannerSource    `json:"source"`
-	Packages []osvScannerPackage `json:"packages"`
-}
-
-type osvScannerSource struct {
-	Path string `json:"path"`
-	Type string `json:"type"`
-}
-
-type osvScannerPackage struct {
-	Package         osvScannerPackageInfo `json:"package"`
-	Vulnerabilities []osvScannerVuln      `json:"vulnerabilities"`
-	Groups          []osvScannerGroup     `json:"groups,omitempty"`
-}
-
-type osvScannerPackageInfo struct {
-	Name      string `json:"name"`
-	Version   string `json:"version"`
-	Ecosystem string `json:"ecosystem"`
-}
-
-type osvScannerVuln struct {
-	ID       string        `json:"id"`
-	Aliases  []string      `json:"aliases"`
-	Severity []osvSeverity `json:"severity"`
-	Affected []osvAffected `json:"affected,omitempty"`
-}
-
-type osvScannerGroup struct {
-	IDs         []string `json:"ids,omitempty"`
-	MaxSeverity string   `json:"max_severity,omitempty"`
-}
-
-type gitleaksFinding struct {
-	Description string `json:"Description"`
-	File        string `json:"File"`
-	StartLine   int    `json:"StartLine"`
-	EndLine     int    `json:"EndLine"`
-	Commit      string `json:"Commit"`
-	RuleID      string `json:"RuleID"`
-	Fingerprint string `json:"Fingerprint"`
-}
-
-type zizmorFinding struct {
-	Ident          string `json:"ident"`
-	Desc           string `json:"desc"`
-	URL            string `json:"url"`
-	Determinations struct {
-		Confidence string `json:"confidence"`
-		Severity   string `json:"severity"`
-	} `json:"determinations"`
-	Locations []zizmorLocation `json:"locations"`
-	Ignored   bool             `json:"ignored"`
-}
-
-type zizmorLocation struct {
-	Symbolic struct {
-		Key struct {
-			Local struct {
-				GivenPath string `json:"given_path"`
-			} `json:"Local"`
-		} `json:"key"`
-	} `json:"symbolic"`
-	Concrete struct {
-		Location struct {
-			StartPoint struct {
-				Row int `json:"row"`
-			} `json:"start_point"`
-			EndPoint struct {
-				Row int `json:"row"`
-			} `json:"end_point"`
-		} `json:"location"`
-	} `json:"concrete"`
-}
-
-type trivyReport struct {
-	Results []trivyResult `json:"Results"`
-}
-
-type trivyResult struct {
-	Target            string                  `json:"Target"`
-	Type              string                  `json:"Type"`
-	Vulnerabilities   []trivyVulnerability    `json:"Vulnerabilities"`
-	Misconfigurations []trivyMisconfiguration `json:"Misconfigurations"`
-	Secrets           []trivySecret           `json:"Secrets"`
-}
-
-type trivyVulnerability struct {
-	VulnerabilityID  string `json:"VulnerabilityID"`
-	PkgName          string `json:"PkgName"`
-	InstalledVersion string `json:"InstalledVersion"`
-	FixedVersion     string `json:"FixedVersion"`
-	Severity         string `json:"Severity"`
-	Title            string `json:"Title"`
-	PrimaryURL       string `json:"PrimaryURL"`
-	PkgIdentifier    struct {
-		PURL string `json:"PURL"`
-	} `json:"PkgIdentifier"`
-}
-
-type trivyMisconfiguration struct {
-	ID            string             `json:"ID"`
-	Type          string             `json:"Type"`
-	Title         string             `json:"Title"`
-	Message       string             `json:"Message"`
-	Resolution    string             `json:"Resolution"`
-	Severity      string             `json:"Severity"`
-	PrimaryURL    string             `json:"PrimaryURL"`
-	Status        string             `json:"Status"`
-	CauseMetadata trivyCauseMetadata `json:"CauseMetadata"`
-}
-
-type trivyCauseMetadata struct {
-	StartLine int `json:"StartLine"`
-	EndLine   int `json:"EndLine"`
-}
-
-type trivySecret struct {
-	RuleID    string `json:"RuleID"`
-	Category  string `json:"Category"`
-	Severity  string `json:"Severity"`
-	Title     string `json:"Title"`
-	StartLine int    `json:"StartLine"`
-	EndLine   int    `json:"EndLine"`
-}
-
-type grypeReport struct {
-	Matches []grypeMatch `json:"matches"`
-}
-
-type grypeMatch struct {
-	Vulnerability grypeVulnerability `json:"vulnerability"`
-	Artifact      grypeArtifact      `json:"artifact"`
-	MatchDetails  []grypeMatchDetail `json:"matchDetails"`
-}
-
-type grypeVulnerability struct {
-	ID          string   `json:"id"`
-	Severity    string   `json:"severity"`
-	Description string   `json:"description"`
-	Fix         grypeFix `json:"fix"`
-	URLs        []string `json:"urls"`
-}
-
-type grypeFix struct {
-	Versions []string `json:"versions"`
-	State    string   `json:"state"`
-}
-
-type grypeArtifact struct {
-	Name      string          `json:"name"`
-	Version   string          `json:"version"`
-	Type      string          `json:"type"`
-	PURL      string          `json:"purl"`
-	Locations []grypeLocation `json:"locations"`
-}
-
-type grypeLocation struct {
-	Path string `json:"path"`
-}
-
-type grypeMatchDetail struct {
-	Type    string `json:"type"`
-	Matcher string `json:"matcher"`
-}
+type osvScannerReport = securityscanner.OSVReport
+type osvScannerResult = securityscanner.OSVResult
+type osvScannerSource = securityscanner.OSVSource
+type osvScannerPackage = securityscanner.OSVPackage
+type osvScannerPackageInfo = securityscanner.PackageInfo
+type osvScannerVuln = securityscanner.OSVVuln
+type osvScannerGroup = securityscanner.OSVGroup
+type gitleaksFinding = securityscanner.GitleaksFinding
+type zizmorFinding = securityscanner.ZizmorFinding
+type zizmorLocation = securityscanner.ZizmorLocation
+type trivyReport = securityscanner.TrivyReport
+type trivyResult = securityscanner.TrivyResult
+type trivyVulnerability = securityscanner.TrivyVulnerability
+type trivyMisconfiguration = securityscanner.TrivyMisconfig
+type trivyCauseMetadata = securityscanner.TrivyCauseMetadata
+type trivySecret = securityscanner.TrivySecret
+type grypeReport = securityscanner.GrypeReport
+type grypeMatch = securityscanner.GrypeMatch
+type grypeVulnerability = securityscanner.GrypeVulnerability
+type grypeFix = securityscanner.GrypeFix
+type grypeArtifact = securityscanner.GrypeArtifact
+type grypeLocation = securityscanner.GrypeLocation
+type grypeMatchDetail = securityscanner.GrypeMatchDetail
 
 func scannerEvidenceFromOptions(ctx context.Context, commandRunner commandRunner, opts securityOptions, desired []securityPackage) []scannerEvidence {
 	if !securityScannersShouldRun(opts) {
@@ -272,86 +84,19 @@ func validateSecurityScannerOption(value string) error {
 }
 
 func securityScannerTools(value string, root string) []string {
-	names, err := parseSecurityScannerNames(value)
-	if err != nil || len(names) == 0 {
-		return nil
-	}
-	if len(names) == 1 {
-		switch names[0] {
-		case "none":
-			return nil
-		case "auto":
-			tools := []string{"osv-scanner", "gitleaks"}
-			if hasGitHubWorkflowFiles(root) {
-				tools = append(tools, "zizmor")
-			}
-			return tools
-		case "all":
-			return []string{"osv-scanner", "gitleaks", "zizmor", "trivy", "grype"}
-		}
-	}
-	return names
+	return securityscanner.Tools(value, root)
 }
 
 func parseSecurityScannerNames(value string) ([]string, error) {
-	value = strings.TrimSpace(value)
-	if value == "" {
-		value = "auto"
-	}
-	names := []string{}
-	seen := map[string]bool{}
-	for _, part := range strings.Split(value, ",") {
-		name := normalizeSecurityScannerName(part)
-		if name == "" {
-			continue
-		}
-		if !securityScannerNameAllowed(name) {
-			return nil, fmt.Errorf("unsupported scanner: %s", strings.TrimSpace(part))
-		}
-		if seen[name] {
-			continue
-		}
-		seen[name] = true
-		names = append(names, name)
-	}
-	if len(names) == 0 {
-		return []string{"auto"}, nil
-	}
-	if len(names) > 1 {
-		for _, name := range names {
-			if name == "auto" || name == "all" || name == "none" {
-				return nil, fmt.Errorf("scanner %q cannot be combined with other scanners", name)
-			}
-		}
-	}
-	return names, nil
+	return securityscanner.ParseNames(value)
 }
 
 func normalizeSecurityScannerName(value string) string {
-	value = strings.ToLower(strings.TrimSpace(value))
-	switch value {
-	case "osv":
-		return "osv-scanner"
-	case "secret", "secrets":
-		return "gitleaks"
-	case "workflow", "workflows", "actions", "github-actions":
-		return "zizmor"
-	case "trivy-fs":
-		return "trivy"
-	case "anchore-grype", "grype-dir":
-		return "grype"
-	default:
-		return value
-	}
+	return securityscanner.NormalizeName(value)
 }
 
 func securityScannerNameAllowed(name string) bool {
-	switch name {
-	case "auto", "none", "all", "osv-scanner", "gitleaks", "zizmor", "trivy", "grype":
-		return true
-	default:
-		return false
-	}
+	return securityscanner.NameAllowed(name)
 }
 
 func runOSVScannerSourceScan(ctx context.Context, commandRunner commandRunner, root string, desired []securityPackage) scannerEvidence {
@@ -390,14 +135,7 @@ func runOSVScannerSourceScan(ctx context.Context, commandRunner commandRunner, r
 }
 
 func parseOSVScannerReport(raw string) (osvScannerReport, bool) {
-	var report osvScannerReport
-	if strings.TrimSpace(raw) == "" {
-		return report, false
-	}
-	if err := json.Unmarshal([]byte(raw), &report); err != nil {
-		return report, false
-	}
-	return report, true
+	return securityscanner.ParseOSVReport(raw)
 }
 
 func osvScannerEvidenceFromReport(evidence scannerEvidence, report osvScannerReport, desired []securityPackage) scannerEvidence {
@@ -419,7 +157,8 @@ func osvScannerEvidenceFromReport(evidence scannerEvidence, report osvScannerRep
 				if source := strings.TrimSpace(result.Source.Type); source != "" {
 					evidenceValues = append(evidenceValues, "source-type:"+source)
 				}
-				findings = append(findings, scannerFinding{
+				reason := scannerVulnerabilitySecurityReason("osv-scanner", dependencyKind)
+				findings = append(findings, scannerFindingWithReason(scannerFinding{
 					Kind:           "vulnerability",
 					SourcePath:     result.Source.Path,
 					SourceType:     result.Source.Type,
@@ -431,12 +170,11 @@ func osvScannerEvidenceFromReport(evidence scannerEvidence, report osvScannerRep
 					Aliases:        vuln.Aliases,
 					Severity:       osvScannerVulnSeverity(vuln, pkg.Groups),
 					Decision:       "hold",
-					Reason:         osvScannerFindingReason(dependencyKind),
 					Remediation:    osvScannerRemediation(fixedVersions, pkg.Package, result.Source),
 					Confidence:     "high",
 					Evidence:       evidenceValues,
 					FixedVersions:  fixedVersions,
-				})
+				}, reason))
 			}
 		}
 	}
@@ -456,12 +194,49 @@ func fixedVersionsFromOSVScannerVuln(vuln osvScannerVuln, pkg osvScannerPackageI
 	return fixedVersionsFromOSVDetail(osvVulnDetail{
 		ID:       vuln.ID,
 		Aliases:  vuln.Aliases,
-		Severity: vuln.Severity,
-		Affected: vuln.Affected,
+		Severity: osvSeverityFromScanner(vuln.Severity),
+		Affected: osvAffectedFromScanner(vuln.Affected),
 	}, securityPackage{
 		Ecosystem: pkg.Ecosystem,
 		Package:   pkg.Name,
 	})
+}
+
+func osvSeverityFromScanner(values []securityscanner.OSVSeverity) []osvSeverity {
+	if len(values) == 0 {
+		return nil
+	}
+	converted := make([]osvSeverity, 0, len(values))
+	for _, value := range values {
+		converted = append(converted, osvSeverity{
+			Type:  value.Type,
+			Score: value.Score,
+		})
+	}
+	return converted
+}
+
+func osvAffectedFromScanner(values []securityscanner.OSVAffected) []osvAffected {
+	if len(values) == 0 {
+		return nil
+	}
+	converted := make([]osvAffected, 0, len(values))
+	for _, value := range values {
+		affected := osvAffected{}
+		affected.Package.Ecosystem = value.Package.Ecosystem
+		affected.Package.Name = value.Package.Name
+		for _, sourceRange := range value.Ranges {
+			targetRange := osvRange{}
+			for _, sourceEvent := range sourceRange.Events {
+				targetRange.Events = append(targetRange.Events, osvRangeEvent{
+					Fixed: sourceEvent.Fixed,
+				})
+			}
+			affected.Ranges = append(affected.Ranges, targetRange)
+		}
+		converted = append(converted, affected)
+	}
+	return converted
 }
 
 func scannerDependencyKind(pkg osvScannerPackageInfo, desired []securityPackage) string {
@@ -490,30 +265,30 @@ func scannerDependencyKindForPackage(pkg osvScannerPackageInfo, desired []securi
 	return scannerDependencyKind(pkg, desired)
 }
 
-func scannerVulnerabilityReason(tool string, dependencyKind string) string {
-	switch dependencyKind {
-	case "direct":
-		return tool + " reported vulnerability in a directly managed package"
-	case "transitive":
-		return tool + " reported vulnerability in a transitive dependency"
-	default:
-		return tool + " reported vulnerability"
-	}
+func scannerVulnerabilitySecurityReason(tool string, dependencyKind string) securityreason.Reason {
+	return securityreason.ScannerVulnerabilityReason(tool, dependencyKind)
 }
 
-func osvScannerFindingReason(dependencyKind string) string {
-	switch dependencyKind {
-	case "direct":
-		return "osv-scanner reported vulnerability in a directly managed package"
-	case "transitive":
-		return "osv-scanner reported vulnerability in a transitive dependency"
-	default:
-		return "osv-scanner reported vulnerability"
+func scannerSecurityFindingReason(code string, tool string, text string) securityreason.Reason {
+	return securityreason.ScannerFindingReason(code, tool, text)
+}
+
+func setScannerFindingReason(finding *scannerFinding, reason securityreason.Reason) {
+	if finding == nil {
+		return
 	}
+	finding.Reason = reason.Text
+	finding.ReasonCode = reason.Code
+	finding.ReasonArgs = reason.Args
+}
+
+func scannerFindingWithReason(finding scannerFinding, reason securityreason.Reason) scannerFinding {
+	setScannerFindingReason(&finding, reason)
+	return finding
 }
 
 func osvScannerVulnSeverity(vuln osvScannerVuln, groups []osvScannerGroup) string {
-	if severity := primaryOSVSeverity(vuln.Severity); severity != "" {
+	if severity := primaryOSVSeverity(osvSeverityFromScanner(vuln.Severity)); severity != "" {
 		return severity
 	}
 	for _, group := range groups {
@@ -657,14 +432,7 @@ func runGitleaksDirScan(ctx context.Context, commandRunner commandRunner, root s
 }
 
 func parseGitleaksReport(raw string) ([]gitleaksFinding, bool) {
-	if strings.TrimSpace(raw) == "" {
-		return nil, false
-	}
-	var findings []gitleaksFinding
-	if err := json.Unmarshal([]byte(raw), &findings); err != nil {
-		return nil, false
-	}
-	return findings, true
+	return securityscanner.ParseGitleaksReport(raw)
 }
 
 func gitleaksEvidenceFromReport(evidence scannerEvidence, report []gitleaksFinding) scannerEvidence {
@@ -674,7 +442,8 @@ func gitleaksEvidenceFromReport(evidence scannerEvidence, report []gitleaksFindi
 	}
 	findings := make([]scannerFinding, 0, len(report))
 	for _, finding := range report {
-		findings = append(findings, scannerFinding{
+		reason := scannerSecurityFindingReason(securityreason.ScannerSecret, "gitleaks", "gitleaks reported possible secret")
+		findings = append(findings, scannerFindingWithReason(scannerFinding{
 			Kind:        "secret",
 			RuleID:      finding.RuleID,
 			File:        finding.File,
@@ -684,11 +453,10 @@ func gitleaksEvidenceFromReport(evidence scannerEvidence, report []gitleaksFindi
 			Fingerprint: finding.Fingerprint,
 			Description: finding.Description,
 			Decision:    "hold",
-			Reason:      "gitleaks reported possible secret",
 			Remediation: "revoke or rotate the secret if real, remove it from source/history, then rerun gitleaks",
 			Confidence:  "medium",
 			Evidence:    []string{"gitleaks"},
-		})
+		}, reason))
 	}
 	evidence.Status = plan.StatusHeld
 	evidence.Decision = "hold"
@@ -734,14 +502,7 @@ func runZizmorWorkflowScan(ctx context.Context, commandRunner commandRunner, roo
 }
 
 func parseZizmorReport(raw string) ([]zizmorFinding, bool) {
-	if strings.TrimSpace(raw) == "" {
-		return nil, false
-	}
-	var findings []zizmorFinding
-	if err := json.Unmarshal([]byte(raw), &findings); err != nil {
-		return nil, false
-	}
-	return findings, true
+	return securityscanner.ParseZizmorReport(raw)
 }
 
 func zizmorEvidenceFromReport(evidence scannerEvidence, report []zizmorFinding) scannerEvidence {
@@ -751,7 +512,8 @@ func zizmorEvidenceFromReport(evidence scannerEvidence, report []zizmorFinding) 
 			continue
 		}
 		file, startLine, endLine := zizmorFindingPrimaryLocation(item)
-		findings = append(findings, scannerFinding{
+		reason := scannerSecurityFindingReason(securityreason.ScannerWorkflow, "zizmor", "zizmor reported workflow security finding")
+		findings = append(findings, scannerFindingWithReason(scannerFinding{
 			Kind:        "workflow",
 			RuleID:      item.Ident,
 			File:        file,
@@ -760,12 +522,11 @@ func zizmorEvidenceFromReport(evidence scannerEvidence, report []zizmorFinding) 
 			Description: item.Desc,
 			URL:         item.URL,
 			Decision:    "hold",
-			Reason:      "zizmor reported workflow security finding",
 			Remediation: "update the GitHub Actions workflow according to the zizmor finding and rerun zizmor",
 			Confidence:  item.Determinations.Confidence,
 			Evidence:    []string{"zizmor"},
 			Severity:    item.Determinations.Severity,
-		})
+		}, reason))
 	}
 	evidence.FindingCount = len(findings)
 	if len(findings) == 0 {
@@ -826,14 +587,7 @@ func runTrivyFilesystemScan(ctx context.Context, commandRunner commandRunner, ro
 }
 
 func parseTrivyReport(raw string) (trivyReport, bool) {
-	var report trivyReport
-	if strings.TrimSpace(raw) == "" {
-		return report, false
-	}
-	if err := json.Unmarshal([]byte(raw), &report); err != nil {
-		return report, false
-	}
-	return report, true
+	return securityscanner.ParseTrivyReport(raw)
 }
 
 func trivyEvidenceFromReport(evidence scannerEvidence, report trivyReport, desired []securityPackage) scannerEvidence {
@@ -850,7 +604,8 @@ func trivyEvidenceFromReport(evidence scannerEvidence, report trivyReport, desir
 			if dependencyKind != "" {
 				evidenceValues = append(evidenceValues, dependencyKind+"-dependency")
 			}
-			findings = append(findings, scannerFinding{
+			reason := scannerVulnerabilitySecurityReason("trivy", dependencyKind)
+			findings = append(findings, scannerFindingWithReason(scannerFinding{
 				Kind:           "vulnerability",
 				SourcePath:     result.Target,
 				SourceType:     result.Type,
@@ -863,18 +618,18 @@ func trivyEvidenceFromReport(evidence scannerEvidence, report trivyReport, desir
 				Description:    vuln.Title,
 				URL:            vuln.PrimaryURL,
 				Decision:       "hold",
-				Reason:         scannerVulnerabilityReason("trivy", dependencyKind),
 				Remediation:    trivyVulnerabilityRemediation(vuln, result.Target),
 				Confidence:     "high",
 				Evidence:       evidenceValues,
 				FixedVersions:  splitCommaFields(vuln.FixedVersion),
-			})
+			}, reason))
 		}
 		for _, misconfig := range result.Misconfigurations {
 			if strings.EqualFold(strings.TrimSpace(misconfig.Status), "passed") || strings.TrimSpace(misconfig.ID) == "" {
 				continue
 			}
-			findings = append(findings, scannerFinding{
+			reason := scannerSecurityFindingReason(securityreason.ScannerMisconfiguration, "trivy", "trivy reported misconfiguration")
+			findings = append(findings, scannerFindingWithReason(scannerFinding{
 				Kind:        "misconfiguration",
 				SourcePath:  result.Target,
 				SourceType:  firstNonEmpty(misconfig.Type, result.Type),
@@ -884,18 +639,18 @@ func trivyEvidenceFromReport(evidence scannerEvidence, report trivyReport, desir
 				Description: firstNonEmpty(misconfig.Title, misconfig.Message),
 				URL:         misconfig.PrimaryURL,
 				Decision:    "hold",
-				Reason:      "trivy reported misconfiguration",
 				Remediation: firstNonEmpty(misconfig.Resolution, "review the configuration finding and rerun trivy"),
 				Confidence:  "medium",
 				Evidence:    []string{"trivy"},
 				Severity:    misconfig.Severity,
-			})
+			}, reason))
 		}
 		for _, secret := range result.Secrets {
 			if strings.TrimSpace(secret.RuleID) == "" {
 				continue
 			}
-			findings = append(findings, scannerFinding{
+			reason := scannerSecurityFindingReason(securityreason.ScannerSecret, "trivy", "trivy reported possible secret")
+			findings = append(findings, scannerFindingWithReason(scannerFinding{
 				Kind:        "secret",
 				SourcePath:  result.Target,
 				SourceType:  result.Type,
@@ -904,12 +659,11 @@ func trivyEvidenceFromReport(evidence scannerEvidence, report trivyReport, desir
 				EndLine:     secret.EndLine,
 				Description: firstNonEmpty(secret.Title, secret.Category),
 				Decision:    "hold",
-				Reason:      "trivy reported possible secret",
 				Remediation: "revoke or rotate the secret if real, remove it from source/history, then rerun trivy",
 				Confidence:  "medium",
 				Evidence:    []string{"trivy"},
 				Severity:    secret.Severity,
-			})
+			}, reason))
 		}
 	}
 	evidence.PackageCount = trivyPackageCount(findings)
@@ -990,14 +744,7 @@ func runGrypeDirectoryScan(ctx context.Context, commandRunner commandRunner, roo
 }
 
 func parseGrypeReport(raw string) (grypeReport, bool) {
-	var report grypeReport
-	if strings.TrimSpace(raw) == "" {
-		return report, false
-	}
-	if err := json.Unmarshal([]byte(raw), &report); err != nil {
-		return report, false
-	}
-	return report, true
+	return securityscanner.ParseGrypeReport(raw)
 }
 
 func grypeEvidenceFromReport(evidence scannerEvidence, report grypeReport, desired []securityPackage) scannerEvidence {
@@ -1020,11 +767,15 @@ func grypeEvidenceFromReport(evidence scannerEvidence, report grypeReport, desir
 		if dependencyKind != "" {
 			evidenceValues = append(evidenceValues, dependencyKind+"-dependency")
 		}
-		reason := scannerVulnerabilityReason("grype", dependencyKind)
+		reason := scannerVulnerabilitySecurityReason("grype", dependencyKind)
 		if usesCPE {
-			reason += " via CPE-style match"
+			reason.Text += " via CPE-style match"
+			if reason.Args == nil {
+				reason.Args = map[string]string{}
+			}
+			reason.Args["match_style"] = "cpe"
 		}
-		findings = append(findings, scannerFinding{
+		findings = append(findings, scannerFindingWithReason(scannerFinding{
 			Kind:           "vulnerability",
 			SourcePath:     grypeArtifactSource(match.Artifact),
 			SourceType:     match.Artifact.Type,
@@ -1037,12 +788,11 @@ func grypeEvidenceFromReport(evidence scannerEvidence, report grypeReport, desir
 			Description:    match.Vulnerability.Description,
 			URL:            firstString(match.Vulnerability.URLs),
 			Decision:       "hold",
-			Reason:         reason,
 			Remediation:    grypeRemediation(match, fixedVersions),
 			Confidence:     confidence,
 			Evidence:       evidenceValues,
 			FixedVersions:  fixedVersions,
-		})
+		}, reason))
 	}
 	evidence.SourceCount = grypeSourceCount(report.Matches)
 	evidence.PackageCount = grypePackageCount(findings)
@@ -1086,101 +836,23 @@ func grypeRemediation(match grypeMatch, fixedVersions []string) string {
 }
 
 func scannerPackageInfoFromPURL(rawPURL string, fallbackName string, fallbackVersion string, fallbackType string) osvScannerPackageInfo {
-	pkg := parseScannerPURL(rawPURL)
-	if pkg.Name == "" {
-		pkg.Name = strings.TrimSpace(fallbackName)
-	}
-	if pkg.Version == "" {
-		pkg.Version = strings.TrimSpace(fallbackVersion)
-	}
-	if pkg.Ecosystem == "" {
-		pkg.Ecosystem = scannerEcosystemFromType(fallbackType)
-	}
-	return pkg
+	return securityscanner.PackageInfoFromPURL(rawPURL, fallbackName, fallbackVersion, fallbackType)
 }
 
 func parseScannerPURL(rawPURL string) osvScannerPackageInfo {
-	value := strings.TrimSpace(rawPURL)
-	if value == "" || !strings.HasPrefix(strings.ToLower(value), "pkg:") {
-		return osvScannerPackageInfo{}
-	}
-	value = value[len("pkg:"):]
-	if index := strings.IndexAny(value, "?#"); index >= 0 {
-		value = value[:index]
-	}
-	purlType, path, ok := strings.Cut(value, "/")
-	if !ok {
-		return osvScannerPackageInfo{Ecosystem: scannerEcosystemFromType(purlType)}
-	}
-	version := ""
-	if index := strings.LastIndex(path, "@"); index > 0 {
-		version = scannerURLUnescape(path[index+1:])
-		path = path[:index]
-	}
-	return osvScannerPackageInfo{
-		Name:      scannerPackageNameFromPURLPath(purlType, path),
-		Version:   version,
-		Ecosystem: scannerEcosystemFromType(purlType),
-	}
+	return securityscanner.ParsePURL(rawPURL)
 }
 
 func scannerPackageNameFromPURLPath(purlType string, path string) string {
-	parts := []string{}
-	for _, part := range strings.Split(strings.Trim(path, "/"), "/") {
-		if part == "" {
-			continue
-		}
-		parts = append(parts, scannerURLUnescape(part))
-	}
-	if len(parts) == 0 {
-		return ""
-	}
-	switch strings.ToLower(strings.TrimSpace(purlType)) {
-	case "maven":
-		if len(parts) >= 2 {
-			return parts[len(parts)-2] + ":" + parts[len(parts)-1]
-		}
-	case "npm":
-		if len(parts) >= 2 && strings.HasPrefix(parts[len(parts)-2], "@") {
-			return parts[len(parts)-2] + "/" + parts[len(parts)-1]
-		}
-	case "composer":
-		if len(parts) >= 2 {
-			return parts[len(parts)-2] + "/" + parts[len(parts)-1]
-		}
-	}
-	return parts[len(parts)-1]
+	return securityscanner.PackageNameFromPURLPath(purlType, path)
 }
 
 func scannerURLUnescape(value string) string {
-	decoded, err := url.PathUnescape(value)
-	if err != nil {
-		return value
-	}
-	return decoded
+	return securityscanner.URLUnescape(value)
 }
 
 func scannerEcosystemFromType(value string) string {
-	switch strings.ToLower(strings.TrimSpace(value)) {
-	case "npm", "node-pkg":
-		return "npm"
-	case "cargo", "rust":
-		return "crates.io"
-	case "pypi", "python":
-		return "PyPI"
-	case "golang", "go":
-		return "Go"
-	case "maven", "java":
-		return "Maven"
-	case "gem", "ruby", "rubygems":
-		return "RubyGems"
-	case "nuget", "dotnet":
-		return "NuGet"
-	case "composer", "php":
-		return "Packagist"
-	default:
-		return ""
-	}
+	return securityscanner.EcosystemFromType(value)
 }
 
 func grypeSourceCount(matches []grypeMatch) int {
@@ -1241,20 +913,7 @@ func splitCommaFields(value string) []string {
 }
 
 func hasGitHubWorkflowFiles(root string) bool {
-	entries, err := os.ReadDir(filepath.Join(root, ".github", "workflows"))
-	if err != nil {
-		return false
-	}
-	for _, entry := range entries {
-		if entry.IsDir() {
-			continue
-		}
-		name := strings.ToLower(entry.Name())
-		if strings.HasSuffix(name, ".yml") || strings.HasSuffix(name, ".yaml") {
-			return true
-		}
-	}
-	return false
+	return securityscanner.HasGitHubWorkflowFiles(root)
 }
 
 func scannerCommandErrorStatus(result runner.Result) plan.Status {
@@ -1266,157 +925,39 @@ func scannerCommandErrorStatus(result runner.Result) plan.Status {
 }
 
 func scannerEvidenceReportStatus(current plan.Status, scanners []scannerEvidence) plan.Status {
-	status := current
-	for _, scanner := range scanners {
-		if scanner.Status == plan.StatusBlocked {
-			return plan.StatusBlocked
-		}
-		if scanner.Status == plan.StatusHeld {
-			if status == plan.StatusOK {
-				status = plan.StatusHeld
-			}
-		}
-	}
-	return status
+	return securityscanner.ReportStatus(current, scanners)
 }
 
 func scannerEvidenceSummary(scanners []scannerEvidence) (held int, unavailable int, errors int) {
-	for _, scanner := range scanners {
-		switch scanner.Status {
-		case plan.StatusHeld:
-			held++
-		case plan.StatusUnavailable:
-			unavailable++
-		case plan.StatusError:
-			errors++
-		}
-	}
-	return held, unavailable, errors
+	return securityscanner.Summary(scanners)
 }
 
 func hasScannerEvidenceAttention(scanners []scannerEvidence) bool {
-	for _, scanner := range scanners {
-		if scanner.Status != plan.StatusOK || securityDecisionNeedsAttention(scanner.Decision) {
-			return true
-		}
-	}
-	return false
+	return securityscanner.HasAttention(scanners)
 }
 
 func hasScannerFindings(scanners []scannerEvidence) bool {
-	for _, scanner := range scanners {
-		for _, finding := range scanner.Findings {
-			if securityDecisionNeedsAttention(finding.Decision) {
-				return true
-			}
-		}
-	}
-	return false
+	return securityscanner.HasFindingAttention(scanners)
 }
 
 func scannerFindingSource(finding scannerFinding) string {
-	return firstNonEmpty(finding.SourcePath, finding.File)
+	return securityscanner.FindingSource(finding)
 }
 
 func scannerFindingID(finding scannerFinding) string {
-	return firstNonEmpty(finding.VulnID, finding.RuleID, finding.Fingerprint)
+	return securityscanner.FindingID(finding)
 }
 
 func scannerFindingDetail(finding scannerFinding) string {
-	if finding.Package != "" {
-		if finding.Version != "" {
-			return finding.Package + "@" + finding.Version
-		}
-		return finding.Package
-	}
-	if finding.StartLine > 0 {
-		if finding.EndLine > finding.StartLine {
-			return fmt.Sprintf("lines %d-%d", finding.StartLine, finding.EndLine)
-		}
-		return fmt.Sprintf("line %d", finding.StartLine)
-	}
-	return finding.Description
+	return securityscanner.FindingDetail(finding)
 }
 
 func sortScannerFindings(findings []scannerFinding) {
-	sort.SliceStable(findings, func(i, j int) bool {
-		left := scannerFindingPriority(findings[i])
-		right := scannerFindingPriority(findings[j])
-		for index := range left {
-			if left[index] != right[index] {
-				return left[index] > right[index]
-			}
-		}
-		leftKey := strings.ToLower(scannerFindingSource(findings[i]) + "\x00" + scannerFindingID(findings[i]) + "\x00" + scannerFindingDetail(findings[i]))
-		rightKey := strings.ToLower(scannerFindingSource(findings[j]) + "\x00" + scannerFindingID(findings[j]) + "\x00" + scannerFindingDetail(findings[j]))
-		return leftKey < rightKey
-	})
-}
-
-func scannerFindingPriority(finding scannerFinding) []int {
-	return []int{
-		securityDecisionPriority(finding.Decision),
-		scannerFindingKindPriority(finding.Kind),
-		int(securitySeverityScore(finding.Severity) * 10),
-		boolPriority(len(finding.FixedVersions) > 0),
-		scannerDependencyKindPriority(finding.DependencyKind),
-	}
-}
-
-func scannerDependencyKindPriority(kind string) int {
-	switch strings.ToLower(strings.TrimSpace(kind)) {
-	case "direct":
-		return 2
-	case "transitive":
-		return 1
-	default:
-		return 0
-	}
-}
-
-func scannerFindingKindPriority(kind string) int {
-	switch strings.ToLower(strings.TrimSpace(kind)) {
-	case "secret":
-		return 4
-	case "vulnerability":
-		return 3
-	case "workflow":
-		return 2
-	default:
-		return 0
-	}
+	securityscanner.SortFindings(findings)
 }
 
 func scannerEvidenceWithPolicyDecision(scanner scannerEvidence) scannerEvidence {
-	if len(scanner.Findings) == 0 || (scanner.Status != plan.StatusHeld && scanner.Status != plan.StatusOK) {
-		return scanner
-	}
-	attention := false
-	blocked := false
-	for _, finding := range scanner.Findings {
-		switch strings.ToLower(strings.TrimSpace(finding.Decision)) {
-		case "block":
-			blocked = true
-		case "hold", "review", "":
-			attention = true
-		}
-	}
-	switch {
-	case blocked:
-		scanner.Status = plan.StatusBlocked
-		scanner.Decision = "block"
-		scanner.Reason = "scanner findings blocked by security policy"
-	case attention:
-		scanner.Status = plan.StatusHeld
-		if scanner.Decision == "allow" {
-			scanner.Decision = "hold"
-		}
-	case scanner.Status == plan.StatusHeld:
-		scanner.Status = plan.StatusOK
-		scanner.Decision = "allow"
-		scanner.Reason = "scanner findings allowed by security policy"
-	}
-	return scanner
+	return securityscanner.ApplyPolicyDecision(scanner)
 }
 
 func scannerErrorText(result runner.Result) string {

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/webkaz-labs/updev/internal/i18n"
+	"github.com/webkaz-labs/updev/internal/mise"
 	"github.com/webkaz-labs/updev/internal/plan"
 	"github.com/webkaz-labs/updev/internal/runner"
 	"github.com/webkaz-labs/updev/internal/textui"
@@ -195,7 +196,7 @@ func dependencyMiseMinimumReleaseAgeCheck(ctx context.Context, commandRunner run
 		check.Remediation = dependencyRemediation("mise", true)
 		return check
 	}
-	evidence := detectMiseMinimumReleaseAge(ctx, commandRunner, root)
+	evidence := mise.DetectMinimumReleaseAge(ctx, commandRunner, root)
 	check.Status = evidence.Status
 	check.Value = evidence.Value
 	check.Source = evidence.Source
