@@ -13,7 +13,8 @@ temporary ceiling.
 
 | Package | Current Go files | Target | Temporary ceiling | Status | Next action |
 |---------|------------------|--------|-------------------|--------|-------------|
-| `internal/cmd` | 45 | <= 45 | 45 | within target | At release target; do not add another cmd file without extracting an owning package in the same change. |
+| `internal/cmd` production files | 27 | <= 30 | 30 | within target | Production command sprawl is now checked separately from tests; do not add command logic without extracting an owning package in the same change. |
+| `internal/cmd` test files | 18 | <= 20 | 20 | within target | Keep broad command regression tests stable, but move future owner-specific tests with the extracted package. |
 | all other `internal/*` packages, including nested owner packages | <= 20 each | <= 20 | 20 | within target | Split by domain before adding the 21st Go source file. |
 
 Current largest non-`cmd` packages:
@@ -235,7 +236,7 @@ Current v0.7.0 guardrails:
   focused actions, grouped rows, and item-visible safety/update evidence should
   be tested or manually accepted before another UX refactor lands.
 
-Current v0.7.5 extraction result:
+v0.7.5 extraction baseline:
 
 - `internal/cmd` is at the v0.7.5 ceiling of 45 Go files.
 - `internal/manualinventory` core is below its target at 14 Go files.
@@ -282,6 +283,27 @@ Implementation order:
 3. Extract provider-neutral update/security report assembly.
 4. Clean up badge/evidence display boundaries.
 5. Audit external CLI/parser ownership and update this ledger.
+
+v0.7.7 architecture-hardening result:
+
+`v0.7.7` starts the larger reset before the next feature slice by enforcing the
+real command-sprawl budget: production command files. This prevents provider
+evidence quality, scanner hardening, and policy ergonomics from growing command
+production code again, while keeping command-level regression tests visible as a
+separate budget.
+
+| Area | Target state | Required guardrail |
+|------|--------------|--------------------|
+| `internal/cmd` size | Keep production command files at `<= 30`; current production count is 27. | `scripts/check-source-structure.sh` enforces the production ceiling and separately checks command test files. |
+| Report assembly | Update/security/list/manual/backend summaries are assembled by domain packages. | Cached reports, JSON/text output, and TUI detail rows consume the same structured assembly result. |
+| TUI routing | Generic route stack, focus restoration, filter state, confirmation state, pending writes, and Back/Home behavior live outside command-specific files. | Fast tests or PTY smoke cover `updev`, `last`, `list`, manual inventory, backend, security, and policy routes. |
+| Provider/parser ownership | Provider command construction, timeout/error normalization, and structured output parsing stay in provider/scanner owner packages. | Direct subprocess exceptions remain synced between `ARCHITECTURE.md` and `scripts/check-direct-subprocesses.sh`. |
+| Provider logs | Homebrew/mise update, scan, and audit logs keep streaming outside alternate-screen TUI. | Do not replace provider execution with Bubble Tea `ExecProcess`; reserve `ExecProcess` for foreground TUI actions only. |
+
+Do not start provider evidence expansion, scanner defaults, or policy UX feature
+growth if it would increase production command file count above the enforced
+budget. Owner-specific tests should move with the owner package instead of
+growing broad command tests.
 
 Do not add new tool-name-only fixes, direct provider command calls, implicit
 repository-local defaults, or TUI-only behavior that is missing from the report

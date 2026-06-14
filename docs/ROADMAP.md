@@ -31,22 +31,23 @@ history in git log, and keep the current/next release target in
 - Documentation source-of-truth guidance, canonical `docs/agent/` usage/skill
   files, tag-specific release notes, and focused `docs-check` drift coverage are
   implemented.
-- `updev v0.7.6` is the current preview contract: it keeps the `v0.6.x`
+- `updev v0.7.7` is the current preview contract: it keeps the `v0.6.x`
   Homebrew/mise provider gate and the `v0.7.3` support-label catalog, includes
-  the `v0.7.5` P1 scalability refactor, and fixes support-catalog Japanese help
-  text consistency.
+  the `v0.7.5` P1 scalability refactor, and hardens source-structure checks so
+  `internal/cmd` production files stay within the `<= 30` budget before the next
+  feature slice.
 - `updev brewfile ...` and `brewfile` remain compatibility or low-level
   surfaces, not the primary human workflow.
 
 ## Near-Term Order
 
-1. Dogfood `updev v0.7.6` on the macOS/Homebrew/mise preview path. The current
+1. Dogfood `updev v0.7.7` on the macOS/Homebrew/mise preview path. The current
    policy is fixed: keep macOS/Homebrew/mise as supported preview, Linux/Windows
    and agent enrichment experimental, `brewfile` compatibility oriented, and
    external installer execution / dynamic plugins / stable Linux-Windows update
    providers deferred.
 2. Continue the broader `v0.7.x` workstream plan in
-   [RELEASE.md](RELEASE.md#next-v07x-workstream-plan) after `v0.7.6`. The order
+   [RELEASE.md](RELEASE.md#next-v07x-workstream-plan) after `v0.7.7`. The order
    remains provider evidence quality, scanner hardening, then policy
    ergonomics. Keep each slice small enough to validate and release as a patch
    if dogfood risk is high.
@@ -106,9 +107,10 @@ patches:
 | Order | Workstream | First useful slice | Do not do yet |
 |-------|------------|--------------------|---------------|
 | 1 | Scalability refactor | `v0.7.5`: finish P1 by reducing `internal/cmd` below 50, splitting `manualinventory`, moving shared route state into `reviewui`, and auditing external CLI parser ownership. | Broad framework extraction, nested command subpackages that still own business logic, or provider evidence expansion before structure is unblocked. |
-| 2 | Provider evidence quality | Improve Homebrew/mise held/review explanations with source URLs, release dates, cache age, and item-scoped commands. | Promote Linux/Windows or opaque mise/vfox paths based on weak evidence. |
-| 3 | Scanner hardening | Make explicit scanner/native-audit evidence more structured and bounded, with clear unavailable semantics. | Make slow or broad scanners part of the default update gate. |
-| 4 | Policy ergonomics | Add policy diagnostics and guided edit/renew/narrow flows where users already review security details. | Auto-post public issues or create broad permanent allow rules without explicit user intent. |
+| 2 | Architecture hardening | `v0.7.7`: before feature growth, reduce `internal/cmd` toward `<= 30`, extract remaining report assembly and common TUI route mechanics, and tighten placement checks. | Provider evidence expansion, scanner defaults, policy UX feature growth, or replacing provider log streaming with TUI foreground process execution. |
+| 3 | Provider evidence quality | Improve Homebrew/mise held/review explanations with source URLs, release dates, cache age, and item-scoped commands. | Promote Linux/Windows or opaque mise/vfox paths based on weak evidence. |
+| 4 | Scanner hardening | Make explicit scanner/native-audit evidence more structured and bounded, with clear unavailable semantics. | Make slow or broad scanners part of the default update gate. |
+| 5 | Policy ergonomics | Add policy diagnostics and guided edit/renew/narrow flows where users already review security details. | Auto-post public issues or create broad permanent allow rules without explicit user intent. |
 
 Every workstream must preserve the same invariants:
 
