@@ -31,17 +31,18 @@ history in git log, and keep the current/next release target in
 - Documentation source-of-truth guidance, canonical `docs/agent/` usage/skill
   files, tag-specific release notes, and focused `docs-check` drift coverage are
   implemented.
-- `updev v0.7.2` is the current preview contract: it keeps the `v0.6.x`
+- `updev v0.7.3` is the current preview contract: it keeps the `v0.6.x`
   Homebrew/mise provider gate, scalability, text UI, agent guidance,
   compatibility ledger, and portable inventory groundwork, then adds explicit
   support-level labels through `updev support` / `updev doctor support` and
-  compatibility-ledger `support_label` fields.
+  compatibility-ledger `support_label` fields, with routed TUI visibility for
+  provider and support-catalog review.
 - `updev brewfile ...` and `brewfile` remain compatibility or low-level
   surfaces, not the primary human workflow.
 
 ## Near-Term Order
 
-1. Dogfood `updev v0.7.2` on the macOS/Homebrew/mise preview path. The current
+1. Dogfood `updev v0.7.3` on the macOS/Homebrew/mise preview path. The current
    policy is fixed: keep macOS/Homebrew/mise as supported preview, Linux/Windows
    and agent enrichment experimental, `brewfile` compatibility oriented, and
    external installer execution / dynamic plugins / stable Linux-Windows update
@@ -53,42 +54,48 @@ history in git log, and keep the current/next release target in
    importing TUI/report types.
 3. Preserve TTY/report regression guardrails for the accepted `updev`,
    `updev last`, and `updev list` flows before making additional UX changes.
-4. Use `v0.7.0` to decide support labels for provider-general inventory:
+4. Continue `v0.7.x` support-label dogfood without turning the catalog into list
+   noise. Provider rows surface `experimental`, `compatibility`, and `deferred`
+   when they affect trust or expectations; `supported_preview` remains
+   detail-only by default. The support-catalog route from `updev hub` and the
+   list hub exposes the provider/command/report/inventory-source catalog with
+   surface, label, and query filters.
+5. Use `v0.7.x` to decide support labels for provider-general inventory:
    macOS/Homebrew/mise stays supported preview; Linux read-only scanners stay
    experimental until fixture plus container/VM dogfood proves them; Windows
    evidence remains fixture/spike until a real runner or machine is available.
-5. Continue provider evidence quality in `v0.7.0` with richer source URLs,
+6. Continue provider evidence quality in `v0.7.x` with richer source URLs,
    ownership confidence, broader Homebrew/mise release-age/advisory confidence
    beyond the current registry paths, and provider-native audit paths where
    package identity is reliable.
-6. Continue scanner hardening after OSV-Scanner, gitleaks, zizmor, Trivy, and
+7. Continue scanner hardening after OSV-Scanner, gitleaks, zizmor, Trivy, and
    Grype. Keep Syft and Prowler explicit future commands, not default package
    update gates.
-7. Extend provider contract drift checks beyond the local compatibility ledger
+8. Extend provider contract drift checks beyond the local compatibility ledger
    only when public issue automation has explicit credentials, repository
    ownership, and posting policy.
-8. Extend pending-update gates beyond the current Homebrew/mise/VS Code paths
+9. Extend pending-update gates beyond the current Homebrew/mise/VS Code paths
    only as those providers move into Go, using the same updev-owned gate
    vocabulary and item-scoped allow/hold/review decisions.
-9. Keep policy ergonomics current as policy rules grow: guided helpers,
+10. Keep policy ergonomics current as policy rules grow: guided helpers,
    diagnostic indexes, and shadowed-rule references should remain visible from
    CLI and TUI review paths.
-10. Keep `updev skill` / `updev help agent` synchronized with canonical
+11. Keep `updev skill` / `updev help agent` synchronized with canonical
    `docs/agent/` files through docs-check drift coverage.
-11. Continue hardening portable structured manual inventory sources and optional
+12. Continue hardening portable structured manual inventory sources and optional
    agent-assisted enrichment: agent output is structured draft metadata, not
    desired state, until the user accepts or edits it from CLI/TUI review.
-12. Keep agent-assisted review optional for ambiguous candidates. Agent-generated
+13. Keep agent-assisted review optional for ambiguous candidates. Agent-generated
    manual app metadata must be schema-validated draft data, callable from the
    manual app TUI flow, and safe when Codex or another configured agent is not
    installed.
-13. Keep Go CLI standard checks as part of future release reviews; direct
+14. Keep Go CLI standard checks as part of future release reviews; direct
    subprocess exceptions, JSON encoding, and verbosity policy are documented for
    the current tool surface.
-14. Keep release notes and public docs focused on `v0.7.x` preview hardening.
+15. Keep release notes and public docs focused on `v0.7.x` preview hardening.
     Do not turn support-level labels into `v1.0.0` promises until the dogfood
     evidence is strong enough to freeze them.
-15. Maintain the macOS/Homebrew/mise public preview with installation docs,
+16. Maintain the macOS/Homebrew/mise public preview with installation docs,
     privacy boundaries, and explicit experimental status for Linux/Windows
     providers. Reserve `updev v1.0.0` for the first stable public contract after
     that scope is deliberately narrowed and documented.

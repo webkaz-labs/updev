@@ -529,6 +529,7 @@ func printDependencyContractText(w io.Writer, report dependencyContractReport, c
 		rows = append(rows, []string{
 			textui.StyleName(check.Tool, color),
 			check.Feature,
+			dependencySupportLabel(check),
 			scope,
 			textui.StyleStatus(string(check.Status), color),
 			detail,
@@ -538,6 +539,7 @@ func printDependencyContractText(w io.Writer, report dependencyContractReport, c
 	textui.PrintTable(w, []textui.Column{
 		{Header: "tool", Min: 8, Max: 14},
 		{Header: "feature", Min: 12, Max: 20},
+		{Header: "support_label", Min: 14, Max: 18},
 		{Header: "scope", Min: 8, Max: 8},
 		{Header: "status", Min: 10, Max: 12},
 		{Header: "detail", Min: 20, Max: 80},

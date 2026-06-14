@@ -680,6 +680,7 @@ const (
 	listHubActionBackends  = "backends"
 	listHubActionUpdates   = "updates"
 	listHubActionSecurity  = "security"
+	listHubActionSupport   = "support"
 	listHubActionLimited   = "limited"
 	listHubActionDetails   = "details"
 	listHubActionFull      = "full"
@@ -998,7 +999,7 @@ func listHubActionExists(action string) bool {
 	case listHubActionAttention, listHubActionProvider, listHubActionKind,
 		listHubActionCategory, listHubActionStatus, listHubActionQuery,
 		listHubActionManual, listHubActionBackends, listHubActionUpdates,
-		listHubActionSecurity, listHubActionLimited, listHubActionDetails,
+		listHubActionSecurity, listHubActionSupport, listHubActionLimited, listHubActionDetails,
 		listHubActionFull:
 		return true
 	default:
@@ -1008,7 +1009,7 @@ func listHubActionExists(action string) bool {
 
 func shouldRunListHubRouterAction(action string) bool {
 	switch action {
-	case listHubActionAttention, listHubActionProvider, listHubActionKind, listHubActionCategory, listHubActionStatus, listHubActionQuery, listHubActionManual, listHubActionBackends, listHubActionUpdates, listHubActionSecurity, listHubActionLimited, listHubActionDetails, listHubActionFull:
+	case listHubActionAttention, listHubActionProvider, listHubActionKind, listHubActionCategory, listHubActionStatus, listHubActionQuery, listHubActionManual, listHubActionBackends, listHubActionUpdates, listHubActionSecurity, listHubActionSupport, listHubActionLimited, listHubActionDetails, listHubActionFull:
 		return true
 	default:
 		return false
@@ -1089,6 +1090,7 @@ func listHubChoices(report listReport, backendPlan backendPlanReport, backendLoa
 		}
 	}
 	choices = append(choices,
+		updevChoice{Value: listHubActionSupport, Label: tr("Support catalog", "support catalog"), Description: tr("Review support labels for providers, commands, reports, and inventory sources.", "provider / command / report / inventory source の support label を確認します。")},
 		updevChoice{Value: listHubActionLimited, Label: tr("Compact list", "compact list"), Description: tr("Show at most 10 rows per section.", "各 section 最大 10 行で表示します。")},
 		updevChoice{Value: listHubActionDetails, Label: tr("Details", "詳細"), Description: tr("Show limited rows plus expanded descriptions.", "絞り込んだ行と展開可能な説明を表示します。")},
 		updevChoice{Value: updevActionExit, Label: tr("Exit", "終了"), Description: tr("Leave the selector.", "selector を終了します。")},

@@ -459,6 +459,10 @@ func manualPlanEvidenceDetail(evidence manualReviewEvidence) string {
 	if evidence.Source != "" {
 		parts = append(parts, "source="+evidence.Source)
 	}
+	if sourceName, label := manualInventorySourceSupportLabel(evidence); label != "" {
+		parts = append(parts, "inventory_source="+sourceName)
+		parts = append(parts, "support_label="+label)
+	}
 	if evidence.Path != "" {
 		parts = append(parts, "path="+evidence.Path)
 	}
