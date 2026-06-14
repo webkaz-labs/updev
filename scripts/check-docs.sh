@@ -52,11 +52,14 @@ fi
 
 require_grep 'uses: actions/setup-go@v6' ".github/workflows/ci.yml"
 require_grep 'run: scripts/check-docs\.sh' ".github/workflows/ci.yml"
+require_grep 'run: scripts/check-go-format\.sh' ".github/workflows/ci.yml"
+require_grep 'run: scripts/check-staticcheck\.sh' ".github/workflows/ci.yml"
+require_grep 'shellcheck -S warning scripts/\*\.sh' ".github/workflows/ci.yml"
 require_grep 'run: go mod verify' ".github/workflows/ci.yml"
 require_grep 'run: go vet \./\.\.\.' ".github/workflows/ci.yml"
 require_grep 'run: go test \./\.\.\.' ".github/workflows/ci.yml"
 require_grep 'run: go build \./\.\.\.' ".github/workflows/ci.yml"
-require_grep 'depends = \["test", "vet", "mod-verify", "build"\]' "mise.toml"
+require_grep 'depends = \["lint", "test", "vet", "mod-verify", "build"\]' "mise.toml"
 
 "$root/scripts/check-direct-subprocesses.sh" || failures=$((failures + 1))
 "$root/scripts/check-source-structure.sh" || failures=$((failures + 1))

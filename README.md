@@ -409,9 +409,12 @@ recommendation order.
 
 ```bash
 go mod verify
+scripts/check-go-format.sh
+scripts/check-staticcheck.sh
 go vet ./...
 go test ./...
 go build ./...
+shellcheck -S warning scripts/*.sh
 scripts/check-docs.sh
 git diff --check
 ```
@@ -420,6 +423,7 @@ If you use mise, the local task runner wraps the same checks:
 
 ```bash
 mise install
+mise run lint
 mise run check
 mise run docs-check
 ```

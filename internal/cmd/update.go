@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -19,12 +20,15 @@ import (
 	"github.com/webkaz-labs/updev/internal/inventoryannotate"
 	"github.com/webkaz-labs/updev/internal/mise"
 	"github.com/webkaz-labs/updev/internal/plan"
+	"github.com/webkaz-labs/updev/internal/reviewui"
 	"github.com/webkaz-labs/updev/internal/runner"
 	"github.com/webkaz-labs/updev/internal/securityreason"
 	"github.com/webkaz-labs/updev/internal/textui"
 	"github.com/webkaz-labs/updev/internal/updatelog"
 	"github.com/webkaz-labs/updev/internal/updatereason"
 	"github.com/webkaz-labs/updev/internal/updevpath"
+
+	tea "charm.land/bubbletea/v2"
 )
 
 type updateOptions struct {
@@ -4492,4 +4496,1269 @@ func joinCommand(command []string) string {
 		parts = append(parts, part)
 	}
 	return strings.Join(parts, " ")
+}
+
+type updateSummaryLine = reviewui.ActionSummaryLine
+type updateSummaryLineKind = reviewui.ActionSummaryLineKind
+
+const (
+	updateSummaryLineNormal      = reviewui.ActionSummaryLineNormal
+	updateSummaryLineSection     = reviewui.ActionSummaryLineSection
+	updateSummaryLineTableHeader = reviewui.ActionSummaryLineTableHeader
+	updateSummaryLineMeta        = reviewui.ActionSummaryLineMeta
+)
+
+type updateSummaryRoute struct {
+	Base     string
+	Provider string
+	Query    string
+}
+
+const updateSummaryRoutePrefix = "summary-route"
+
+type updateSummaryBrowserModel = reviewui.ActionSummaryModel
+
+func runUpdateSummaryBrowser(title string, report updateReport, manualPlan inventoryPlanReport, backendPlan backendPlanReport, state reviewui.State, focusAction string, color bool) (reviewui.State, error) {
+	model := newUpdateSummaryBrowserModel(title, report, manualPlan, backendPlan, state, focusAction, color)
+	return reviewui.RunActionSummaryModel(model)
+}
+
+func newUpdateSummaryBrowserModel(title string, report updateReport, manualPlan inventoryPlanReport, backendPlan backendPlanReport, state reviewui.State, focusAction string, color bool) updateSummaryBrowserModel {
+	return newUpdateSummaryBrowserModelWithLoading(title, report, manualPlan, false, backendPlan, false, state, focusAction, color)
+}
+
+func newUpdateSummaryBrowserModelWithLoading(title string, report updateReport, manualPlan inventoryPlanReport, manualLoading bool, backendPlan backendPlanReport, backendLoading bool, state reviewui.State, focusAction string, color bool) updateSummaryBrowserModel {
+	return newActionSummaryBrowserModel(title, updateSummaryBrowserLinesWithLoading(report, manualPlan, manualLoading, backendPlan, backendLoading, color), state, focusAction, color)
+}
+
+func newActionSummaryBrowserModel(title string, lines []updateSummaryLine, state reviewui.State, focusAction string, color bool) updateSummaryBrowserModel {
+	labels := reviewui.ActionSummaryLabels{
+		HelpMove:      tr("Up/Down or j/k: move between selectable summary rows", "↑↓ または j/k: 選択可能な summary 行を移動"),
+		HelpOpen:      tr("Enter, Space, or a: open the selected detail", "Enter / Space / a: 選択した詳細を開く"),
+		HelpExit:      tr("b, q, Esc, or Ctrl-C: exit", "b / q / Esc / Ctrl-C: 終了"),
+		Controls:      tr("Up/Down/j/k move, Enter open selected summary, Space/a open, ? help, q exit", "↑↓/j/k 移動、Enter で選択 summary を開く、Space/a も開く、? help、q 終了"),
+		FocusedPrefix: tr("focused actions:", "選択中の操作:"),
+		EnterFormat:   tr("Enter: %s", "Enter: %s"),
+	}
+	actions := reviewui.ActionSummaryActions{Exit: updevActionExit}
+	focusMatcher := func(lineAction string, focusAction string) bool {
+		route, ok := parseUpdateSummaryRoute(lineAction)
+		return ok && route.Base == focusAction
+	}
+	return reviewui.NewActionSummaryModel(title, lines, state, focusAction, labels, actions, focusMatcher, color)
+}
+
+func updateSummaryBrowserLines(report updateReport, manualPlan inventoryPlanReport, backendPlan backendPlanReport, color bool) []updateSummaryLine {
+	return updateSummaryBrowserLinesWithLoading(report, manualPlan, false, backendPlan, false, color)
+}
+
+func updateSummaryBrowserLinesWithLoading(report updateReport, manualPlan inventoryPlanReport, manualLoading bool, backendPlan backendPlanReport, backendLoading bool, color bool) []updateSummaryLine {
+	var styled bytes.Buffer
+	var plain bytes.Buffer
+	printUpdateBodyTo(&styled, report, color)
+	printUpdateBodyTo(&plain, report, false)
+	styledLines := strings.Split(strings.TrimRight(styled.String(), "\n"), "\n")
+	plainLines := strings.Split(strings.TrimRight(plain.String(), "\n"), "\n")
+	out := make([]updateSummaryLine, 0, len(styledLines)+6)
+	section := ""
+	for index, styledLine := range styledLines {
+		plainLine := ""
+		if index < len(plainLines) {
+			plainLine = plainLines[index]
+		}
+		trimmed := strings.TrimSpace(plainLine)
+		action := ""
+		label := ""
+		allowTableRoute := true
+		kind := updateSummaryLineNormal
+		switch trimmed {
+		case tr("updates", "更新"):
+			section = "updates"
+			kind = updateSummaryLineSection
+			styledLine = trimmed
+			action = updateHubActionLogs
+			label = tr("open update details", "更新詳細を開く")
+		case tr("update outcome", "更新結果"):
+			section = "outcome"
+			kind = updateSummaryLineSection
+			styledLine = trimmed
+		case tr("security attention", "セキュリティ注意項目"), tr("top security items", "主なセキュリティ項目"):
+			section = "security"
+			kind = updateSummaryLineSection
+			styledLine = trimmed
+			action = updateHubActionSecurity
+			label = tr("open security details", "security 詳細を開く")
+		case tr("top inventory items", "主な inventory 項目"):
+			section = "inventory-items"
+			kind = updateSummaryLineSection
+			styledLine = trimmed
+			action = updateHubActionInventoryDetails
+			label = tr("open inventory details", "inventory 詳細を開く")
+		default:
+			if strings.HasPrefix(trimmed, "inventory ") {
+				section = "inventory"
+				kind = updateSummaryLineSection
+				styledLine = trimmed
+				action = updateHubActionInventoryAll
+				label = tr("open installed inventory", "インストール済み一覧を開く")
+			}
+		}
+		if action == "" {
+			switch {
+			case strings.HasPrefix(trimmed, tr("safety summary:", "安全性サマリー:")):
+				section = "security"
+				allowTableRoute = false
+			case strings.HasPrefix(trimmed, tr("update summary:", "更新サマリー:")):
+				section = "updates"
+				allowTableRoute = false
+			case strings.HasPrefix(trimmed, tr("report:", "レポート:")):
+				action = updateHubActionFull
+				label = tr("open full report", "full report を開く")
+				kind = updateSummaryLineMeta
+				allowTableRoute = false
+			case strings.HasPrefix(trimmed, tr("reason:", "理由:")):
+				kind = updateSummaryLineMeta
+				allowTableRoute = false
+			}
+		}
+		if kind == updateSummaryLineNormal && isUpdateSummaryTableHeaderLine(trimmed) {
+			kind = updateSummaryLineTableHeader
+			styledLine = plainLine
+		}
+		if action == "" && allowTableRoute && isUpdateSummaryTableDataLine(trimmed) {
+			if route, routeLabel, ok := updateSummaryRouteForTableLine(section, trimmed); ok {
+				action = route.Encode()
+				label = routeLabel
+				styledLine = strings.TrimPrefix(styledLine, "  ")
+			}
+		}
+		out = append(out, updateSummaryLine{
+			Text:            styledLine,
+			Action:          action,
+			Label:           label,
+			HideInlineBadge: kind == updateSummaryLineSection,
+			Kind:            kind,
+		})
+	}
+	reviewLines := updateSummaryReviewActionLinesWithLoading(manualPlan, manualLoading, backendPlan, backendLoading, color)
+	if len(reviewLines) > 0 {
+		out = append(out, updateSummaryLine{})
+		out = append(out, updateSummaryLine{Text: tr("review actions", "確認アクション"), Kind: updateSummaryLineSection})
+		out = append(out, updateSummaryLine{Text: updateSummaryReviewHeaderLine(false), Kind: updateSummaryLineTableHeader})
+		out = append(out, reviewLines...)
+	}
+	return out
+}
+
+func updateSummaryRouteForTableLine(section string, line string) (updateSummaryRoute, string, bool) {
+	fields := strings.Fields(line)
+	if len(fields) == 0 {
+		return updateSummaryRoute{}, "", false
+	}
+	switch section {
+	case "updates":
+		provider := fields[0]
+		return updateSummaryRoute{Base: updateHubActionLogs, Provider: provider}, fmt.Sprintf(tr("open %s update details", "%s の更新詳細を開く"), provider), true
+	case "outcome":
+		if len(fields) < 3 {
+			return updateSummaryRoute{}, "", false
+		}
+		provider := fields[1]
+		query := fields[2]
+		return updateSummaryRoute{Base: updateHubActionLogs, Provider: provider, Query: query}, fmt.Sprintf(tr("open %s update details", "%s の更新詳細を開く"), provider), true
+	case "security":
+		providerIndex := 0
+		hasDecision := false
+		if strings.EqualFold(fields[0], "hold") || strings.EqualFold(fields[0], "review") || strings.EqualFold(fields[0], "allow") || strings.EqualFold(fields[0], "block") {
+			providerIndex = 1
+			hasDecision = true
+		}
+		if providerIndex >= len(fields) {
+			return updateSummaryRoute{}, "", false
+		}
+		provider := fields[providerIndex]
+		query := ""
+		if hasDecision && providerIndex+1 < len(fields) {
+			query = fields[providerIndex+1]
+		}
+		return updateSummaryRoute{Base: updateHubActionSecurity, Provider: provider, Query: query}, fmt.Sprintf(tr("open %s security details", "%s の security 詳細を開く"), provider), true
+	case "inventory":
+		provider := fields[0]
+		return updateSummaryRoute{Base: updateHubActionInventoryAll, Provider: provider}, fmt.Sprintf(tr("open %s inventory", "%s の inventory を開く"), provider), true
+	case "inventory-items":
+		if len(fields) < 4 {
+			return updateSummaryRoute{}, "", false
+		}
+		provider := fields[1]
+		query := fields[3]
+		return updateSummaryRoute{Base: updateHubActionInventoryDetails, Provider: provider, Query: query}, fmt.Sprintf(tr("open %s inventory details", "%s の inventory 詳細を開く"), provider), true
+	default:
+		return updateSummaryRoute{}, "", false
+	}
+}
+
+func (r updateSummaryRoute) Encode() string {
+	return strings.Join([]string{updateSummaryRoutePrefix, r.Base, r.Provider, r.Query}, "\t")
+}
+
+func parseUpdateSummaryRoute(value string) (updateSummaryRoute, bool) {
+	parts := strings.Split(value, "\t")
+	if len(parts) != 4 || parts[0] != updateSummaryRoutePrefix {
+		return updateSummaryRoute{}, false
+	}
+	return updateSummaryRoute{Base: parts[1], Provider: parts[2], Query: parts[3]}, true
+}
+
+func updateSummaryReviewHeaderLine(color bool) string {
+	return "  " + strings.Join([]string{
+		textui.StyleHeading(textui.PadRight(tr("action", "操作"), 24), color),
+		textui.StyleHeading(tr("description", "説明"), color),
+	}, " ")
+}
+
+func updateSummaryReviewActionLines(manualPlan inventoryPlanReport, backendPlan backendPlanReport, color bool) []updateSummaryLine {
+	return updateSummaryReviewActionLinesWithLoading(manualPlan, false, backendPlan, false, color)
+}
+
+func updateSummaryReviewActionLinesWithLoading(manualPlan inventoryPlanReport, manualLoading bool, backendPlan backendPlanReport, backendLoading bool, color bool) []updateSummaryLine {
+	lines := []updateSummaryLine{}
+	if manualLoading {
+		lines = append(lines, updateSummaryLine{
+			Text:            updateSummaryReviewRowLine(tr("manual review", "手動アプリ確認"), tr("loading - preparing manual/vendor app candidates", "loading - 手動/vendor app 候補を準備中"), color),
+			Action:          updateHubActionManualPlan,
+			Label:           tr("open manual review", "手動アプリ確認を開く"),
+			HideInlineBadge: true,
+		})
+	} else if manualPlan.AttentionCount > 0 {
+		lines = append(lines, updateSummaryLine{
+			Text:            updateSummaryReviewRowLine(tr("manual review", "手動アプリ確認"), fmt.Sprintf("%s - %s", manualPlanStatus(manualPlan), updateDashboardManualPlanSummary(manualPlan)), color),
+			Action:          updateHubActionManualPlan,
+			Label:           tr("open manual review", "手動アプリ確認を開く"),
+			HideInlineBadge: true,
+		})
+	}
+	if backendLoading {
+		lines = append(lines, updateSummaryLine{
+			Text:            updateSummaryReviewRowLine(tr("backend convergence", "backend 整理"), tr("loading - preparing backend evidence", "loading - backend evidence を準備中"), color),
+			Action:          updateHubActionBackends,
+			Label:           tr("open backend convergence", "backend 整理を開く"),
+			HideInlineBadge: true,
+		})
+	} else if len(backendPlan.Findings) > 0 {
+		lines = append(lines, updateSummaryLine{
+			Text:            updateSummaryReviewRowLine(tr("backend convergence", "backend 整理"), fmt.Sprintf("%s - %s", backendPlan.Status, updateDashboardBackendSummary(backendPlan)), color),
+			Action:          updateHubActionBackends,
+			Label:           tr("open backend convergence", "backend 整理を開く"),
+			HideInlineBadge: true,
+		})
+	}
+	return lines
+}
+
+func updateSummaryReviewRowLine(name string, description string, color bool) string {
+	return strings.Join([]string{
+		textui.PadRight(name, 24),
+		description,
+	}, " ")
+}
+
+func isUpdateSummaryTableDataLine(line string) bool {
+	if line == "" {
+		return false
+	}
+	fields := strings.Fields(line)
+	if len(fields) == 0 {
+		return false
+	}
+	first := strings.ToLower(fields[0])
+	switch first {
+	case "name", "名前", "provider", "decision", "status", "状態", "type", "種別", "missing", "extra":
+		return false
+	}
+	return len(fields) >= 2
+}
+
+func isUpdateSummaryTableHeaderLine(line string) bool {
+	if line == "" {
+		return false
+	}
+	fields := strings.Fields(line)
+	if len(fields) == 0 {
+		return false
+	}
+	switch strings.ToLower(fields[0]) {
+	case "name", "名前", "provider", "decision", "status", "状態", "type", "種別", "missing", "extra", "action", "操作":
+		return len(fields) >= 2
+	default:
+		return false
+	}
+}
+
+func browserSectionHeadingText(text string, color bool) string {
+	trimmed := strings.TrimSpace(text)
+	if trimmed == "" {
+		return ""
+	}
+	return textui.StyleSection(trimmed, color)
+}
+
+type updateHubRouterResult struct {
+	Action       string
+	ManualPlan   inventoryPlanReport
+	ManualReady  bool
+	BackendPlan  backendPlanReport
+	BackendReady bool
+}
+
+type updateHubPlanBuilders struct {
+	Manual  func(context.Context, string) inventoryPlanReport
+	Backend func(context.Context, string) backendPlanReport
+}
+
+type updateHubManualPlanMsg struct {
+	Report inventoryPlanReport
+}
+
+type updateHubBackendPlanMsg struct {
+	Report backendPlanReport
+}
+
+type updateHubFilterAction struct {
+	Section string
+	Facet   string
+	Value   string
+}
+
+type updateHubQueryAction struct {
+	Section string
+}
+
+type updateHubRouterScreen string
+
+const (
+	updateHubRouterDashboard updateHubRouterScreen = "dashboard"
+	updateHubRouterDetail    updateHubRouterScreen = "detail"
+	updateHubRouterTable     updateHubRouterScreen = "table"
+	updateHubRouterInput     updateHubRouterScreen = "input"
+	updateHubRouterConfirm   updateHubRouterScreen = "confirm"
+)
+
+type updateHubRouterModel struct {
+	ctx            context.Context
+	planBuilders   updateHubPlanBuilders
+	report         updateReport
+	manualPlan     inventoryPlanReport
+	manualLoading  bool
+	backendPlan    backendPlanReport
+	backendLoading bool
+	defaultAction  string
+	detailStates   map[string]detailBrowserState
+	color          bool
+	width          int
+	height         int
+
+	screen       updateHubRouterScreen
+	stateKey     string
+	returnAction string
+	finalAction  string
+	writeFlow    reviewui.WriteFlow
+
+	dashboard updateSummaryBrowserModel
+	detail    detailBrowserModel
+	table     toolTableBrowserModel
+	input     textInputBrowserModel
+	confirm   confirmBrowserModel
+}
+
+func runUpdateHubRouter(report updateReport, manualPlan inventoryPlanReport, manualLoading bool, backendPlan backendPlanReport, backendLoading bool, preferredAction string, defaultAction string, color bool) (updateHubRouterResult, error) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	model := newUpdateHubRouterModelWithContext(ctx, defaultUpdateHubPlanBuilders(), report, manualPlan, manualLoading, backendPlan, backendLoading, preferredAction, defaultAction, color)
+	final, err := tea.NewProgram(model, tea.WithContext(ctx)).Run()
+	if err != nil {
+		return updateHubRouterResult{}, err
+	}
+	if result, ok := final.(updateHubRouterModel); ok {
+		return updateHubRouterResult{
+			Action:       result.finalAction,
+			ManualPlan:   result.manualPlan,
+			ManualReady:  !result.manualLoading,
+			BackendPlan:  result.backendPlan,
+			BackendReady: !result.backendLoading,
+		}, nil
+	}
+	return updateHubRouterResult{}, nil
+}
+
+func newUpdateHubRouterModel(report updateReport, manualPlan inventoryPlanReport, manualLoading bool, backendPlan backendPlanReport, backendLoading bool, preferredAction string, defaultAction string, color bool) updateHubRouterModel {
+	return newUpdateHubRouterModelWithContext(context.Background(), defaultUpdateHubPlanBuilders(), report, manualPlan, manualLoading, backendPlan, backendLoading, preferredAction, defaultAction, color)
+}
+
+func newUpdateHubRouterModelWithContext(ctx context.Context, builders updateHubPlanBuilders, report updateReport, manualPlan inventoryPlanReport, manualLoading bool, backendPlan backendPlanReport, backendLoading bool, preferredAction string, defaultAction string, color bool) updateHubRouterModel {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	defaultBuilders := defaultUpdateHubPlanBuilders()
+	if builders.Manual == nil {
+		builders.Manual = defaultBuilders.Manual
+	}
+	if builders.Backend == nil {
+		builders.Backend = defaultBuilders.Backend
+	}
+	model := updateHubRouterModel{
+		ctx:            ctx,
+		planBuilders:   builders,
+		report:         report,
+		manualPlan:     manualPlan,
+		manualLoading:  manualLoading,
+		backendPlan:    backendPlan,
+		backendLoading: backendLoading,
+		defaultAction:  defaultAction,
+		detailStates:   reviewui.EnsureStateCache(nil),
+		color:          color,
+	}
+	action := initialUpdateHubAction(preferredAction, defaultAction)
+	if action == "" {
+		action = updateHubActionDashboard
+	}
+	model.showAction(action, updateHubActionDashboard)
+	return model
+}
+
+func defaultUpdateHubPlanBuilders() updateHubPlanBuilders {
+	return updateHubPlanBuilders{
+		Manual:  buildUpdateHubManualPlanWithContext,
+		Backend: buildUpdateHubBackendPlanWithContext,
+	}
+}
+
+func buildUpdateHubManualPlanWithContext(ctx context.Context, root string) inventoryPlanReport {
+	select {
+	case <-ctx.Done():
+		return canceledUpdateHubManualPlan(root)
+	default:
+	}
+	return buildInventoryPlanReport(inventoryPlanOptions{root: root, provider: manualProviderName})
+}
+
+func buildUpdateHubBackendPlanWithContext(ctx context.Context, root string) backendPlanReport {
+	select {
+	case <-ctx.Done():
+		return canceledUpdateHubBackendPlan(root)
+	default:
+	}
+	return buildBackendPlanReport(ctx, backendOptions{command: "plan", root: root})
+}
+
+func canceledUpdateHubManualPlan(root string) inventoryPlanReport {
+	return inventoryPlanReport{
+		SchemaVersion:  1,
+		Status:         plan.StatusHeld,
+		Root:           root,
+		Provider:       manualProviderName,
+		ActionCounts:   map[string]int{},
+		AttentionCount: 0,
+		NextSteps: []string{
+			tr("manual review loading was canceled before completion", "手動アプリ確認の準備は完了前にキャンセルされました"),
+		},
+	}
+}
+
+func canceledUpdateHubBackendPlan(root string) backendPlanReport {
+	return backendPlanReport{
+		SchemaVersion: backendPlanReportSchemaVersion,
+		Status:        plan.StatusHeld,
+		Command:       "plan",
+		Root:          root,
+		Warnings: []string{
+			tr("backend evidence loading was canceled before completion", "backend evidence の準備は完了前にキャンセルされました"),
+		},
+	}
+}
+
+func (m updateHubRouterModel) Init() tea.Cmd {
+	cmds := []tea.Cmd{}
+	if m.manualLoading {
+		root := m.report.Root
+		ctx := m.ctx
+		buildManual := m.planBuilders.Manual
+		cmds = append(cmds, func() tea.Msg {
+			return updateHubManualPlanMsg{Report: buildManual(ctx, root)}
+		})
+	}
+	if m.backendLoading {
+		root := m.report.Root
+		ctx := m.ctx
+		buildBackend := m.planBuilders.Backend
+		cmds = append(cmds, func() tea.Msg {
+			return updateHubBackendPlanMsg{Report: buildBackend(ctx, root)}
+		})
+	}
+	return tea.Batch(cmds...)
+}
+
+func (m updateHubRouterModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	switch msg := msg.(type) {
+	case updateHubManualPlanMsg:
+		m.manualPlan = msg.Report
+		m.manualLoading = false
+		m.refreshCurrentScreen()
+		return m, nil
+	case updateHubBackendPlanMsg:
+		m.backendPlan = msg.Report
+		m.backendLoading = false
+		m.refreshCurrentScreen()
+		return m, nil
+	}
+	switch m.screen {
+	case updateHubRouterDashboard:
+		updated, _ := m.dashboard.Update(msg)
+		if dashboard, ok := updated.(updateSummaryBrowserModel); ok {
+			action := reviewui.TakeActionAndRemember(m.detailStates, m.stateKey, &dashboard.State)
+			m.dashboard = dashboard
+			if action != "" {
+				return m.handleAction(action)
+			}
+		}
+	case updateHubRouterDetail:
+		updated, _ := m.detail.Update(msg)
+		if detail, ok := updated.(detailBrowserModel); ok {
+			action := reviewui.TakeActionAndRemember(m.detailStates, m.stateKey, &detail.State)
+			m.detail = detail
+			if action != "" {
+				return m.handleAction(action)
+			}
+		}
+	case updateHubRouterTable:
+		updated, _ := m.table.Update(msg)
+		if table, ok := updated.(toolTableBrowserModel); ok {
+			action := reviewui.TakeActionAndRemember(m.detailStates, m.stateKey, &table.State)
+			m.table = table
+			if action != "" {
+				return m.handleAction(action)
+			}
+		}
+	case updateHubRouterInput:
+		updated, _ := m.input.Update(msg)
+		if input, ok := updated.(textInputBrowserModel); ok {
+			m.input = input
+			if input.Action != "" {
+				return m.handleInputAction(input)
+			}
+		}
+	case updateHubRouterConfirm:
+		updated, _ := m.confirm.Update(msg)
+		if confirm, ok := updated.(confirmBrowserModel); ok {
+			m.confirm = confirm
+			if confirm.Action != "" {
+				return m.handleConfirmAction(confirm)
+			}
+		}
+	}
+	if size, ok := msg.(tea.WindowSizeMsg); ok {
+		m.width = size.Width
+		m.height = size.Height
+	}
+	return m, nil
+}
+
+func (m *updateHubRouterModel) refreshCurrentScreen() {
+	if strings.HasPrefix(m.stateKey, "route:") {
+		return
+	}
+	if route, ok := parseUpdateSummaryRouteStateKey(m.stateKey); ok {
+		m.showUpdateSummaryRoute(route)
+		return
+	}
+	switch m.stateKey {
+	case "dashboard":
+		m.showDashboard(updateHubActionDashboard)
+	case "inventory-all":
+		m.showAction(updateHubActionInventoryAll, m.returnAction)
+	case "inventory-details":
+		m.showAction(updateHubActionInventoryDetails, m.returnAction)
+	case listHubActionManual:
+		m.showAction(listHubActionManual, m.returnAction)
+	case "manual-plan":
+		m.showAction(updateHubActionManualPlan, m.returnAction)
+	case "backends":
+		m.showAction(updateHubActionBackends, m.returnAction)
+	}
+}
+
+func (m updateHubRouterModel) View() tea.View {
+	switch m.screen {
+	case updateHubRouterDashboard:
+		return m.dashboard.View()
+	case updateHubRouterDetail:
+		return m.detail.View()
+	case updateHubRouterTable:
+		return m.table.View()
+	case updateHubRouterInput:
+		return m.input.View()
+	case updateHubRouterConfirm:
+		return m.confirm.View()
+	default:
+		view := tea.NewView("")
+		view.AltScreen = true
+		return view
+	}
+}
+
+func (m updateHubRouterModel) handleAction(action string) (tea.Model, tea.Cmd) {
+	switch {
+	case action == updevActionExit:
+		m.finalAction = action
+		return m, tea.Quit
+	case action == updevActionBack:
+		if m.screen == updateHubRouterDashboard {
+			m.finalAction = updevActionExit
+			return m, tea.Quit
+		}
+		if m.returnAction == updateHubActionDashboard {
+			m.showDashboard("")
+			m.dashboard.TopAnchor = true
+			m.dashboard.State.Offset = 0
+			reviewui.RememberState(m.detailStates, m.stateKey, m.dashboard.State)
+			return m, nil
+		}
+		if strings.HasPrefix(m.stateKey, "filter-result:") && m.returnAction != "" {
+			m.showReturnAction(m.returnAction)
+			return m, nil
+		}
+		m.showReturnAction(m.returnAction)
+		return m, nil
+	case action == updevActionHome:
+		m.showDashboard(updateHubActionDashboard)
+		return m, nil
+	}
+	if _, ok := routedDetailWriteActionSpec(action); ok {
+		m.showWriteAction(action)
+		return m, nil
+	}
+	if updateHubExternalAction(action) {
+		m.finalAction = action
+		return m, tea.Quit
+	}
+	if route, ok := parseUpdateSummaryRoute(action); ok {
+		m.defaultAction = route.Base
+		m.showUpdateSummaryRoute(route)
+		return m, nil
+	}
+	if filter, ok := parseUpdateHubFilterAction(action); ok {
+		m.showUpdateFilterResult(filter)
+		return m, nil
+	}
+	if query, ok := parseUpdateHubQueryAction(action); ok {
+		m.showUpdateQueryInput(query.Section)
+		return m, nil
+	}
+	if route, ok := parseListRouteAction(action); ok {
+		m.showListRouteDetail(route)
+		return m, nil
+	}
+	if action == listHubActionManual {
+		m.showAction(listHubActionManual, updateHubActionInventoryAll)
+		return m, nil
+	}
+	if routed := updateHubActionFromListAction(action); routed != "" {
+		m.showAction(routed, updateHubActionDashboard)
+		return m, nil
+	}
+	if updateHubActionExists(action) {
+		m.defaultAction = action
+		m.showAction(action, updateHubActionDashboard)
+		return m, nil
+	}
+	return m, nil
+}
+
+func updateHubExternalAction(action string) bool {
+	if action == updateHubActionInventoryAttention || action == updateHubActionJSON {
+		return true
+	}
+	if detailAction, _, ok := parseManualPlanDetailAction(action); ok && (detailAction == "edit" || !manualPlanDetailActionRequiresConfirmation(detailAction)) {
+		return true
+	}
+	if detailAction, _, _, ok := parseBackendDetailAction(action); ok && !backendDetailActionRequiresConfirmation(detailAction) {
+		return true
+	}
+	if detailAction, _, _, _, ok := parseSecurityDetailAction(action); ok && !securityDetailActionRequiresConfirmation(detailAction) {
+		return true
+	}
+	return false
+}
+
+func (m *updateHubRouterModel) showAction(action string, returnAction string) {
+	if action == "" {
+		action = updateHubActionDashboard
+	}
+	switch action {
+	case updateHubActionDashboard:
+		m.showDashboard(updateHubActionDashboard)
+	case updateHubActionInventoryAll:
+		inventory := buildListReport(inventoryResult{Report: m.report.Inventory}, listOptions{})
+		inventory.Evidence = addBackendListEvidence(inventory.Evidence, m.backendPlan)
+		m.showListFiltered("updev installed inventory", inventory, "inventory-all", returnAction, listHubActionManual, listHubActionManual)
+	case listHubActionManual:
+		inventory := buildListReport(inventoryResult{Report: m.report.Inventory}, listOptions{})
+		inventory.Evidence = addBackendListEvidence(inventory.Evidence, m.backendPlan)
+		manualReport := derivedListReport(inventory, listOptions{provider: manualProviderName})
+		m.showListFiltered("updev list manual", manualReport, listHubActionManual, updateHubActionInventoryAll, updateHubActionInventoryAll, updateHubActionInventoryAll)
+	case updateHubActionInventoryDetails:
+		m.showDetail("updev inventory details", updateInventoryDetailRowsWithBackend(m.report, m.backendPlan), "inventory-details", returnAction)
+	case updateHubActionUpdatesFilter:
+		m.showUpdateFilterMenu(updateHubActionUpdatesFilter, returnAction)
+	case updateHubActionSecurityFilter:
+		m.showUpdateFilterMenu(updateHubActionSecurityFilter, returnAction)
+	case updateHubActionManualPlan:
+		m.showTable("updev manual review plan", manualPlanToolSections(m.manualPlan), "manual-plan", returnAction)
+	case updateHubActionBackends:
+		m.showTable("updev backend convergence", backendToolSections(m.backendPlan), "backends", returnAction)
+	case updateHubActionSecurity:
+		m.showDetail("updev security details", updateSecurityDetailRows(m.report), "security", returnAction)
+	case updateHubActionLogs:
+		m.showDetail("updev update logs", updateLogDetailRows(m.report), "logs", returnAction)
+	case updateHubActionFull:
+		m.showDetail("updev full report", updateFullReportRows(m.report), "full", returnAction)
+	default:
+		m.showDashboard(m.defaultAction)
+	}
+}
+
+const updateHubFilterActionPrefix = "update-filter"
+const updateHubQueryActionPrefix = "update-query"
+
+func updateHubFilterActionValue(section string, facet string, value string) string {
+	return strings.Join([]string{updateHubFilterActionPrefix, section, facet, value}, "\t")
+}
+
+func updateHubQueryActionValue(section string) string {
+	return strings.Join([]string{updateHubQueryActionPrefix, section}, "\t")
+}
+
+func parseUpdateHubFilterAction(value string) (updateHubFilterAction, bool) {
+	parts := strings.Split(value, "\t")
+	if len(parts) != 4 || parts[0] != updateHubFilterActionPrefix {
+		return updateHubFilterAction{}, false
+	}
+	if strings.TrimSpace(parts[1]) == "" || strings.TrimSpace(parts[2]) == "" || strings.TrimSpace(parts[3]) == "" {
+		return updateHubFilterAction{}, false
+	}
+	return updateHubFilterAction{Section: parts[1], Facet: parts[2], Value: parts[3]}, true
+}
+
+func parseUpdateHubQueryAction(value string) (updateHubQueryAction, bool) {
+	parts := strings.Split(value, "\t")
+	if len(parts) != 2 || parts[0] != updateHubQueryActionPrefix || strings.TrimSpace(parts[1]) == "" {
+		return updateHubQueryAction{}, false
+	}
+	return updateHubQueryAction{Section: parts[1]}, true
+}
+
+func (m *updateHubRouterModel) showUpdateFilterMenu(action string, returnAction string) {
+	title := "updev update filter"
+	stateKey := "filter-menu:updates"
+	rows := updateFilterRows("updates", updateFilterActionProvider, updateStepProviderCounts(m.report.Steps))
+	rows = append(rows, updateFilterRows("updates", updateFilterActionStatus, updateStepStatusCounts(m.report.Steps))...)
+	if action == updateHubActionSecurityFilter {
+		title = "updev security filter"
+		stateKey = "filter-menu:security"
+		rows = updateFilterRows("security", updateFilterActionProvider, safetyProviderCounts(m.report.Safety))
+		rows = append(rows, updateFilterRows("security", updateFilterActionDecision, safetyDecisionCounts(m.report.Safety))...)
+	}
+	section := "updates"
+	if action == updateHubActionSecurityFilter {
+		section = "security"
+	}
+	rows = append(rows, updateQueryFilterRow(section))
+	if len(rows) == 0 {
+		rows = []detailBrowserRow{{
+			Title:   title,
+			Status:  string(plan.StatusOK),
+			Summary: tr("no filter values", "filter 値がありません"),
+			Detail:  tr("The selected report section has no available filter values.", "選択した report section に利用可能な filter 値がありません。"),
+		}}
+	}
+	m.showDetail(title, rows, stateKey, returnAction)
+	m.detail.PrimaryEnterAction = true
+}
+
+func updateFilterRows(section string, facet string, counts map[string]int) []detailBrowserRow {
+	rows := make([]detailBrowserRow, 0, len(counts))
+	for _, value := range sortedMapKeys(counts) {
+		rows = append(rows, detailBrowserRow{
+			Title:   facet + ": " + value,
+			Status:  value,
+			Summary: fmt.Sprintf("%d rows", counts[value]),
+			Detail:  tr("Open filtered update evidence for this value.", "この値で絞り込んだ update evidence を開きます。"),
+			Actions: []detailBrowserAction{{
+				Value:       updateHubFilterActionValue(section, facet, value),
+				Label:       tr("open filter", "filter を開く"),
+				Description: tr("show filtered evidence", "絞り込んだ evidence を表示します"),
+			}},
+		})
+	}
+	return rows
+}
+
+func updateQueryFilterRow(section string) detailBrowserRow {
+	return detailBrowserRow{
+		Title:   tr("query search", "query 検索"),
+		Status:  "query",
+		Summary: tr("search by text", "文字列で検索"),
+		Detail:  tr("Search the selected evidence with a free text query.", "選択した evidence を自由入力の query で検索します。"),
+		Actions: []detailBrowserAction{{
+			Value:       updateHubQueryActionValue(section),
+			Label:       tr("type query", "query を入力"),
+			Description: tr("open query input", "query 入力を開きます"),
+		}},
+	}
+}
+
+func (m *updateHubRouterModel) showUpdateFilterResult(filter updateHubFilterAction) {
+	opts := lastReportOptions{}
+	switch filter.Section {
+	case "security":
+		opts.section = "security"
+	default:
+		opts.section = "updates"
+	}
+	switch filter.Facet {
+	case updateFilterActionProvider:
+		opts.provider = filter.Value
+	case updateFilterActionStatus, updateFilterActionDecision:
+		opts.status = filter.Value
+	case updateFilterActionQuery:
+		opts.query = filter.Value
+	}
+	filtered := filterUpdateReport(m.report, opts)
+	stateKey := "filter-result:" + filter.Section + ":" + filter.Facet + ":" + filter.Value
+	title := "updev update filter: " + filter.Value
+	returnAction := updateHubActionUpdatesFilter
+	rows := updateLogDetailRows(filtered)
+	if filter.Section == "security" {
+		title = "updev security filter: " + filter.Value
+		returnAction = updateHubActionSecurityFilter
+		rows = updateSecurityDetailRowsForFilter(filtered, opts)
+	}
+	m.showDetail(title, rows, stateKey, returnAction)
+}
+
+func (m *updateHubRouterModel) showUpdateQueryInput(section string) {
+	title := "updev update query"
+	description := tr("Search update commands, reasons, stdout, and stderr. Empty input returns to the filter menu.", "update command / reason / stdout / stderr を検索します。空入力なら filter menu に戻ります。")
+	returnAction := updateHubActionUpdatesFilter
+	if section == "security" {
+		title = "updev security query"
+		description = tr("Search security reasons, evidence, remediation, advisory IDs, and URLs. Empty input returns to the filter menu.", "security reason / evidence / remediation / advisory ID / URL を検索します。空入力なら filter menu に戻ります。")
+		returnAction = updateHubActionSecurityFilter
+	}
+	m.screen = updateHubRouterInput
+	m.stateKey = "query-input:" + section
+	m.returnAction = returnAction
+	m.input = newTextInputBrowserModel(title, description, "brew, hold, provenance, ...", "", m.color)
+}
+
+func (m updateHubRouterModel) handleInputAction(input textInputBrowserModel) (tea.Model, tea.Cmd) {
+	switch input.Action {
+	case updevActionExit:
+		m.finalAction = updevActionExit
+		return m, tea.Quit
+	case updevActionBack:
+		if reviewui.IsWriteStateKey(m.stateKey) {
+			m.showReturnAction(m.writeFlow.ReturnAction)
+			return m, nil
+		}
+		m.showReturnAction(m.returnAction)
+		return m, nil
+	case "submit":
+		if reviewui.IsWriteReasonStateKey(m.stateKey) {
+			if !m.writeFlow.AcceptReason(input.Value) {
+				m.showReturnAction(m.writeFlow.ReturnAction)
+				return m, nil
+			}
+			m.showWriteExpiryInput()
+			return m, nil
+		}
+		if reviewui.IsWriteExpiryStateKey(m.stateKey) {
+			if !m.writeFlow.AcceptExpiry(input.Value, time.Now(), validateSecurityPolicyAllowExpiry) {
+				m.showReturnAction(m.writeFlow.ReturnAction)
+				return m, nil
+			}
+			m.showWriteConfirm()
+			return m, nil
+		}
+		section := strings.TrimPrefix(m.stateKey, "query-input:")
+		query := strings.TrimSpace(input.Value)
+		if query == "" {
+			m.showReturnAction(m.returnAction)
+			return m, nil
+		}
+		m.showUpdateFilterResult(updateHubFilterAction{Section: section, Facet: updateFilterActionQuery, Value: query})
+		return m, nil
+	default:
+		return m, nil
+	}
+}
+
+func (m *updateHubRouterModel) showWriteAction(action string) {
+	spec, ok := routedDetailWriteActionSpec(action)
+	if !ok {
+		return
+	}
+	m.writeFlow = reviewui.NewWriteFlow(action, m.currentAction(), updateHubActionDashboard, spec)
+	if spec.NeedsReason {
+		m.showWriteReasonInput(spec)
+		return
+	}
+	m.showWriteConfirm()
+}
+
+func (m *updateHubRouterModel) showWriteReasonInput(spec detailWriteActionSpec) {
+	model := newTextInputBrowserModel(spec.Title, spec.Description, spec.DefaultReason, spec.DefaultReason, m.color)
+	model.Label = tr("reason:", "reason:")
+	m.screen = updateHubRouterInput
+	m.stateKey = reviewui.WriteReasonStateKey(m.writeFlow.Action)
+	m.returnAction = m.writeFlow.ReturnAction
+	m.input = model
+}
+
+func (m *updateHubRouterModel) showWriteExpiryInput() {
+	_, _, _, _, ok := parseSecurityDetailAction(m.writeFlow.Action)
+	if !ok {
+		m.showWriteConfirm()
+		return
+	}
+	defaultExpiry := m.writeFlow.DefaultExpiry(time.Now())
+	model := newTextInputBrowserModel(
+		tr("security allow expiry", "security allow 期限"),
+		tr("Enter the YYYY-MM-DD expiry for this temporary allow rule.", "一時 allow rule の期限を YYYY-MM-DD で入力します。"),
+		defaultExpiry,
+		defaultExpiry,
+		m.color,
+	)
+	model.Label = tr("expires:", "expires:")
+	m.screen = updateHubRouterInput
+	m.stateKey = reviewui.WriteExpiryStateKey(m.writeFlow.Action)
+	m.returnAction = m.writeFlow.ReturnAction
+	m.input = model
+}
+
+func (m *updateHubRouterModel) showWriteConfirm() {
+	spec, ok := routedDetailWriteActionSpec(m.writeFlow.Action)
+	if !ok {
+		m.showReturnAction(m.writeFlow.ReturnAction)
+		return
+	}
+	spec.Description = m.writeFlow.ConfirmDescription(spec, tr("expires: ", "期限: "), tr("reason: ", "理由: "))
+	m.screen = updateHubRouterConfirm
+	m.stateKey = reviewui.WriteConfirmStateKey(m.writeFlow.Action)
+	m.returnAction = m.writeFlow.ReturnAction
+	m.confirm = newConfirmBrowserModel(spec.Title, spec.Prompt, spec.Description, m.color)
+}
+
+func (m updateHubRouterModel) handleConfirmAction(confirm confirmBrowserModel) (tea.Model, tea.Cmd) {
+	switch confirm.Action {
+	case updevActionExit:
+		m.finalAction = updevActionExit
+		return m, tea.Quit
+	case updevActionBack:
+		m.showReturnAction(m.writeFlow.ReturnAction)
+		return m, nil
+	case "apply":
+		_ = applyRoutedDetailWriteAction(m.report.Root, &m.report, m.writeFlow.Action, m.writeFlow.Reason, m.writeFlow.Expires)
+		m.refreshPlansAfterWriteAction()
+		m.showReturnAction(m.writeFlow.ReturnAction)
+		return m, nil
+	default:
+		return m, nil
+	}
+}
+
+func (m *updateHubRouterModel) refreshPlansAfterWriteAction() {
+	if action, _, ok := parseManualPlanDetailAction(m.writeFlow.Action); ok && manualPlanDetailActionRequiresConfirmation(action) {
+		m.manualPlan = buildInventoryPlanForHub(m.report.Root)
+		m.manualLoading = false
+	}
+	if action, _, _, ok := parseBackendDetailAction(m.writeFlow.Action); ok && backendDetailActionRequiresConfirmation(action) {
+		m.backendPlan = buildBackendPlanForHub(m.report.Root)
+		m.backendLoading = false
+	}
+	if action, _, _, _, ok := parseSecurityDetailAction(m.writeFlow.Action); ok && securityDetailActionRequiresConfirmation(action) {
+		m.report.Report = saveLastUpdateReport(m.report)
+	}
+}
+
+func (m *updateHubRouterModel) showDashboard(focusAction string) {
+	stateKey := "dashboard"
+	state, hasState := m.detailStates[stateKey]
+	if !hasState && (focusAction == "" || focusAction == updateHubActionDashboard) {
+		focusAction = m.initialDashboardFocusAction()
+	} else if hasState && focusAction == updateHubActionDashboard {
+		state.Offset = 0
+		state.Action = ""
+		focusAction = m.initialDashboardFocusAction()
+	}
+	model := newUpdateSummaryBrowserModelWithLoading(updateHubTitle(m.report), m.report, m.manualPlan, m.manualLoading, m.backendPlan, m.backendLoading, state, focusAction, m.color)
+	m.applyDashboardSize(&model)
+	m.screen = updateHubRouterDashboard
+	m.stateKey = stateKey
+	m.returnAction = updateHubActionDashboard
+	m.dashboard = model
+}
+
+func (m updateHubRouterModel) initialDashboardFocusAction() string {
+	return updateHubActionLogs
+}
+
+func (m *updateHubRouterModel) showUpdateSummaryRoute(route updateSummaryRoute) {
+	opts := lastReportOptions{provider: route.Provider, query: route.Query}
+	filtered := filterUpdateReport(m.report, opts)
+	suffix := updateSummaryRouteTitleSuffix(route)
+	stateKey := updateSummaryRouteStateKey(route)
+	switch route.Base {
+	case updateHubActionLogs:
+		m.showDetail("updev update logs"+suffix, updateLogDetailRows(filtered), stateKey, updateHubActionDashboard)
+	case updateHubActionSecurity:
+		m.showDetail("updev security details"+suffix, updateSecurityDetailRowsForFilter(filtered, opts), stateKey, updateHubActionDashboard)
+	case updateHubActionInventoryAll:
+		inventory := buildListReport(inventoryResult{Report: filtered.Inventory}, listOptions{provider: route.Provider, query: route.Query})
+		inventory.Evidence = addBackendListEvidence(inventory.Evidence, m.backendPlan)
+		m.showListFiltered("updev installed inventory"+suffix, inventory, stateKey, updateHubActionDashboard, listHubActionManual, listHubActionManual)
+	case updateHubActionInventoryDetails:
+		m.showDetail("updev inventory details"+suffix, updateInventoryDetailRowsWithBackend(filtered, m.backendPlan), stateKey, updateHubActionDashboard)
+	default:
+		m.showDashboard(route.Base)
+	}
+}
+
+func (m *updateHubRouterModel) showReturnAction(action string) {
+	if route, ok := parseUpdateSummaryRouteStateKey(action); ok {
+		m.showUpdateSummaryRoute(route)
+		return
+	}
+	m.showAction(action, updateHubActionDashboard)
+}
+
+func updateSummaryRouteStateKey(route updateSummaryRoute) string {
+	return "summary:" + route.Encode()
+}
+
+func parseUpdateSummaryRouteStateKey(stateKey string) (updateSummaryRoute, bool) {
+	encoded, ok := strings.CutPrefix(stateKey, "summary:")
+	if !ok {
+		return updateSummaryRoute{}, false
+	}
+	return parseUpdateSummaryRoute(encoded)
+}
+
+func (m *updateHubRouterModel) showListRouteDetail(route listRouteAction) {
+	stateKey := "route:" + route.Domain + ":" + route.Provider + ":" + route.Kind + ":" + route.Name
+	rows := m.listRouteRows(route)
+	if len(rows) == 0 {
+		rows = []detailBrowserRow{emptyRouteDetailRow(route)}
+	}
+	m.detailStates[stateKey] = initialRouteDetailState(m.detailStates[stateKey])
+	m.showDetail(routeDetailTitle(route), rows, stateKey, m.currentAction())
+}
+
+func (m updateHubRouterModel) listRouteRows(route listRouteAction) []detailBrowserRow {
+	switch route.Domain {
+	case listHubActionManual:
+		manualPlan := buildInventoryPlanReport(inventoryPlanOptions{root: m.report.Root, provider: manualProviderName, query: route.Name})
+		return manualPlanDetailRows(manualPlan)
+	case listHubActionBackends:
+		return backendDetailRowsForListRoute(m.backendPlan, route)
+	case listHubActionUpdates:
+		filtered := filterUpdateReport(m.report, lastReportOptions{section: "logs", provider: route.Provider, query: route.Name})
+		return updateLogDetailRows(filtered)
+	case listHubActionSecurity:
+		opts := lastReportOptions{section: "security", provider: route.Provider, query: route.Name}
+		filtered := filterUpdateReport(m.report, opts)
+		return updateSecurityDetailRowsForFilter(filtered, opts)
+	default:
+		return nil
+	}
+}
+
+func (m *updateHubRouterModel) showListFiltered(title string, report listReport, stateKey string, returnAction string, nextAction string, previousAction string) {
+	title = listTitleWithEvidenceSummary(title, report)
+	sections := listTableSections(report)
+	if toolTableRowCount(sections) > 0 || nextAction != "" || previousAction != "" {
+		actions := tableBrowserActions()
+		labels := tableBrowserLabels()
+		if nextAction != "" || previousAction != "" {
+			actions = tableBrowserActionsWithViewToggle(nextAction, previousAction)
+			labels = tableBrowserLabelsWithViewToggle()
+		}
+		m.showTableWithActions(title, sections, stateKey, returnAction, actions, labels)
+		return
+	}
+	rows := listDetailRows(report)
+	if len(rows) == 0 {
+		rows = []detailBrowserRow{{
+			Title:   title,
+			Status:  string(plan.StatusOK),
+			Summary: tr("no matching rows", "該当する行はありません"),
+			Detail:  tr("The selected inventory filter has no rows.", "選択した inventory filter に一致する行はありません。"),
+		}}
+	}
+	m.showDetail(title, rows, stateKey, returnAction)
+}
+
+func (m *updateHubRouterModel) showDetail(title string, rows []detailBrowserRow, stateKey string, returnAction string) {
+	model := newDetailBrowserModel(title, rows, reviewui.CachedState(m.detailStates, stateKey), m.color)
+	m.applyDetailSize(&model)
+	m.screen = updateHubRouterDetail
+	m.stateKey = stateKey
+	m.returnAction = returnAction
+	m.detail = model
+}
+
+func (m *updateHubRouterModel) showTable(title string, sections []toolSection, stateKey string, returnAction string) {
+	m.showTableWithActions(title, sections, stateKey, returnAction, tableBrowserActions(), tableBrowserLabels())
+}
+
+func (m *updateHubRouterModel) showTableWithActions(title string, sections []toolSection, stateKey string, returnAction string, actions reviewui.BrowserActions, labels reviewui.TableBrowserLabels) {
+	title = m.loadingTitle(title, stateKey)
+	model := newToolTableBrowserModelWithActions(title, sections, reviewui.CachedState(m.detailStates, stateKey), actions, labels, m.color)
+	m.applyTableSize(&model)
+	m.screen = updateHubRouterTable
+	m.stateKey = stateKey
+	m.returnAction = returnAction
+	m.table = model
+}
+
+func (m updateHubRouterModel) loadingTitle(title string, stateKey string) string {
+	switch {
+	case stateKey == "manual-plan" && m.manualLoading:
+		return title + " " + tr("(manual review loading)", "(manual review 準備中)")
+	case stateKey == "backends" && m.backendLoading:
+		return title + " " + tr("(backend evidence loading)", "(backend evidence 準備中)")
+	case (stateKey == "inventory-all" || stateKey == "inventory-details") && m.backendLoading:
+		return title + " " + tr("(backend evidence loading)", "(backend evidence 準備中)")
+	default:
+		if route, ok := parseUpdateSummaryRouteStateKey(stateKey); ok && m.backendLoading && (route.Base == updateHubActionInventoryAll || route.Base == updateHubActionInventoryDetails) {
+			return title + " " + tr("(backend evidence loading)", "(backend evidence 準備中)")
+		}
+		return title
+	}
+}
+
+func (m updateHubRouterModel) currentAction() string {
+	if _, ok := parseUpdateSummaryRouteStateKey(m.stateKey); ok {
+		return m.stateKey
+	}
+	switch m.stateKey {
+	case "inventory-all":
+		return updateHubActionInventoryAll
+	case "inventory-details":
+		return updateHubActionInventoryDetails
+	case "manual-plan":
+		return updateHubActionManualPlan
+	case "backends":
+		return updateHubActionBackends
+	case "security":
+		return updateHubActionSecurity
+	case "logs":
+		return updateHubActionLogs
+	case "full":
+		return updateHubActionFull
+	default:
+		if m.returnAction != "" {
+			return m.returnAction
+		}
+		return updateHubActionDashboard
+	}
+}
+
+func (m updateHubRouterModel) applyDashboardSize(model *updateSummaryBrowserModel) {
+	model.Width = m.width
+	model.Height = m.height
+	if model.TopAnchor {
+		model.State.Offset = 0
+		return
+	}
+	model.EnsureSelectedVisible()
+}
+
+func (m updateHubRouterModel) applyDetailSize(model *detailBrowserModel) {
+	model.Width = m.width
+	model.Height = m.height
+	model.EnsureSelectedVisible()
+}
+
+func (m updateHubRouterModel) applyTableSize(model *toolTableBrowserModel) {
+	model.Width = m.width
+	model.Height = m.height
+}
+
+func updateHubDefaultAction(manualPlan inventoryPlanReport, backendPlan backendPlanReport, preferredAction string, report updateReport) string {
+	defaultAction := updateHubActionInventoryAll
+	if manualPlan.AttentionCount > 0 {
+		defaultAction = updateHubActionManualPlan
+	} else if len(backendPlan.Findings) > 0 {
+		defaultAction = updateHubActionBackends
+	}
+	if updateHubActionExists(preferredAction) {
+		defaultAction = preferredAction
+	} else if updateHubActionAvailable(preferredAction, updateHubChoices(report, manualPlan, backendPlan, defaultAction)) {
+		defaultAction = preferredAction
+	}
+	return defaultAction
+}
+
+func handleUpdateHubExternalAction(report *updateReport, manualPlan *inventoryPlanReport, backendPlan *backendPlanReport, action string) (string, bool) {
+	switch {
+	case action == "" || action == updevActionExit:
+		return "", true
+	case action == updateHubActionInventoryAttention:
+		printLastInventorySection(os.Stdout, *report, lastReportOptions{section: "inventory", status: "attention", details: false}, textui.ColorEnabled())
+		return updateHubActionDashboard, false
+	case action == updateHubActionUpdatesFilter:
+		opts, ok := selectUpdateStepFilter(*report)
+		if !ok {
+			return updateHubActionDashboard, false
+		}
+		filtered := filterUpdateReport(*report, opts)
+		state, _ := runDetailBrowserWithState("updev update steps", updateLogDetailRows(filtered), detailBrowserState{}, textui.ColorEnabled())
+		if state.Action == updevActionExit {
+			return "", true
+		}
+		return updateHubActionDashboard, false
+	case action == updateHubActionSecurityFilter:
+		opts, ok := selectUpdateSecurityFilter(*report)
+		if !ok {
+			return updateHubActionDashboard, false
+		}
+		filtered := filterUpdateReport(*report, opts)
+		state, _ := runDetailBrowserWithState("updev security filter", updateSecurityDetailRowsForFilter(filtered, opts), detailBrowserState{}, textui.ColorEnabled())
+		if state.Action == updevActionExit {
+			return "", true
+		}
+		return updateHubActionDashboard, false
+	case action == updateHubActionJSON:
+		entry := updateReportCacheEntry{Version: 1, Type: "update", CreatedAt: time.Now(), Report: *report}
+		if cached, ok := loadLastUpdateReport(); ok {
+			entry = cached
+		}
+		_ = encodeJSON(buildUpdateReportSectionView(entry, lastReportOptions{section: "full"}))
+		return "", true
+	}
+	if handleManualPlanDetailAction(report.Root, action) {
+		*manualPlan = buildInventoryPlanForHub(report.Root)
+		return updateHubActionManualPlan, false
+	}
+	if handleBackendDetailAction(report.Root, action) {
+		*backendPlan = buildBackendPlanForHub(report.Root)
+		return updateHubActionBackends, false
+	}
+	if handleMiseBumpDetailAction(report, action) {
+		return updateHubActionSecurity, false
+	}
+	if handleSecurityDetailAction(report, action) {
+		return updateHubActionSecurity, false
+	}
+	return updateHubActionDashboard, false
 }

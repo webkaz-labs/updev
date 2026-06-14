@@ -1,4 +1,4 @@
-package cmd
+package updevconfig
 
 import (
 	"bufio"
@@ -10,137 +10,137 @@ import (
 	"github.com/webkaz-labs/updev/internal/updevpath"
 )
 
-type updevConfig struct {
-	Security  updevSecurityConfig
-	Providers updevProvidersConfig
-	Update    updevUpdateConfig
-	UI        updevUIConfig
-	Sources   updevSourcesConfig
-	Brewfile  updevBrewfileConfig
-	Inventory updevInventoryConfig
-	Backends  updevBackendsConfig
+type Config struct {
+	Security  SecurityConfig
+	Providers ProvidersConfig
+	Update    UpdateConfig
+	UI        UIConfig
+	Sources   SourcesConfig
+	Brewfile  BrewfileConfig
+	Inventory InventoryConfig
+	Backends  BackendsConfig
 }
 
-type updevSecurityConfig struct {
-	Homebrew updevHomebrewSecurityConfig
-	Mise     updevMiseSecurityConfig
-	VSCode   updevVSCodeSecurityConfig
+type SecurityConfig struct {
+	Homebrew HomebrewSecurityConfig
+	Mise     MiseSecurityConfig
+	VSCode   VSCodeSecurityConfig
 }
 
-type updevHomebrewSecurityConfig struct {
+type HomebrewSecurityConfig struct {
 	MinReleaseAgeDays      *int
 	MinTapAgeDays          *int
 	OutdatedTimeoutSeconds *int
 }
 
-type updevMiseSecurityConfig struct {
+type MiseSecurityConfig struct {
 	MinReleaseAgeDays *int
 }
 
-type updevVSCodeSecurityConfig struct {
+type VSCodeSecurityConfig struct {
 	MinInstallCount     *float64
 	MinAverageRating    *float64
 	MinExtensionAgeDays *int
 	MinUpdateAgeDays    *int
 }
 
-type updevProvidersConfig struct {
+type ProvidersConfig struct {
 	IncludeVSCode *bool
 }
 
-type updevUpdateConfig struct {
+type UpdateConfig struct {
 	Security *string
-	MiseBump updevMiseBumpUpdateConfig
+	MiseBump MiseBumpUpdateConfig
 }
 
-type updevMiseBumpUpdateConfig struct {
+type MiseBumpUpdateConfig struct {
 	Mode *string
 }
 
-type updevUIConfig struct {
+type UIConfig struct {
 	Language               *string
 	Interactive            *string
 	Progress               *bool
 	DescriptionTranslation *string
 }
 
-type updevSourcesConfig struct {
+type SourcesConfig struct {
 	Root *string
 }
 
-type updevBrewfileConfig struct {
+type BrewfileConfig struct {
 	Desired   *string
 	WriteMode *string
 }
 
-type updevInventoryConfig struct {
+type InventoryConfig struct {
 	StateDir  *string
 	Overrides *string
-	Manual    updevInventoryManualConfig
-	Agent     updevInventoryAgentConfig
-	Reports   []updevInventoryReportConfig
+	Manual    InventoryManualConfig
+	Agent     InventoryAgentConfig
+	Reports   []InventoryReportConfig
 }
 
-type updevInventoryManualConfig struct {
+type InventoryManualConfig struct {
 	Sources        []string
 	MarkdownCompat *bool
 }
 
-type updevInventoryAgentConfig struct {
+type InventoryAgentConfig struct {
 	Enabled *bool
 	Command []string
 	Batch   *bool
 }
 
-type updevInventoryReportConfig struct {
+type InventoryReportConfig struct {
 	Name      string
 	Providers []string
 	Format    string
 	Path      string
 }
 
-type updevBackendsConfig struct {
+type BackendsConfig struct {
 	PreferenceOrder []string
 }
 
-func loadUpdevConfig() updevConfig {
-	path := updevConfigPath()
+func Load() Config {
+	path := ConfigPath()
 	if path == "" {
-		return updevConfig{}
+		return Config{}
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return updevConfig{}
+		return Config{}
 	}
-	return parseUpdevConfigTOML(string(data))
+	return ParseTOML(string(data))
 }
 
-func updevConfigPath() string {
+func ConfigPath() string {
 	return updevpath.ConfigFile()
 }
 
-func truthyEnv(name string) bool {
-	value, _ := boolEnv(name)
+func TruthyEnv(name string) bool {
+	value, _ := BoolEnv(name)
 	return value
 }
 
-func boolEnv(name string) (bool, bool) {
-	return parseBoolValue(os.Getenv(name))
+func BoolEnv(name string) (bool, bool) {
+	return ParseBoolValue(os.Getenv(name))
 }
 
-func parseUpdevConfigTOML(data string) updevConfig {
-	config := updevConfig{}
+func ParseTOML(data string) Config {
+	config := Config{}
 	section := ""
 	scanner := bufio.NewScanner(strings.NewReader(collapseTOMLMultilineArrays(data)))
 	for scanner.Scan() {
-		line := stripTOMLComment(strings.TrimSpace(scanner.Text()))
+		line := StripTOMLComment(strings.TrimSpace(scanner.Text()))
 		if line == "" {
 			continue
 		}
 		if strings.HasPrefix(line, "[[") && strings.HasSuffix(line, "]]") {
 			section = strings.ToLower(strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(line, "[["), "]]")))
 			if section == "inventory.reports" {
-				config.Inventory.Reports = append(config.Inventory.Reports, updevInventoryReportConfig{})
+				config.Inventory.Reports = append(config.Inventory.Reports, InventoryReportConfig{})
 			}
 			continue
 		}
@@ -186,12 +186,12 @@ func parseUpdevConfigTOML(data string) updevConfig {
 				config.Providers.IncludeVSCode = parseBoolPtr(stringValue)
 			}
 		case "update":
-			if key == "security" && validUpdateSecurityMode(stringValue) {
+			if key == "security" && ValidUpdateSecurityMode(stringValue) {
 				normalized := stringValue
 				config.Update.Security = &normalized
 			}
 		case "update.mise_bump":
-			if key == "mode" && validMiseBumpMode(stringValue) {
+			if key == "mode" && ValidMiseBumpMode(stringValue) {
 				normalized := strings.ToLower(strings.TrimSpace(stringValue))
 				config.Update.MiseBump.Mode = &normalized
 			}
@@ -203,14 +203,14 @@ func parseUpdevConfigTOML(data string) updevConfig {
 					config.UI.Language = &normalized
 				}
 			case "interactive":
-				if validUIInteractiveMode(stringValue) {
+				if ValidUIInteractiveMode(stringValue) {
 					normalized := strings.ToLower(stringValue)
 					config.UI.Interactive = &normalized
 				}
 			case "progress":
 				config.UI.Progress = parseBoolPtr(stringValue)
 			case "description_translation":
-				if validDescriptionTranslationMode(stringValue) {
+				if ValidDescriptionTranslationMode(stringValue) {
 					normalized := strings.ToLower(stringValue)
 					config.UI.DescriptionTranslation = &normalized
 				}
@@ -222,12 +222,12 @@ func parseUpdevConfigTOML(data string) updevConfig {
 		case "brewfile":
 			switch key {
 			case "desired":
-				if validBrewfileDesiredMode(stringValue) {
+				if ValidBrewfileDesiredMode(stringValue) {
 					normalized := strings.ToLower(stringValue)
 					config.Brewfile.Desired = &normalized
 				}
 			case "write_mode":
-				if validBrewfileWriteMode(stringValue) {
+				if ValidBrewfileWriteMode(stringValue) {
 					normalized := strings.ToLower(stringValue)
 					config.Brewfile.WriteMode = &normalized
 				}
@@ -242,7 +242,7 @@ func parseUpdevConfigTOML(data string) updevConfig {
 		case "inventory.manual":
 			switch key {
 			case "sources":
-				config.Inventory.Manual.Sources = parseStringArray(value)
+				config.Inventory.Manual.Sources = ParseStringArray(value)
 			case "markdown_compat":
 				config.Inventory.Manual.MarkdownCompat = parseBoolPtr(stringValue)
 			}
@@ -251,25 +251,25 @@ func parseUpdevConfigTOML(data string) updevConfig {
 			case "enabled":
 				config.Inventory.Agent.Enabled = parseBoolPtr(stringValue)
 			case "command":
-				config.Inventory.Agent.Command = parseStringArray(value)
+				config.Inventory.Agent.Command = ParseStringArray(value)
 			case "batch":
 				config.Inventory.Agent.Batch = parseBoolPtr(stringValue)
 			}
 		case "backends":
 			switch key {
 			case "preference_order":
-				config.Backends.PreferenceOrder = parseStringArray(value)
+				config.Backends.PreferenceOrder = ParseStringArray(value)
 			}
 		case "inventory.reports":
 			if len(config.Inventory.Reports) == 0 {
-				config.Inventory.Reports = append(config.Inventory.Reports, updevInventoryReportConfig{})
+				config.Inventory.Reports = append(config.Inventory.Reports, InventoryReportConfig{})
 			}
 			report := &config.Inventory.Reports[len(config.Inventory.Reports)-1]
 			switch key {
 			case "name":
 				report.Name = stringValue
 			case "providers":
-				report.Providers = parseStringArray(value)
+				report.Providers = ParseStringArray(value)
 			case "format":
 				report.Format = stringValue
 			case "path":
@@ -280,7 +280,7 @@ func parseUpdevConfigTOML(data string) updevConfig {
 	return config
 }
 
-func validBrewfileDesiredMode(value string) bool {
+func ValidBrewfileDesiredMode(value string) bool {
 	switch strings.ToLower(strings.TrimSpace(value)) {
 	case "auto", "home", "root", "template", "disabled":
 		return true
@@ -289,7 +289,7 @@ func validBrewfileDesiredMode(value string) bool {
 	}
 }
 
-func validBrewfileWriteMode(value string) bool {
+func ValidBrewfileWriteMode(value string) bool {
 	switch strings.ToLower(strings.TrimSpace(value)) {
 	case "disabled", "direct", "template", "chezmoi-template":
 		return true
@@ -302,7 +302,7 @@ func collapseTOMLMultilineArrays(data string) string {
 	lines := []string{}
 	var pending strings.Builder
 	for _, raw := range strings.Split(data, "\n") {
-		line := stripTOMLComment(strings.TrimSpace(raw))
+		line := StripTOMLComment(strings.TrimSpace(raw))
 		if pending.Len() > 0 {
 			if line != "" {
 				pending.WriteByte(' ')
@@ -334,7 +334,7 @@ func parseNonEmptyStringPtr(value string) *string {
 	return &value
 }
 
-func configuredEnvString(defaultValue string, envName string) string {
+func ConfiguredEnvString(defaultValue string, envName string) string {
 	if parsed := parseNonEmptyStringPtr(os.Getenv(envName)); parsed != nil {
 		return *parsed
 	}
@@ -350,7 +350,7 @@ func parseNonNegativeIntPtr(value string) *int {
 	return &parsed
 }
 
-func configuredNonNegativeInt(defaultValue int, configured *int, envName string) int {
+func ConfiguredNonNegativeInt(defaultValue int, configured *int, envName string) int {
 	value := defaultValue
 	if configured != nil && *configured >= 0 {
 		value = *configured
@@ -364,7 +364,7 @@ func configuredNonNegativeInt(defaultValue int, configured *int, envName string)
 	return value
 }
 
-func parseStringArray(value string) []string {
+func ParseStringArray(value string) []string {
 	value = strings.TrimSpace(value)
 	if !strings.HasPrefix(value, "[") || !strings.HasSuffix(value, "]") {
 		return nil
@@ -393,7 +393,7 @@ func parseNonNegativeFloatPtr(value string) *float64 {
 	return &parsed
 }
 
-func configuredNonNegativeFloat(defaultValue float64, configured *float64, envName string) float64 {
+func ConfiguredNonNegativeFloat(defaultValue float64, configured *float64, envName string) float64 {
 	value := defaultValue
 	if configured != nil && *configured >= 0 {
 		value = *configured
@@ -408,14 +408,14 @@ func configuredNonNegativeFloat(defaultValue float64, configured *float64, envNa
 }
 
 func parseBoolPtr(value string) *bool {
-	parsed, ok := parseBoolValue(value)
+	parsed, ok := ParseBoolValue(value)
 	if !ok {
 		return nil
 	}
 	return &parsed
 }
 
-func parseBoolValue(value string) (bool, bool) {
+func ParseBoolValue(value string) (bool, bool) {
 	switch strings.ToLower(strings.TrimSpace(value)) {
 	case "1", "true", "yes", "on":
 		return true, true
@@ -426,7 +426,7 @@ func parseBoolValue(value string) (bool, bool) {
 	}
 }
 
-func validUpdateSecurityMode(value string) bool {
+func ValidUpdateSecurityMode(value string) bool {
 	switch strings.ToLower(strings.TrimSpace(value)) {
 	case "off", "warn", "strict":
 		return true
@@ -435,7 +435,7 @@ func validUpdateSecurityMode(value string) bool {
 	}
 }
 
-func validMiseBumpMode(value string) bool {
+func ValidMiseBumpMode(value string) bool {
 	switch strings.ToLower(strings.TrimSpace(value)) {
 	case "off", "manual", "safe", "auto":
 		return true
@@ -444,7 +444,7 @@ func validMiseBumpMode(value string) bool {
 	}
 }
 
-func validUIInteractiveMode(value string) bool {
+func ValidUIInteractiveMode(value string) bool {
 	switch strings.ToLower(strings.TrimSpace(value)) {
 	case "auto", "on", "off":
 		return true
@@ -453,7 +453,16 @@ func validUIInteractiveMode(value string) bool {
 	}
 }
 
-func stripTOMLComment(line string) string {
+func ValidDescriptionTranslationMode(value string) bool {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "auto", "manual", "off":
+		return true
+	default:
+		return false
+	}
+}
+
+func StripTOMLComment(line string) string {
 	inSingle := false
 	inDouble := false
 	for index, r := range line {
