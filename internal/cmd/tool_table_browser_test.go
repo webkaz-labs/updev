@@ -423,7 +423,7 @@ func TestInventoryItemDetailLocalizesJapaneseEvidenceAndActions(t *testing.T) {
 			Desired:  true,
 			Live:     true,
 		}},
-		Evidence: addBackendListEvidence(listEvidenceIndex{}, backendPlan),
+		Evidence: addBackendListEvidence(plan.EvidenceIndex{}, backendPlan),
 	}
 	sections := listTableSections(report)
 	if len(sections) != 1 || len(sections[0].Rows) != 1 {

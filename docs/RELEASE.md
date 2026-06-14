@@ -11,17 +11,15 @@ stays an integer schema contract. `v0.x` releases are public preview releases;
 
 ## Current Release
 
-The current implemented release is `updev v0.7.3`. `updev version`,
+The current implemented release is `updev v0.7.4`. `updev version`,
 `updev --version`, and `updev -v` report this command contract.
 
-`updev v0.7.3` is a public-preview hardening patch release. It keeps the supported
-macOS/Homebrew/mise preview path from `v0.6.x`, adds machine-readable support
-labels for providers, commands, report families, and inventory sources, and
-uses those labels to clarify which surfaces are supported preview,
-experimental, compatibility-only, or deferred before any `v1.0.0` contract is
-considered. It also makes those support labels visible in routed TUI review
-surfaces where they affect human decisions, while keeping `supported_preview`
-detail-only in dense lists.
+`updev v0.7.4` is a public-preview foundation patch release. It keeps the
+supported macOS/Homebrew/mise preview path from `v0.6.x` and the support-label
+catalog from `v0.7.3`, then starts the next `v0.7.x` workstreams by moving
+list evidence projection into an owning package, tightening evidence key
+matching for provider update/security rows, and preserving the existing
+scanner and policy boundaries without promoting experimental providers.
 
 Current support promise:
 
@@ -37,6 +35,8 @@ Current support promise:
 
 Released patch notes:
 
+- [v0.7.4](release-notes/v0.7.4.md): list evidence projection extraction,
+  tighter evidence key matching, and v0.7.x workstream foundation checks.
 - [v0.7.3](release-notes/v0.7.3.md): support-label TUI visibility, provider
   support badges, and dependency support-label text output.
 - [v0.7.2](release-notes/v0.7.2.md): compatibility-ledger JSON contract test
@@ -206,6 +206,184 @@ Policy decisions for `v0.7.3`:
   dashboards.
 - CLI/JSON support catalog output remains the source of truth; TUI display is a
   human-review projection of that catalog.
+
+## v0.7.4 Scope
+
+`v0.7.4` is the current `v0.7.x` foundation patch. It starts the four
+workstreams below without turning the preview into a broad feature release:
+first reduce structural pressure, then improve evidence and policy surfaces
+where the current model can already prove the behavior.
+
+Policy decisions for `v0.7.4`:
+
+- **Release shape**: patch release, not `v1.0.0` readiness and not provider
+  expansion.
+- **Primary axis**: scalability refactor first. Provider evidence, scanner, and
+  policy work must fit around that without adding new command-package sprawl.
+- **Package pressure**: do not add new `internal/cmd` files. If a new command
+  surface is unavoidable, extract an owning package in the same change and keep
+  `internal/cmd` at or below its current ceiling.
+- **Provider support**: keep macOS/Homebrew/mise as supported preview.
+  Linux/Windows, vfox-generic metadata, agent enrichment, and external/vendor
+  installer execution remain experimental or deferred unless a later release
+  explicitly promotes them.
+- **Scanner defaults**: no new slow or broad scanner becomes part of the
+  default update gate in this patch.
+- **Policy posting**: local and CI artifacts are allowed; public issue creation
+  or external posting remains opt-in only.
+
+Included work:
+
+1. **Scalability refactor kickoff**
+   - Extracted list evidence index, item projection, key matching, and evidence
+     counts into `internal/plan` so `internal/cmd` keeps report/TUI adapter
+     behavior instead of owning the evidence projection domain.
+   - Keep report assembly and TUI routing separated: reports expose decisions
+     and evidence; TUI views only render and route those reports.
+   - Update `SOURCE-STRUCTURE.md` whenever a boundary moves.
+
+2. **Provider evidence quality audit**
+   - Tightened update/security evidence key generation so version-delta rows
+     and provider-prefix rows map to the intended installed item without
+     carrying long raw log fragments as identity keys.
+   - Kept explanations and JSON/TUI parity on the existing report surfaces. Do
+     not weaken strict mode or promote opaque backends.
+
+3. **Scanner hardening baseline**
+   - Preserve existing unavailable/error/review semantics for explicit scanner
+     and native-audit evidence while avoiding new default scanner gates in this
+     patch.
+   - Keep optional scanners non-blocking for normal update flows unless a
+     provider identity is reliable enough for an item-scoped gate.
+
+4. **Policy ergonomics foundation**
+   - Preserve existing policy cleanup and review diagnostics for broad,
+     duplicate, expired, shadowed, missing-reason, and missing-expiry cases from
+     CLI/JSON and routed review details.
+   - Keep guided edit/renew/narrow/remove expansion for later `v0.7.x` patches
+     unless it can preserve route context and report parity.
+
+`v0.7.4` release criteria:
+
+- [x] `mise -C tools/updev run check`
+- [x] `mise -C tools/updev run docs-check`
+- [x] `git diff --check`
+- [x] `chezmoi apply --dry-run`
+- [x] Fast TTY smoke for `updev --dry-run --interactive`, `updev last`, and
+  `updev list` confirms Back/Home focus restoration and visible provider logs.
+- [x] `internal/cmd` file count stays at or below the documented ceiling and no
+  new command-local domain logic is added without an owning-package extraction.
+- [x] Held/review evidence remains item-scoped for Homebrew/mise where the
+  provider can apply individual candidates.
+- [x] README, `RELEASE.md`, `ROADMAP.md`, `SOURCE-STRUCTURE.md`, and release
+  notes are current-state focused before tagging.
+
+## Next v0.7.x Workstream Plan
+
+The next `v0.7.x` cycle should keep the supported preview scope narrow while
+turning the current dogfood findings into durable structure. The four major
+workstreams are ordered by dependency: reduce structural friction first, then
+improve provider evidence, then harden scanners and policy flows on top of the
+cleaner model.
+
+### 1. Scalability Refactor
+
+Goal: make future provider and TUI work cheaper without changing the public
+workflow.
+
+- Keep `internal/cmd` as command parsing, command-local adapters, rendering, and
+  route wiring only.
+- Move complete domain contracts, not single helper functions, into owning
+  packages such as `backend`, `securitygate`, `manualinventory`, `mise`, `brew`,
+  `registryaudit`, `nativeaudit`, `reviewui`, and `textui`.
+- Keep report builders independent from terminal interaction; TUI views consume
+  reports rather than computing behavior that JSON/text cannot see.
+- Preserve provider log streaming and routed Back/Home state while extracting
+  code.
+- Add or extend placement checks only where they catch real drift without
+  forcing artificial package splits.
+
+Exit criteria:
+
+- New broad provider/security work can be added without growing
+  `internal/cmd` file count or duplicating render/reason helpers.
+- The standard validation suite and fast PTY smoke still pass after each slice.
+- Source placement decisions are reflected in `ARCHITECTURE.md` /
+  `SOURCE-STRUCTURE.md` when boundaries change.
+
+### 2. Provider Evidence Quality
+
+Goal: reduce noisy `review` decisions only where updev can prove candidate
+identity, age, ownership, and source confidence.
+
+- Improve Homebrew evidence for cask URL/homepage provenance, tap trust,
+  disabled/deprecated metadata, release-age timestamps, and item-scoped trust
+  commands.
+- Improve mise evidence for registry-backed backends, core runtime aliases,
+  vfox provider metadata, npm/cargo/pipx publish dates, and GitHub asset/source
+  confidence.
+- Keep unsupported or opaque backends as `review`; do not weaken strict mode to
+  reduce noise.
+- Show source URLs, cache age, release dates, support labels, and reason codes
+  in both cached reports and routed detail views.
+- Maintain item-scoped allow/hold/review. One risky package must not block
+  unrelated safe candidates when the provider can apply candidates individually.
+
+Exit criteria:
+
+- A dogfood run can explain every held/review package with stable reason codes
+  and source evidence.
+- Safe Homebrew/mise candidates apply in scoped commands when other candidates
+  remain held.
+- Opaque cases remain visible, actionable, and review-only.
+
+### 3. Scanner Hardening
+
+Goal: make explicit scanner paths more useful without turning routine updates
+into a slow full security platform.
+
+- Keep update gates focused on pending candidates; scanners remain explicit
+  scan/review evidence unless a provider identity is reliable and cheap enough
+  for the gate.
+- Continue OSV-Scanner, gitleaks, zizmor, Trivy, and Grype hardening with stable
+  unavailable/error semantics and bounded runtime.
+- Add provider-native audit evidence where package identity is reliable before
+  adding broader scanner defaults.
+- Keep Syft and Prowler future explicit commands, not default update gates.
+- Surface scanner coverage, unavailable tools, and remediation through
+  `doctor dependencies`, `security scan`, and TUI detail rows.
+
+Exit criteria:
+
+- Optional missing scanners do not fail normal updates.
+- Scanner findings carry enough package/source identity to avoid misleading
+  holds.
+- Slow or broad scans remain opt-in and documented.
+
+### 4. Policy Ergonomics
+
+Goal: make local allow/review/hold/block rules understandable and maintainable
+from both human TUI flows and agent/CI JSON flows.
+
+- Improve policy add/edit/list/cleanup flows with guided actions from security
+  details and backend/manual review rows.
+- Keep reasons and expiries mandatory for temporary allow rules; show broad,
+  duplicate, shadowed, expired, and missing-reason diagnostics.
+- Add diagnostic indexes or filters so users can answer "why is this held?" and
+  "which rule applies?" without reading raw JSON.
+- Keep public issue creation and external posting opt-in; local/CI artifacts can
+  be generated without network posting.
+- Ensure agent-oriented JSON exposes the same decision, reason, rule id, expiry,
+  and remediation that the TUI shows.
+
+Exit criteria:
+
+- A user can approve, renew, narrow, or remove a policy decision from the
+  relevant review detail without losing route context.
+- `security policy cleanup` and TUI policy details agree on invalid, expired,
+  duplicate, and shadowed rules.
+- JSON reports contain enough structured policy evidence for an agent to propose
+  a safe edit without parsing prose.
 
 ### v0.7.0 Non-Goals
 
