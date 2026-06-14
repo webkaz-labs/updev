@@ -38,7 +38,7 @@ type options struct {
 const (
 	usageExitCode = 64
 	toolName      = "updev"
-	toolVersion   = "v0.7.5"
+	toolVersion   = "v0.7.6"
 )
 
 const inventoryCacheVersion = inventoryrun.CacheVersion
