@@ -22,7 +22,9 @@ import (
 	"github.com/webkaz-labs/updev/internal/reviewui"
 	"github.com/webkaz-labs/updev/internal/runner"
 	"github.com/webkaz-labs/updev/internal/support"
+	"github.com/webkaz-labs/updev/internal/syncreport"
 	"github.com/webkaz-labs/updev/internal/textui"
+	"github.com/webkaz-labs/updev/internal/updevconfig"
 	"github.com/webkaz-labs/updev/internal/updevpath"
 )
 
@@ -38,7 +40,7 @@ type options struct {
 const (
 	usageExitCode = 64
 	toolName      = "updev"
-	toolVersion   = "v0.7.7"
+	toolVersion   = "v0.7.8"
 )
 
 const inventoryCacheVersion = inventoryrun.CacheVersion
@@ -62,6 +64,87 @@ type versionReport struct {
 }
 
 type startupProgress = reviewui.StartupProgress
+
+type updevConfig = updevconfig.Config
+type updevSecurityConfig = updevconfig.SecurityConfig
+type updevHomebrewSecurityConfig = updevconfig.HomebrewSecurityConfig
+type updevMiseSecurityConfig = updevconfig.MiseSecurityConfig
+type updevVSCodeSecurityConfig = updevconfig.VSCodeSecurityConfig
+type updevProvidersConfig = updevconfig.ProvidersConfig
+type updevUpdateConfig = updevconfig.UpdateConfig
+type updevMiseBumpUpdateConfig = updevconfig.MiseBumpUpdateConfig
+type updevUIConfig = updevconfig.UIConfig
+type updevSourcesConfig = updevconfig.SourcesConfig
+type updevBrewfileConfig = updevconfig.BrewfileConfig
+type updevInventoryConfig = updevconfig.InventoryConfig
+type updevInventoryManualConfig = updevconfig.InventoryManualConfig
+type updevInventoryAgentConfig = updevconfig.InventoryAgentConfig
+type updevInventoryReportConfig = updevconfig.InventoryReportConfig
+type updevBackendsConfig = updevconfig.BackendsConfig
+
+func loadUpdevConfig() updevConfig {
+	return updevconfig.Load()
+}
+
+func updevConfigPath() string {
+	return updevconfig.ConfigPath()
+}
+
+func truthyEnv(name string) bool {
+	return updevconfig.TruthyEnv(name)
+}
+
+func boolEnv(name string) (bool, bool) {
+	return updevconfig.BoolEnv(name)
+}
+
+func parseUpdevConfigTOML(data string) updevConfig {
+	return updevconfig.ParseTOML(data)
+}
+
+func configuredEnvString(defaultValue string, envName string) string {
+	return updevconfig.ConfiguredEnvString(defaultValue, envName)
+}
+
+func configuredNonNegativeInt(defaultValue int, configured *int, envName string) int {
+	return updevconfig.ConfiguredNonNegativeInt(defaultValue, configured, envName)
+}
+
+func configuredNonNegativeFloat(defaultValue float64, configured *float64, envName string) float64 {
+	return updevconfig.ConfiguredNonNegativeFloat(defaultValue, configured, envName)
+}
+
+func parseBoolValue(value string) (bool, bool) {
+	return updevconfig.ParseBoolValue(value)
+}
+
+func parseStringArray(value string) []string {
+	return updevconfig.ParseStringArray(value)
+}
+
+func stripTOMLComment(line string) string {
+	return updevconfig.StripTOMLComment(line)
+}
+
+func validBrewfileDesiredMode(value string) bool {
+	return updevconfig.ValidBrewfileDesiredMode(value)
+}
+
+func validBrewfileWriteMode(value string) bool {
+	return updevconfig.ValidBrewfileWriteMode(value)
+}
+
+func validUpdateSecurityMode(value string) bool {
+	return updevconfig.ValidUpdateSecurityMode(value)
+}
+
+func validMiseBumpMode(value string) bool {
+	return updevconfig.ValidMiseBumpMode(value)
+}
+
+func validUIInteractiveMode(value string) bool {
+	return updevconfig.ValidUIInteractiveMode(value)
+}
 
 func defaultLanguage() string {
 	defaultLanguageOnce.Do(func() {
@@ -940,4 +1023,216 @@ func configuredRoot(config updevConfig) string {
 
 func resolveSourceRootConfigPath(path string) string {
 	return updevpath.ResolveConfigRelative(path, updevConfigPath())
+}
+
+const syncReportSchemaVersion = syncreport.SchemaVersion
+
+type syncOptions struct {
+	format  string
+	root    string
+	refresh bool
+}
+
+type syncReport = syncreport.Report
+type syncEntry = syncreport.Entry
+type syncGuidance = syncreport.Guidance
+
+func parseSyncOptions(args []string) (syncOptions, error) {
+	opts := syncOptions{format: "text", root: defaultRoot()}
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "--format":
+			if i+1 >= len(args) {
+				return opts, fmt.Errorf("--format requires a value")
+			}
+			opts.format = args[i+1]
+			i++
+		case "--root":
+			if i+1 >= len(args) {
+				return opts, fmt.Errorf("--root requires a value")
+			}
+			opts.root = args[i+1]
+			i++
+		case "--refresh", "-r":
+			opts.refresh = true
+		case "--help", "-h":
+			printUsage()
+			os.Exit(0)
+		default:
+			return opts, fmt.Errorf("unknown option: %s", args[i])
+		}
+	}
+	if opts.format != "text" && opts.format != "json" {
+		return opts, fmt.Errorf("unsupported format: %s", opts.format)
+	}
+	return opts, nil
+}
+
+func runSync(opts syncOptions) int {
+	progress := startupProgress{}
+	if opts.format == "text" {
+		progress = newStartupProgress(os.Stdin, os.Stderr, opts.format, syncProgressMessage(defaultLanguage(), opts.refresh))
+	}
+	progress.Start()
+	report := buildSyncReport(context.Background(), opts)
+	progress.Done()
+	if opts.format == "json" {
+		if code := encodeJSON(report); code != 0 {
+			return code
+		}
+	} else {
+		printSyncText(os.Stdout, report, textui.ColorEnabled())
+	}
+	return updateExitCode(report.Status)
+}
+
+func buildSyncReport(ctx context.Context, opts syncOptions) syncReport {
+	result := collectInventoryCached(ctx, opts.root, opts.refresh, inventoryCacheMaxAge)
+	return syncreport.Build(result.Report, result.Cached, result.CreatedAt, manualLocalOnlyCaskFunc(manualAppIndex(opts.root)), defaultLanguage())
+}
+
+func syncEntriesFromInventory(inventory plan.Report) []syncEntry {
+	return syncreport.EntriesFromInventory(inventory, manualLocalOnlyCaskFunc(manualAppIndex(inventory.Root)), defaultLanguage())
+}
+
+func syncReportStatus(inventory plan.Report, entries []syncEntry) plan.Status {
+	return syncreport.Status(inventory, entries)
+}
+
+func syncReasonForItem(item plan.Item, related map[string]plan.Item) string {
+	return syncreport.ReasonForItem(item, related, nil)
+}
+
+func syncReasonForItemWithManual(item plan.Item, related map[string]plan.Item, manualIndex map[string]toolRow) string {
+	return syncreport.ReasonForItem(item, related, manualLocalOnlyCaskFunc(manualIndex))
+}
+
+func enrichSyncEntry(entry *syncEntry, item plan.Item, related map[string]plan.Item) {
+	syncreport.EnrichEntry(entry, item, related, defaultLanguage())
+}
+
+func syncGuidanceForItem(reason string, item plan.Item, related map[string]plan.Item) syncGuidance {
+	return syncreport.GuidanceForItem(reason, item, related, defaultLanguage())
+}
+
+func missingSyncGuidance(item plan.Item) syncGuidance {
+	return syncreport.MissingGuidance(item, defaultLanguage())
+}
+
+func extraSyncGuidance(item plan.Item) syncGuidance {
+	return syncreport.ExtraGuidance(item, defaultLanguage())
+}
+
+func syncProviderMismatchIndex(items []plan.Item) map[string]plan.Item {
+	return syncreport.ProviderMismatchIndex(items)
+}
+
+func syncEntryKey(item plan.Item) string {
+	return syncreport.EntryKey(item)
+}
+
+func syncIdentityKey(item plan.Item) string {
+	return syncreport.IdentityKey(item)
+}
+
+func manualLocalOnlyCaskFunc(manualIndex map[string]toolRow) syncreport.ManualLocalOnlyFunc {
+	if len(manualIndex) == 0 {
+		return nil
+	}
+	return func(item plan.Item) bool {
+		if !strings.EqualFold(item.Provider, "brew") || !strings.EqualFold(item.Kind, "cask") {
+			return false
+		}
+		row, ok := manualAppMatch(manualIndex, item.Name)
+		if ok && row.State == "brew" {
+			return false
+		}
+		return ok
+	}
+}
+
+func printSyncText(w io.Writer, report syncReport, color bool) {
+	fmt.Fprintf(w, "%s %s\n", textui.Style("updev sync", "\033[1m", color), textui.StyleStatus(string(report.Status), color))
+	fmt.Fprintf(w, "%s %s\n", tr("root:", "ルート:"), report.Root)
+	if report.Cached {
+		fmt.Fprintf(w, "%s %s %s\n", tr("cache:", "キャッシュ:"), report.CacheAge+" old", tr("(use --refresh for a fresh read)", "(再取得は --refresh)"))
+	}
+	fmt.Fprintf(w, "%s %d\n", tr("entries:", "項目:"), len(report.Entries))
+	if summary := syncReasonSummary(report.Entries); summary != "" {
+		fmt.Fprintf(w, "%s %s\n", tr("summary:", "サマリー:"), summary)
+	}
+	if summary := syncCategorySummary(report.Entries, color); summary != "" {
+		fmt.Fprintf(w, "%s %s\n", tr("categories:", "categories:"), summary)
+	}
+	if len(report.Entries) == 0 {
+		fmt.Fprintf(w, "\n%s\n", tr("in sync", "同期済み"))
+		return
+	}
+	rows := make([][]string, 0, len(report.Entries))
+	for _, entry := range report.Entries {
+		rows = append(rows, []string{
+			textui.StyleName(entry.Provider, color),
+			entry.Kind,
+			textui.StyleName(entry.Name, color),
+			entry.Category,
+			textui.StyleStatus(entry.Reason, color),
+			textui.StyleLabel(entry.Action, color),
+		})
+	}
+	fmt.Fprintf(w, "\n%s\n", tr("reconcile", "reconcile"))
+	textui.PrintTable(w, []textui.Column{
+		{Header: "provider", Min: 8, Max: 10},
+		{Header: "kind", Min: 7, Max: 10},
+		{Header: "name", Min: 18, Max: 36},
+		{Header: "category", Min: 8, Max: 10},
+		{Header: "reason", Min: 10, Max: 18},
+		{Header: "action", Min: 12, Max: 24},
+	}, rows, color)
+	printSyncEntryDetails(w, report.Entries, color)
+	fmt.Fprintf(w, "\n%s\n", tr("next", "次"))
+	fmt.Fprintf(w, "  %s\n", tr("review entries, then use updev add/remove or provider-specific commands; sync is read-only by default", "項目を確認してから updev add/remove または provider 固有コマンドを使ってください。sync は既定で read-only です"))
+}
+
+func printSyncEntryDetails(w io.Writer, entries []syncEntry, color bool) {
+	wrote := false
+	for _, entry := range entries {
+		if entry.Detail == "" {
+			continue
+		}
+		if !wrote {
+			fmt.Fprintf(w, "\n%s\n", tr("details", "詳細"))
+			wrote = true
+		}
+		target := entry.Provider
+		if entry.Kind != "" || entry.Name != "" {
+			target = strings.Trim(target+"/"+entry.Kind+" "+entry.Name, "/ ")
+		}
+		detail := entry.Detail
+		if entry.RelatedProvider != "" {
+			detail += fmt.Sprintf(" (related: %s/%s)", entry.RelatedProvider, entry.RelatedKind)
+		}
+		fmt.Fprintf(w, "  %s %s\n", textui.StyleName(target, color), textui.StyleDim(detail, color))
+	}
+}
+
+func syncReasonSummary(entries []syncEntry) string {
+	return syncreport.ReasonSummary(entries)
+}
+
+func syncCategorySummary(entries []syncEntry, color bool) string {
+	counts := map[string]int{}
+	for _, entry := range entries {
+		if entry.Category != "" {
+			counts[entry.Category]++
+		}
+	}
+	keys := sortedMapKeys(counts)
+	if len(keys) == 0 {
+		return ""
+	}
+	parts := make([]string, 0, len(keys))
+	for _, key := range keys {
+		parts = append(parts, fmt.Sprintf("%s=%d (%s)", textui.StyleRequested(key, color), counts[key], categoryDescription(key)))
+	}
+	return strings.Join(parts, ", ")
 }

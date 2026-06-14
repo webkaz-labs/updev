@@ -13,8 +13,8 @@ temporary ceiling.
 
 | Package | Current Go files | Target | Temporary ceiling | Status | Next action |
 |---------|------------------|--------|-------------------|--------|-------------|
-| `internal/cmd` production files | 27 | <= 30 | 30 | within target | Production command sprawl is now checked separately from tests; do not add command logic without extracting an owning package in the same change. |
-| `internal/cmd` test files | 18 | <= 20 | 20 | within target | Keep broad command regression tests stable, but move future owner-specific tests with the extracted package. |
+| `internal/cmd` production files | 20 | <= 20 | 20 | within target | `cmd` is now limited to command parsing, adapters, rendering, route wiring, and local write boundaries. Do not add new command production files without moving behavior to an owner package in the same change. |
+| `internal/cmd` test files | 14 | <= 14 | 14 | within target | Keep command tests focused on option parsing, top-level routing, and integration contracts; owner-specific behavior tests belong with the owner package. |
 | all other `internal/*` packages, including nested owner packages | <= 20 each | <= 20 | 20 | within target | Split by domain before adding the 21st Go source file. |
 
 Current largest non-`cmd` packages:
@@ -290,7 +290,7 @@ v0.7.7 architecture-hardening result:
 real command-sprawl budget: production command files. This prevents provider
 evidence quality, scanner hardening, and policy ergonomics from growing command
 production code again, while keeping command-level regression tests visible as a
-separate budget.
+separate budget. It is a guardrail release, not the full large refactor.
 
 | Area | Target state | Required guardrail |
 |------|--------------|--------------------|
@@ -308,3 +308,86 @@ growing broad command tests.
 Do not add new tool-name-only fixes, direct provider command calls, implicit
 repository-local defaults, or TUI-only behavior that is missing from the report
 model.
+
+v0.7.8 large-refactor result:
+
+`v0.7.8` performs the code movement that `v0.7.7` only prepared for. The
+release leaves `internal/cmd` at the stricter production/test budgets and keeps
+the remaining command code focused on command parsing, option adaptation, final
+localization labels, top-level route wiring, rendering, and write boundaries.
+
+Final budgets:
+
+| Package | Current Go files | v0.7.8 target | Guardrail |
+|---------|------------------|---------------|-----------|
+| `internal/cmd` production files | 20 | <= 20 | `scripts/check-source-structure.sh` now fails above 20 production command files. |
+| `internal/cmd` test files | 14 | <= 14 | `scripts/check-source-structure.sh` now fails above 14 command test files. |
+| extracted report/view/route owners | <= 20 each | <= 20 each | Owner packages must stay independently searchable and testable. |
+
+Completed extraction:
+
+- `internal/updevconfig` owns updev config defaults, environment overrides,
+  TOML parsing, validation helpers, and config path resolution. `cmd` keeps
+  compatibility aliases and wrappers only.
+- `internal/syncreport` owns read-only sync report construction, drift
+  classification, provider mismatch keys, and sync guidance. `cmd` supplies the
+  manual-app matching adapter and final localized text/JSON rendering.
+- Update and list routed TUI adapters are consolidated into their parent
+  command files, removing sidecar route files while keeping shared state and
+  action consumption in `reviewui`.
+- mise bump and mise release-age safety adapters are consolidated under the
+  safety command adapter. Provider evidence and release-age semantics remain in
+  `internal/mise`, `registryaudit`, `githubrepo`, and `securitygate`.
+- Command tests are consolidated by behavior contract: list/report/router,
+  manual inventory, safety/mise bump, and TUI table behavior now live in fewer
+  command test files without deleting coverage.
+
+Future extraction order:
+
+1. **Report assembly owners**
+   - Extract provider-neutral update/security summary assembly before changing
+     downstream TUI routes.
+   - Cached reports, JSON/text summaries, and TUI route rows must consume the
+     same structured summary result.
+   - Reason derivation and evidence grouping must not stay command-local after
+     the extraction.
+
+2. **List/manual/backend view models**
+   - Move row grouping, evidence-to-action projection, compact badge presence,
+     and backend/manual action summaries out of command files.
+   - Keep final Japanese/localized labels at the CLI/TUI boundary.
+   - Owner packages expose stable row/action inputs that can be tested without
+     terminal interaction.
+
+3. **Common routed TUI core**
+   - Consolidate shared route stack, Back/Home restoration, parent row/filter
+     restoration, focused-action stability, confirmation state, pending writes,
+     and action consumption in `reviewui` or a small route owner.
+   - The extracted route core must cover `updev`, `updev last`, `updev list`,
+     manual inventory, backend convergence, security details, and policy review.
+   - Preserve the accepted high-density grouped list design; do not turn this
+     refactor into a UX redesign.
+
+4. **Test relocation**
+   - Move owner-specific tests with the extracted production owner packages.
+   - Keep only command parsing, CLI option precedence, top-level route dispatch,
+     and integration-style contracts in `internal/cmd`.
+   - Do not reduce command test count by deleting coverage; reduce it by moving
+     tests to the package that owns the behavior.
+
+5. **Guardrail tightening**
+   - Tighten `scripts/check-source-structure.sh` only after the production and
+     test movement lands.
+   - Record final counts here before tagging.
+   - Keep direct subprocess exceptions synced with `ARCHITECTURE.md` and the
+     direct-subprocess check.
+
+Non-goals for `v0.7.8`:
+
+- provider evidence expansion;
+- scanner default expansion;
+- policy UX feature growth;
+- support-label promotion;
+- replacing provider log streaming with Bubble Tea foreground process
+  execution;
+- moving code into nested command subpackages that still own business logic.

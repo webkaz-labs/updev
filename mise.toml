@@ -1,5 +1,6 @@
 [tools]
 go = "1.25.8"
+shellcheck = "0.11.0"
 
 [tasks.test]
 description = "Run updev Go tests with cache and wall time"
@@ -29,6 +30,22 @@ depends = ["test-e2e-fast"]
 description = "Run updev Go vet"
 run = "GOCACHE=${GOCACHE:-${TMPDIR:-/tmp}/updev-gocache} go vet ./..."
 
+[tasks.fmt-check]
+description = "Check Go formatting"
+run = "scripts/check-go-format.sh"
+
+[tasks.staticcheck]
+description = "Run bug-class Staticcheck analyzers"
+run = "scripts/check-staticcheck.sh"
+
+[tasks.shellcheck]
+description = "Run ShellCheck on updev scripts"
+run = "shellcheck -S warning scripts/*.sh"
+
+[tasks.lint]
+description = "Run agent-friendly lint checks"
+depends = ["fmt-check", "staticcheck", "shellcheck"]
+
 [tasks.mod-verify]
 description = "Verify updev Go modules"
 run = "go mod verify"
@@ -43,4 +60,4 @@ run = "scripts/check-docs.sh"
 
 [tasks.check]
 description = "Run the standard updev local validation suite"
-depends = ["test", "vet", "mod-verify", "build"]
+depends = ["lint", "test", "vet", "mod-verify", "build"]

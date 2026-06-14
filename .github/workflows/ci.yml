@@ -25,6 +25,20 @@ jobs:
       - name: Docs check
         run: scripts/check-docs.sh
 
+      - name: Format check
+        run: scripts/check-go-format.sh
+
+      - name: Staticcheck
+        run: scripts/check-staticcheck.sh
+
+      - name: Shellcheck
+        run: |
+          if ! command -v shellcheck >/dev/null 2>&1; then
+            sudo apt-get update
+            sudo apt-get install -y shellcheck
+          fi
+          shellcheck -S warning scripts/*.sh
+
       - name: Verify modules
         run: go mod verify
 

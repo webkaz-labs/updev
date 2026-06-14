@@ -32,7 +32,9 @@ support files such as `mise.toml`. Implementation belongs under `internal/`.
     snapshot/   manifest snapshots and rollback helpers
     textui/     table, width, color, and non-TTY rendering helpers
     reviewui/   reusable TTY review/detail browser
+    syncreport/ read-only sync report construction, drift classification, and guidance helpers
     updatereason/ update-step reason codes, structured args, compatibility inference, and render-time labels
+    updevconfig/ updev TOML config loading, environment overrides, validation, and config path resolution
     securityreason/ security finding reason codes, structured args, compatibility inference, and render-time labels
     securityscanner/ external scanner selection, evidence summaries, and scanner option helpers
     securitygate/ provider gate/finding model, decision helpers, gate finalization, update-safety cache, and registry metadata cache

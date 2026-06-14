@@ -1020,7 +1020,7 @@ func buildSecurityReport(ctx context.Context, opts securityOptions, client *http
 	npmPostures := []npmPosture{}
 	cargoPostures := []cargoPosture{}
 	pypiPostures := []pypiPosture{}
-	audits := []nativeAudit{}
+	var audits []nativeAudit
 	scanners := []scannerEvidence{}
 	homebrewAdvisoryPackages := []securityPackage{}
 	vscodeAdvisoryPackages := []securityPackage{}
