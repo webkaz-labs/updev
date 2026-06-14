@@ -126,7 +126,7 @@ func newUpdateHubRouterModelWithContext(ctx context.Context, builders updateHubP
 		backendPlan:    backendPlan,
 		backendLoading: backendLoading,
 		defaultAction:  defaultAction,
-		detailStates:   map[string]detailBrowserState{},
+		detailStates:   reviewui.EnsureStateCache(nil),
 		color:          color,
 	}
 	action := initialUpdateHubAction(preferredAction, defaultAction)
@@ -820,7 +820,7 @@ func (m *updateHubRouterModel) showListFiltered(title string, report listReport,
 }
 
 func (m *updateHubRouterModel) showDetail(title string, rows []detailBrowserRow, stateKey string, returnAction string) {
-	model := newDetailBrowserModel(title, rows, m.detailStates[stateKey], m.color)
+	model := newDetailBrowserModel(title, rows, reviewui.CachedState(m.detailStates, stateKey), m.color)
 	m.applyDetailSize(&model)
 	m.screen = updateHubRouterDetail
 	m.stateKey = stateKey
@@ -834,7 +834,7 @@ func (m *updateHubRouterModel) showTable(title string, sections []toolSection, s
 
 func (m *updateHubRouterModel) showTableWithActions(title string, sections []toolSection, stateKey string, returnAction string, actions reviewui.BrowserActions, labels reviewui.TableBrowserLabels) {
 	title = m.loadingTitle(title, stateKey)
-	model := newToolTableBrowserModelWithActions(title, sections, m.detailStates[stateKey], actions, labels, m.color)
+	model := newToolTableBrowserModelWithActions(title, sections, reviewui.CachedState(m.detailStates, stateKey), actions, labels, m.color)
 	m.applyTableSize(&model)
 	m.screen = updateHubRouterTable
 	m.stateKey = stateKey

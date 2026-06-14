@@ -11,6 +11,7 @@ import (
 	"github.com/webkaz-labs/updev/internal/manualinventory"
 	"github.com/webkaz-labs/updev/internal/plan"
 	"github.com/webkaz-labs/updev/internal/reviewui"
+	"github.com/webkaz-labs/updev/internal/support"
 	"github.com/webkaz-labs/updev/internal/textui"
 )
 
@@ -497,6 +498,31 @@ func manualPlanEvidenceDetail(evidence manualReviewEvidence) string {
 		parts = append(parts, "version="+evidence.Version)
 	}
 	return strings.Join(parts, " ")
+}
+
+func manualInventorySourceSupportLabel(evidence manualReviewEvidence) (string, string) {
+	source := strings.ToLower(strings.TrimSpace(evidence.Source))
+	scanner := strings.ToLower(strings.TrimSpace(evidence.Scanner))
+	sourceName := ""
+	switch {
+	case strings.Contains(source, "mac app store"), strings.Contains(source, "mas list"):
+		sourceName = "mac-app-store"
+	case strings.Contains(source, "homebrew cask"):
+		sourceName = "homebrew-cask"
+	case strings.Contains(source, "homebrew tap docs"):
+		sourceName = "manual-markdown"
+	case strings.Contains(source, "app bundle"), scanner == "macos_app_bundle":
+		sourceName = "macos-app-bundle"
+	}
+	if sourceName == "" {
+		return "", ""
+	}
+	for _, entry := range support.Catalog() {
+		if entry.Surface == "inventory_source" && entry.Name == sourceName {
+			return sourceName, entry.Label
+		}
+	}
+	return sourceName, ""
 }
 
 func manualReviewEvidenceEmpty(evidence manualReviewEvidence) bool {

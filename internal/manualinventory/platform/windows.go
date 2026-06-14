@@ -1,4 +1,4 @@
-package manualinventory
+package platform
 
 import (
 	"encoding/json"

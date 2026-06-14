@@ -10,14 +10,18 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/webkaz-labs/updev/internal/brew"
 	"github.com/webkaz-labs/updev/internal/brewfile"
+	"github.com/webkaz-labs/updev/internal/i18n"
 	"github.com/webkaz-labs/updev/internal/inventoryannotate"
+	"github.com/webkaz-labs/updev/internal/inventoryrun"
 	"github.com/webkaz-labs/updev/internal/plan"
 	"github.com/webkaz-labs/updev/internal/reviewui"
 	"github.com/webkaz-labs/updev/internal/runner"
+	"github.com/webkaz-labs/updev/internal/support"
 	"github.com/webkaz-labs/updev/internal/textui"
 	"github.com/webkaz-labs/updev/internal/updevpath"
 )
@@ -34,13 +38,18 @@ type options struct {
 const (
 	usageExitCode = 64
 	toolName      = "updev"
-	toolVersion   = "v0.7.4"
+	toolVersion   = "v0.7.5"
 )
+
+const inventoryCacheVersion = inventoryrun.CacheVersion
+const supportReportSchemaVersion = support.ReportSchemaVersion
 
 var filterSummaryKeys = []string{"provider", "kind", "category", "status", "query", "limit", "include_vscode"}
 
 var embeddedAgentSkillDoc = fallbackAgentSkillDoc
 var embeddedAgentUsageDoc = fallbackAgentUsageDoc
+var defaultLanguageValue string
+var defaultLanguageOnce sync.Once
 
 type versionReport struct {
 	SchemaVersion int    `json:"schema_version"`
@@ -53,6 +62,21 @@ type versionReport struct {
 }
 
 type startupProgress = reviewui.StartupProgress
+
+func defaultLanguage() string {
+	defaultLanguageOnce.Do(func() {
+		configured := ""
+		if value := loadUpdevConfig().UI.Language; value != nil {
+			configured = *value
+		}
+		defaultLanguageValue = i18n.DefaultLanguage(configured)
+	})
+	return defaultLanguageValue
+}
+
+func tr(en string, ja string) string {
+	return i18n.Pick(defaultLanguage(), en, ja)
+}
 
 func newStartupProgress(input io.Reader, w io.Writer, format string, message string) startupProgress {
 	return reviewui.NewStartupProgress(shouldShowStartupProgress(input, w, format), w, message)
@@ -86,6 +110,139 @@ func descriptionTranslationProgressMessage(lang string) string {
 
 func reviewPlanProgressMessage(lang string) string {
 	return reviewui.ReviewPlanProgressMessage(lang)
+}
+
+type inventoryOptions struct {
+	IncludeVSCode bool
+}
+
+type inventoryCacheEntry = inventoryrun.CacheEntry
+type inventoryResult = inventoryrun.Result
+type supportOptions = support.Options
+type supportReport = support.Report
+
+func collectInventory(ctx context.Context, root string, local runner.Local) plan.Report {
+	return collectInventoryWithOptions(ctx, root, local, inventoryOptions{IncludeVSCode: includeVSCodeExtensionsByDefault()})
+}
+
+func collectInventoryWithOptions(ctx context.Context, root string, local runner.Local, opts inventoryOptions) plan.Report {
+	return inventoryrun.Collect(ctx, root, local, inventoryRunOptions(root, opts))
+}
+
+func collectInventoryCached(ctx context.Context, root string, refresh bool, maxAge time.Duration) inventoryResult {
+	return collectInventoryCachedWithOptions(ctx, root, refresh, maxAge, inventoryOptions{IncludeVSCode: includeVSCodeExtensionsByDefault()})
+}
+
+func collectInventoryCachedWithOptions(ctx context.Context, root string, refresh bool, maxAge time.Duration, opts inventoryOptions) inventoryResult {
+	return inventoryrun.CollectCached(ctx, root, refresh, maxAge, inventoryRunOptions(root, opts))
+}
+
+func loadInventoryCache(root string, maxAge time.Duration, opts inventoryOptions) (inventoryCacheEntry, bool) {
+	return inventoryrun.LoadCache(root, maxAge, inventoryRunOptions(root, opts))
+}
+
+func saveInventoryCache(entry inventoryCacheEntry) {
+	inventoryrun.SaveCache(entry, loadUpdevConfig().Inventory.StateDir)
+}
+
+func inventoryCachePath(root string) string {
+	return inventoryrun.CachePath(root, loadUpdevConfig().Inventory.StateDir)
+}
+
+func inventoryRunOptions(root string, opts inventoryOptions) inventoryrun.Options {
+	return inventoryrun.Options{
+		IncludeVSCode:        opts.IncludeVSCode,
+		UseHomeBrewfile:      shouldUseHomeBrewfile(root),
+		UseNativeMiseDesired: shouldUseNativeMiseDesired(root),
+		StateDir:             loadUpdevConfig().Inventory.StateDir,
+	}
+}
+
+func shouldUseHomeBrewfile(root string) bool {
+	mode := "auto"
+	if configured := loadUpdevConfig().Brewfile.Desired; configured != nil {
+		mode = strings.ToLower(strings.TrimSpace(*configured))
+	}
+	switch mode {
+	case "home":
+		return true
+	case "root", "template", "disabled":
+		return false
+	default:
+		return filepath.Clean(root) == filepath.Clean(defaultRoot())
+	}
+}
+
+func shouldUseNativeMiseDesired(root string) bool {
+	cleanedRoot := filepath.Clean(root)
+	cleanedDefault := filepath.Clean(defaultRoot())
+	return cleanedRoot == cleanedDefault || strings.HasPrefix(cleanedRoot, cleanedDefault+string(os.PathSeparator))
+}
+
+func resolveUpdevConfigPath(root string, path string) string {
+	return updevpath.Resolve(root, path)
+}
+
+func sortReport(report *plan.Report) {
+	inventoryrun.SortReport(report)
+}
+
+func parseSupportOptions(args []string) (supportOptions, error) {
+	opts := supportOptions{Format: "text", Surface: "all"}
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "--format":
+			if i+1 >= len(args) {
+				return opts, fmt.Errorf("--format requires a value")
+			}
+			opts.Format = args[i+1]
+			i++
+		case "--surface":
+			if i+1 >= len(args) {
+				return opts, fmt.Errorf("--surface requires a value")
+			}
+			opts.Surface = args[i+1]
+			i++
+		case "--label":
+			if i+1 >= len(args) {
+				return opts, fmt.Errorf("--label requires a value")
+			}
+			opts.Label = args[i+1]
+			i++
+		case "--help", "-h":
+			printUsage()
+			os.Exit(0)
+		default:
+			return opts, fmt.Errorf("unknown option: %s", args[i])
+		}
+	}
+	if opts.Format != "text" && opts.Format != "json" {
+		return opts, fmt.Errorf("unsupported format: %s", opts.Format)
+	}
+	if !support.ValidSurface(opts.Surface) {
+		return opts, fmt.Errorf("unsupported support surface: %s", opts.Surface)
+	}
+	if !support.ValidLabel(opts.Label) {
+		return opts, fmt.Errorf("unsupported support label: %s", opts.Label)
+	}
+	return opts, nil
+}
+
+func runSupport(opts supportOptions) int {
+	report := buildSupportReport(opts)
+	if opts.Format == "json" {
+		return encodeJSON(report)
+	}
+	printSupportText(os.Stdout, report, textui.ColorEnabled())
+	return 0
+}
+
+func buildSupportReport(opts supportOptions) supportReport {
+	return support.BuildReport(toolName, toolVersion, opts)
+}
+
+func printSupportText(w io.Writer, report supportReport, color bool) {
+	support.PrintText(w, report, color)
 }
 
 func securityScanProgressMessage(lang string) string {

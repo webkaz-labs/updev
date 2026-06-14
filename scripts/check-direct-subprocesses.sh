@@ -39,7 +39,7 @@ allowed_entries=(
   "internal/brewfile/brewfile.go:runCommand|brewfile.runCommand"
   "internal/brewfile/brewfile.go:runCommandQuiet|brewfile.runCommandQuiet"
   "internal/cmd/cmd.go:runLegacy|cmd.runLegacy"
-  "internal/cmd/i18n.go:readGlobalDefault|cmd.readGlobalDefault"
+  "internal/i18n/default.go:readGlobalDefault|i18n.readGlobalDefault"
   "internal/cmd/list.go:translateBatch|cmd.translateBatch"
   "internal/cmd/security_github.go:githubTokenFromCLI|cmd.githubTokenFromCLI"
   "internal/cmd/mutation.go:runEdit|cmd.runEdit"

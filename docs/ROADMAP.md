@@ -31,26 +31,27 @@ history in git log, and keep the current/next release target in
 - Documentation source-of-truth guidance, canonical `docs/agent/` usage/skill
   files, tag-specific release notes, and focused `docs-check` drift coverage are
   implemented.
-- `updev v0.7.4` is the current preview contract: it keeps the `v0.6.x`
+- `updev v0.7.5` is the current preview contract: it keeps the `v0.6.x`
   Homebrew/mise provider gate and the `v0.7.3` support-label catalog, then
-  starts the next workstreams by extracting installed-list evidence projection
-  into `internal/plan` and tightening provider update/security evidence key
-  matching.
+  completes the P1 scalability refactor by lowering `internal/cmd` and
+  `manualinventory` below their ceilings and moving platform scanners,
+  inventory collection/cache, support report rendering, Homebrew advisory
+  mapping, and shared route-state helpers into owning packages.
 - `updev brewfile ...` and `brewfile` remain compatibility or low-level
   surfaces, not the primary human workflow.
 
 ## Near-Term Order
 
-1. Dogfood `updev v0.7.4` on the macOS/Homebrew/mise preview path. The current
+1. Dogfood `updev v0.7.5` on the macOS/Homebrew/mise preview path. The current
    policy is fixed: keep macOS/Homebrew/mise as supported preview, Linux/Windows
    and agent enrichment experimental, `brewfile` compatibility oriented, and
    external installer execution / dynamic plugins / stable Linux-Windows update
    providers deferred.
 2. Continue the broader `v0.7.x` workstream plan in
-   [RELEASE.md](RELEASE.md#next-v07x-workstream-plan) after `v0.7.4`. The order
-   remains scalability refactor, provider evidence quality, scanner hardening,
-   then policy ergonomics. Keep each slice small enough to validate and release
-   as a patch if dogfood risk is high.
+   [RELEASE.md](RELEASE.md#next-v07x-workstream-plan) after `v0.7.5`. The order
+   remains provider evidence quality, scanner hardening, then policy
+   ergonomics. Keep each slice small enough to validate and release as a patch
+   if dogfood risk is high.
 3. Preserve TTY/report regression guardrails for the accepted `updev`,
    `updev last`, and `updev list` flows before making additional UX changes.
 4. Continue `v0.7.x` support-label dogfood without turning the catalog into list
@@ -106,7 +107,7 @@ patches:
 
 | Order | Workstream | First useful slice | Do not do yet |
 |-------|------------|--------------------|---------------|
-| 1 | Scalability refactor | Move one cohesive domain contract out of `internal/cmd` only when the target package can own the behavior and tests. | Broad framework extraction or nested command subpackages that still own business logic. |
+| 1 | Scalability refactor | `v0.7.5`: finish P1 by reducing `internal/cmd` below 50, splitting `manualinventory`, moving shared route state into `reviewui`, and auditing external CLI parser ownership. | Broad framework extraction, nested command subpackages that still own business logic, or provider evidence expansion before structure is unblocked. |
 | 2 | Provider evidence quality | Improve Homebrew/mise held/review explanations with source URLs, release dates, cache age, and item-scoped commands. | Promote Linux/Windows or opaque mise/vfox paths based on weak evidence. |
 | 3 | Scanner hardening | Make explicit scanner/native-audit evidence more structured and bounded, with clear unavailable semantics. | Make slow or broad scanners part of the default update gate. |
 | 4 | Policy ergonomics | Add policy diagnostics and guided edit/renew/narrow flows where users already review security details. | Auto-post public issues or create broad permanent allow rules without explicit user intent. |
