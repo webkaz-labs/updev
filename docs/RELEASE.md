@@ -11,13 +11,15 @@ stays an integer schema contract. `v0.x` releases are public preview releases;
 
 ## Current Release
 
-The current implemented release is `updev v0.7.6`. `updev version`,
+The current implemented release is `updev v0.7.7`. `updev version`,
 `updev --version`, and `updev -v` report this command contract.
 
-`updev v0.7.6` is a public-preview hotfix on top of the `v0.7.5` scalability
-completion patch. It preserves the same supported macOS/Homebrew/mise preview
-scope and fixes a Japanese support-catalog help string so the label-filter
-detail mentions the `/` free-text shortcut consistently with the English text.
+`updev v0.7.7` is a public-preview architecture hardening patch before the next
+feature slice. It preserves the same supported macOS/Homebrew/mise preview
+scope, keeps provider log streaming outside the alternate-screen TUI, and
+enforces a separate `internal/cmd` production-file budget so command business
+logic cannot grow silently while broad command tests remain visible as their own
+budget.
 
 Current support promise:
 
@@ -33,6 +35,8 @@ Current support promise:
 
 Released patch notes:
 
+- [v0.7.7](release-notes/v0.7.7.md): command production-file budget hardening
+  before provider/scanner/policy feature growth.
 - [v0.7.6](release-notes/v0.7.6.md): Japanese TUI help text consistency fix
   for the support-catalog label filter.
 - [v0.7.5](release-notes/v0.7.5.md): scalability refactor completion with
@@ -284,10 +288,10 @@ Included work:
 ## Next v0.7.x Workstream Plan
 
 The next `v0.7.x` cycle should keep the supported preview scope narrow while
-turning the current dogfood findings into durable structure. The four major
-workstreams are ordered by dependency: reduce structural friction first, then
-improve provider evidence, then harden scanners and policy flows on top of the
-cleaner model.
+turning the current dogfood findings into durable structure. `v0.7.7` is the
+next architecture-hardening slice before feature growth; after that, the major
+workstreams continue in dependency order: provider evidence quality, scanner
+hardening, and policy ergonomics.
 
 ### v0.7.5 Scope: Scalability Refactor Completion
 
@@ -389,6 +393,91 @@ Included work:
   --interactive`, `updev last`, and `updev list`.
 - `SOURCE-STRUCTURE.md`, `ARCHITECTURE.md`, and `ROADMAP.md` reflect the final
   ownership boundaries before tagging.
+
+### v0.7.7 Scope: Architecture Hardening Before Feature Growth
+
+`v0.7.7` deliberately pauses feature growth and hardens the structural guardrail
+that prevents the next provider/scanner/policy work from refilling
+`internal/cmd`. The goal is not aesthetic cleanup; the goal is to make the next
+feature slices cheaper by enforcing the production command-file budget before
+more evidence and TUI behavior is added.
+
+Policy decisions for `v0.7.7`:
+
+- **Release shape**: behavior-preserving architecture/refactor patch. Do not
+  bundle provider evidence expansion, scanner defaults, or policy UX features
+  into this release.
+- **Definition of done**: future provider evidence quality, scanner hardening,
+  and policy ergonomics work can land without adding command-package sprawl or
+  duplicating TUI route/report assembly code.
+- **Package budgets**: enforce `internal/cmd` production files at `<= 30` and
+  track command tests as a separate `<= 20` budget. The current production count
+  is 27; future feature work must not exceed the production budget.
+- **Report ownership**: move update/security/list/manual/backend report
+  assembly and provider-neutral grouping into owner packages. `cmd` should keep
+  command parsing, option adaptation, final command-specific route wiring, and
+  write boundaries only.
+- **TUI route ownership**: move reusable dashboard/table/detail route stack,
+  focused-action stability, filter state, confirmation state, pending writes,
+  and Back/Home restoration behavior into `reviewui` or a small review-route
+  owner. Domain adapters map reports to rows; they should not own generic route
+  mechanics.
+- **Provider execution boundary**: preserve provider log streaming through the
+  existing runner/update path. Do not replace Homebrew/mise update, scan, or
+  audit execution with Bubble Tea `ExecProcess`; reserve `ExecProcess` for
+  future foreground TUI actions such as editor or explicit agent review flows.
+- **External CLI contracts**: keep command construction, timeout/error
+  normalization, and structured output parsing in provider/scanner packages.
+  Any direct subprocess exception must remain documented and checked.
+
+Included work:
+
+1. **Command package thinning**
+   - Split the remaining command-local update/security/list/manual/backend
+     assembly into domain packages with tests.
+   - Remove command-local helpers that compute provider-neutral decisions,
+     evidence grouping, badge presence, reason derivation, or support labels.
+   - Keep localized text and final CLI/TUI route labels at the boundary.
+
+2. **Common TUI routing core**
+   - Extract shared route stack and state restoration semantics used by
+     `updev`, `updev last`, `updev list`, manual inventory, backend
+     convergence, security details, and policy review.
+   - Ensure returning from child views restores the parent row/filter/focused
+     action without flicker, disappearing focused actions, or accidental
+     navigation on the next keypress.
+   - Keep existing grouped high-density list design; do not redesign the UX in
+     this refactor.
+
+3. **Report assembly boundaries**
+   - Make cached reports, JSON/text summaries, and TUI route rows consume the
+     same structured assembly results.
+   - Move provider-neutral reason grouping and summary preparation into
+     packages that can be tested without TUI imports.
+   - Keep write/apply decisions command-scoped until policy/write flows get a
+     dedicated owner.
+
+4. **Placement checks**
+   - Tighten `SOURCE-STRUCTURE.md` and `scripts/check-source-structure.sh`
+     after the split lands so `internal/cmd` cannot drift back above the new
+     target.
+   - Add focused contract tests for the extracted report/TUI owners rather than
+     adding more broad command tests.
+
+`v0.7.7` exit criteria:
+
+- `internal/cmd` production files are at or below 30, and command test files are
+  checked separately.
+- No provider/scanner/policy/parser business logic remains in `internal/cmd`.
+- Generic TUI route mechanics live outside command-specific files, and accepted
+  `updev`, `last`, `list`, manual inventory, backend, security, and policy
+  route behavior still passes fast tests or TTY smoke.
+- Cached reports, JSON/text output, and TUI detail views still agree on held,
+  review, allow, updated, skipped, and error decisions.
+- Provider logs remain visible outside the alternate-screen TUI.
+- `mise -C tools/updev run check`, `mise -C tools/updev run docs-check`,
+  `git diff --check`, `chezmoi apply --dry-run`, and public export validation
+  pass before tagging.
 
 ### 1. Scalability Refactor
 
