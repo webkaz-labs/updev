@@ -581,7 +581,7 @@ func supportCatalogFilterRows() []detailBrowserRow {
 			Title:   tr("label filter", "label filter"),
 			Status:  string(plan.StatusOK),
 			Summary: strings.Join([]string{support.LabelSupportedPreview, support.LabelExperimental, support.LabelCompatibility, support.LabelDeferred}, " / "),
-			Detail:  tr("Choose a support label. Use / for free-text query filtering.", "support label を選択します。"),
+			Detail:  tr("Choose a support label. Use / for free-text query filtering.", "support label を選択します。自由検索は / を使います。"),
 			Actions: labelActions,
 		},
 	}
