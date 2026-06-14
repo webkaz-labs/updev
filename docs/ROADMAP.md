@@ -31,27 +31,26 @@ history in git log, and keep the current/next release target in
 - Documentation source-of-truth guidance, canonical `docs/agent/` usage/skill
   files, tag-specific release notes, and focused `docs-check` drift coverage are
   implemented.
-- `updev v0.7.3` is the current preview contract: it keeps the `v0.6.x`
-  Homebrew/mise provider gate, scalability, text UI, agent guidance,
-  compatibility ledger, and portable inventory groundwork, then adds explicit
-  support-level labels through `updev support` / `updev doctor support` and
-  compatibility-ledger `support_label` fields, with routed TUI visibility for
-  provider and support-catalog review.
+- `updev v0.7.4` is the current preview contract: it keeps the `v0.6.x`
+  Homebrew/mise provider gate and the `v0.7.3` support-label catalog, then
+  starts the next workstreams by extracting installed-list evidence projection
+  into `internal/plan` and tightening provider update/security evidence key
+  matching.
 - `updev brewfile ...` and `brewfile` remain compatibility or low-level
   surfaces, not the primary human workflow.
 
 ## Near-Term Order
 
-1. Dogfood `updev v0.7.3` on the macOS/Homebrew/mise preview path. The current
+1. Dogfood `updev v0.7.4` on the macOS/Homebrew/mise preview path. The current
    policy is fixed: keep macOS/Homebrew/mise as supported preview, Linux/Windows
    and agent enrichment experimental, `brewfile` compatibility oriented, and
    external installer execution / dynamic plugins / stable Linux-Windows update
    providers deferred.
-2. Continue the scalability refactor track in
-   [ARCHITECTURE.md](ARCHITECTURE.md#scalability-audit-and-refactor-plan)
-   before adding broad provider surfaces. Command handlers should keep shrinking
-   only where the target package can own the full domain behavior without
-   importing TUI/report types.
+2. Continue the broader `v0.7.x` workstream plan in
+   [RELEASE.md](RELEASE.md#next-v07x-workstream-plan) after `v0.7.4`. The order
+   remains scalability refactor, provider evidence quality, scanner hardening,
+   then policy ergonomics. Keep each slice small enough to validate and release
+   as a patch if dogfood risk is high.
 3. Preserve TTY/report regression guardrails for the accepted `updev`,
    `updev last`, and `updev list` flows before making additional UX changes.
 4. Continue `v0.7.x` support-label dogfood without turning the catalog into list
@@ -99,6 +98,27 @@ history in git log, and keep the current/next release target in
     privacy boundaries, and explicit experimental status for Linux/Windows
     providers. Reserve `updev v1.0.0` for the first stable public contract after
     that scope is deliberately narrowed and documented.
+
+## v0.7.x Workstream Sequencing
+
+Use this sequencing when turning the next major axes into issues or release
+patches:
+
+| Order | Workstream | First useful slice | Do not do yet |
+|-------|------------|--------------------|---------------|
+| 1 | Scalability refactor | Move one cohesive domain contract out of `internal/cmd` only when the target package can own the behavior and tests. | Broad framework extraction or nested command subpackages that still own business logic. |
+| 2 | Provider evidence quality | Improve Homebrew/mise held/review explanations with source URLs, release dates, cache age, and item-scoped commands. | Promote Linux/Windows or opaque mise/vfox paths based on weak evidence. |
+| 3 | Scanner hardening | Make explicit scanner/native-audit evidence more structured and bounded, with clear unavailable semantics. | Make slow or broad scanners part of the default update gate. |
+| 4 | Policy ergonomics | Add policy diagnostics and guided edit/renew/narrow flows where users already review security details. | Auto-post public issues or create broad permanent allow rules without explicit user intent. |
+
+Every workstream must preserve the same invariants:
+
+- provider logs remain visible outside alternate-screen TUI;
+- cached reports, JSON/text, and TUI detail views agree on decisions and
+  reasons;
+- item-scoped allow/hold/review is preserved whenever the provider supports it;
+- support labels remain preview boundaries, not `v1.0.0` promises;
+- docs stay current-state focused and release notes carry tag-specific history.
 
 ## Later Targets
 

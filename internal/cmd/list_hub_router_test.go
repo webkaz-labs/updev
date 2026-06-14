@@ -435,7 +435,7 @@ func TestListHubRouterClearsRowActionAfterReturningToInventory(t *testing.T) {
 			Desired:  true,
 			Live:     true,
 		}},
-		Evidence: addBackendListEvidence(listEvidenceIndex{}, backendPlan),
+		Evidence: addBackendListEvidence(plan.EvidenceIndex{}, backendPlan),
 	}
 	model := newListHubRouterModel(report, backendPlan, false, updateReport{}, false, listHubActionFull, nil, false)
 	updated, _ := model.Update(tea.KeyPressMsg(tea.Key{Text: "a", Code: 'a'}))
@@ -695,7 +695,7 @@ func TestListRowsExposeBackendRouteOnlyWithMatchingEvidence(t *testing.T) {
 			{Provider: "brew", Kind: "brew", Name: "ripgrep", Status: plan.StatusOK, Desired: true, Live: true},
 			{Provider: "mise", Kind: "tool", Name: "ripgrep", Status: plan.StatusOK, Desired: true, Live: true},
 		},
-		Evidence: addBackendListEvidence(listEvidenceIndex{}, backendPlanReport{Findings: []backendFinding{{
+		Evidence: addBackendListEvidence(plan.EvidenceIndex{}, backendPlanReport{Findings: []backendFinding{{
 			Type:            "homebrew-to-mise",
 			Provider:        "brew",
 			Kind:            "brew",
@@ -735,7 +735,7 @@ func TestListSectionsExposeBackendRoutesForRichToolRows(t *testing.T) {
 				Detail:  "fd via cargo",
 			}},
 		}},
-		Evidence: addBackendListEvidence(listEvidenceIndex{}, backendPlanReport{Findings: []backendFinding{{
+		Evidence: addBackendListEvidence(plan.EvidenceIndex{}, backendPlanReport{Findings: []backendFinding{{
 			Type:                "mise-backend-rewrite",
 			Provider:            "mise",
 			Kind:                "tool",
@@ -758,12 +758,12 @@ func TestListSectionsExposeBackendRoutesForRichToolRows(t *testing.T) {
 }
 
 func TestManualRowsExposeUpdateAndSecurityRoutesFromCaskEvidence(t *testing.T) {
-	evidence := listEvidenceIndex{Updates: map[string][]string{}, Security: map[string][]string{}, Backends: map[string][]string{}}
-	for _, key := range listEvidenceUpdateItemKeys("brew", "cask demo-app") {
-		listEvidenceAdd(evidence.Updates, key, "brew held: release age gate")
+	evidence := plan.EvidenceIndex{Updates: map[string][]string{}, Security: map[string][]string{}, Backends: map[string][]string{}}
+	for _, key := range plan.EvidenceUpdateItemKeys("brew", "cask demo-app", miseBumpProvider) {
+		plan.AddEvidence(evidence.Updates, key, "brew held: release age gate")
 	}
 	for _, key := range listEvidenceFindingKeys(safetyGate{Provider: "brew"}, safetyFinding{Provider: "brew", Kind: "cask", Name: "demo-app", Decision: "hold", Reason: "release too new"}) {
-		listEvidenceAdd(evidence.Security, key, "brew/cask demo-app: hold")
+		plan.AddEvidence(evidence.Security, key, "brew/cask demo-app: hold")
 	}
 	report := listReport{
 		Sections: []toolSection{{

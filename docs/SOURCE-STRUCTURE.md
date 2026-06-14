@@ -31,6 +31,7 @@ Current largest non-`cmd` packages:
 | `internal/nativeaudit` | 6 | ok |
 | `internal/securityadvisory` | 6 | ok |
 | `internal/backend` | 5 | ok |
+| `internal/plan` | 5 | ok |
 | `internal/textui` | 4 | ok |
 
 ## Placement Rules
@@ -67,6 +68,9 @@ Completed P1 foundation slices:
 - Shared inventory/provider status and item-query helpers live in
   `internal/plan`; cmd code no longer reimplements provider status, attention
   status ordering, or basic item search semantics.
+- Installed-list evidence indexes, item evidence projection, evidence-key
+  aliases, and evidence counts live in `internal/plan`; cmd code keeps only the
+  cached-report adapters, localized text, and TUI route/action wiring.
 - Update-step reasons for strict-safety and mise-bump flows expose stable
   `reason_code` plus `reason_args` through `internal/updatereason`.
 - Security gate findings expose stable `reason_code` plus `reason_args` for the
@@ -229,6 +233,17 @@ Current v0.7.0 guardrails:
 - Treat TTY/report regression behavior as part of the contract: route state,
   focused actions, grouped rows, and item-visible safety/update evidence should
   be tested or manually accepted before another UX refactor lands.
+
+Current v0.7.4 extraction result:
+
+- No new `internal/cmd` files were added.
+- List/detail evidence projection moved to `internal/plan`, and cmd now treats
+  it as a report/list adapter dependency.
+- Provider evidence quality improved at the key-matching boundary: provider
+  prefix rows and version-delta rows produce cleaner item identities before
+  route/action badges are rendered.
+- The next extraction should still choose one cohesive slice from the table
+  below before adding new provider, scanner, or policy surface.
 
 Next extraction candidates after v0.7.0:
 
