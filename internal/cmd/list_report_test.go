@@ -319,7 +319,7 @@ func TestPrintReadOnlyTextUsesRichListCategoryCounts(t *testing.T) {
 }
 
 func TestListEvidenceSummaryShowsZeroCounts(t *testing.T) {
-	report := listReport{Status: plan.StatusOK, Root: "/repo", Evidence: listEvidenceIndex{Updates: map[string][]string{}, Security: map[string][]string{}, Backends: map[string][]string{}}}
+	report := listReport{Status: plan.StatusOK, Root: "/repo", Evidence: plan.EvidenceIndex{Updates: map[string][]string{}, Security: map[string][]string{}, Backends: map[string][]string{}}}
 	var out bytes.Buffer
 	printListText(&out, report, "updev inventory", false)
 	text := out.String()
@@ -332,11 +332,11 @@ func TestListEvidenceSummaryShowsZeroCounts(t *testing.T) {
 }
 
 func TestListTitleEvidenceSummaryCountsOnlyVisibleRowActions(t *testing.T) {
-	evidence := listEvidenceIndex{Updates: map[string][]string{}, Security: map[string][]string{}, Backends: map[string][]string{}}
-	listEvidenceAdd(evidence.Updates, listEvidenceExactKey("brew", "brew", "jq"), "brew updated: jq 1.7 -> 1.8.1")
-	listEvidenceAdd(evidence.Updates, listEvidenceExactKey("brew", "brew", "hidden"), "brew updated: hidden 1.0 -> 1.1")
-	listEvidenceAdd(evidence.Security, listEvidenceExactKey("brew", "cask", "ghost"), "brew/cask ghost: hold")
-	listEvidenceAdd(evidence.Backends, listEvidenceExactKey("brew", "brew", "jq"), "backend evidence: jq")
+	evidence := plan.EvidenceIndex{Updates: map[string][]string{}, Security: map[string][]string{}, Backends: map[string][]string{}}
+	plan.AddEvidence(evidence.Updates, plan.EvidenceExactKey("brew", "brew", "jq"), "brew updated: jq 1.7 -> 1.8.1")
+	plan.AddEvidence(evidence.Updates, plan.EvidenceExactKey("brew", "brew", "hidden"), "brew updated: hidden 1.0 -> 1.1")
+	plan.AddEvidence(evidence.Security, plan.EvidenceExactKey("brew", "cask", "ghost"), "brew/cask ghost: hold")
+	plan.AddEvidence(evidence.Backends, plan.EvidenceExactKey("brew", "brew", "jq"), "backend evidence: jq")
 	report := listReport{
 		Items: []plan.Item{{
 			Provider: "brew",
@@ -357,8 +357,8 @@ func TestListTitleEvidenceSummaryCountsOnlyVisibleRowActions(t *testing.T) {
 
 func TestListTableShowsUpdatedBadgeWithVersionDelta(t *testing.T) {
 	t.Setenv("UPDEV_NERD_FONT", "0")
-	evidence := listEvidenceIndex{Updates: map[string][]string{}, Security: map[string][]string{}, Backends: map[string][]string{}}
-	listEvidenceAdd(evidence.Updates, listEvidenceExactKey("brew", "brew", "jq"), "brew updated: jq 1.7 -> 1.8.1")
+	evidence := plan.EvidenceIndex{Updates: map[string][]string{}, Security: map[string][]string{}, Backends: map[string][]string{}}
+	plan.AddEvidence(evidence.Updates, plan.EvidenceExactKey("brew", "brew", "jq"), "brew updated: jq 1.7 -> 1.8.1")
 	report := listReport{
 		Items: []plan.Item{{
 			Provider: "brew",
@@ -383,8 +383,8 @@ func TestListTableShowsUpdatedBadgeWithVersionDelta(t *testing.T) {
 
 func TestListTableOmitsSymbolicUpdateDelta(t *testing.T) {
 	t.Setenv("UPDEV_NERD_FONT", "0")
-	evidence := listEvidenceIndex{Updates: map[string][]string{}, Security: map[string][]string{}, Backends: map[string][]string{}}
-	listEvidenceAdd(evidence.Updates, listEvidenceExactKey("brew", "brew", "wezterm@nightly"), "brew updated: wezterm@nightly latest -> latest")
+	evidence := plan.EvidenceIndex{Updates: map[string][]string{}, Security: map[string][]string{}, Backends: map[string][]string{}}
+	plan.AddEvidence(evidence.Updates, plan.EvidenceExactKey("brew", "brew", "wezterm@nightly"), "brew updated: wezterm@nightly latest -> latest")
 	report := listReport{
 		Items: []plan.Item{{
 			Provider: "brew",
@@ -409,8 +409,8 @@ func TestListTableOmitsSymbolicUpdateDelta(t *testing.T) {
 
 func TestListTableShowsHeldBadgeForDeferredUpdateEvidence(t *testing.T) {
 	t.Setenv("UPDEV_NERD_FONT", "0")
-	evidence := listEvidenceIndex{Updates: map[string][]string{}, Security: map[string][]string{}, Backends: map[string][]string{}}
-	listEvidenceAdd(evidence.Updates, listEvidenceExactKey("brew", "cask", "demo-app"), "brew held: release age gate")
+	evidence := plan.EvidenceIndex{Updates: map[string][]string{}, Security: map[string][]string{}, Backends: map[string][]string{}}
+	plan.AddEvidence(evidence.Updates, plan.EvidenceExactKey("brew", "cask", "demo-app"), "brew held: release age gate")
 	report := listReport{
 		Items: []plan.Item{{
 			Provider: "brew",
@@ -434,7 +434,7 @@ func TestListTableShowsHeldBadgeForDeferredUpdateEvidence(t *testing.T) {
 
 func TestListTableShowsHeldBadgeForBrewSecurityHoldEvidence(t *testing.T) {
 	t.Setenv("UPDEV_NERD_FONT", "0")
-	evidence := listEvidenceIndex{Updates: map[string][]string{}, Security: map[string][]string{}, Backends: map[string][]string{}}
+	evidence := plan.EvidenceIndex{Updates: map[string][]string{}, Security: map[string][]string{}, Backends: map[string][]string{}}
 	for _, key := range listEvidenceFindingKeys(safetyGate{Provider: "brew"}, safetyFinding{
 		Provider: "brew",
 		Kind:     "brew",
@@ -442,7 +442,7 @@ func TestListTableShowsHeldBadgeForBrewSecurityHoldEvidence(t *testing.T) {
 		Decision: "hold",
 		Reason:   "candidate release is too new",
 	}) {
-		listEvidenceAdd(evidence.Security, key, "brew/brew jq: hold")
+		plan.AddEvidence(evidence.Security, key, "brew/brew jq: hold")
 	}
 	report := listReport{
 		Items: []plan.Item{{
@@ -470,9 +470,9 @@ func TestListTableShowsHeldBadgeForBrewSecurityHoldEvidence(t *testing.T) {
 
 func TestListTableShowsUpdateAndSecurityBadgesTogether(t *testing.T) {
 	t.Setenv("UPDEV_NERD_FONT", "0")
-	evidence := listEvidenceIndex{Updates: map[string][]string{}, Security: map[string][]string{}, Backends: map[string][]string{}}
-	listEvidenceAdd(evidence.Updates, listEvidenceExactKey("mise", "tool", "go"), "mise-bump deferred: candidate available")
-	listEvidenceAdd(evidence.Security, listEvidenceExactKey("mise", "tool", "go"), "mise/tool go: hold")
+	evidence := plan.EvidenceIndex{Updates: map[string][]string{}, Security: map[string][]string{}, Backends: map[string][]string{}}
+	plan.AddEvidence(evidence.Updates, plan.EvidenceExactKey("mise", "tool", "go"), "mise-bump deferred: candidate available")
+	plan.AddEvidence(evidence.Security, plan.EvidenceExactKey("mise", "tool", "go"), "mise/tool go: hold")
 	report := listReport{
 		Items: []plan.Item{{
 			Provider: "mise",
@@ -496,11 +496,11 @@ func TestListTableShowsUpdateAndSecurityBadgesTogether(t *testing.T) {
 
 func TestListEvidenceMetadataLocalizesMiseMessages(t *testing.T) {
 	withDefaultLanguageForTest(t, "ja")
-	metadata := (listItemEvidence{
+	metadata := (plan.ItemEvidence{
 		Updates:  []string{"mise-bump held: mise bump applied 1 safe candidates; 18 candidates require review"},
 		Security: []string{"mise/tool node: held (decision: review): mise backend is unsupported or opaque for updev-owned release-age evidence"},
-	}).Metadata()
-	text := strings.Join(metadata, "\n")
+	})
+	text := strings.Join(listItemEvidenceMetadata(metadata), "\n")
 	for _, want := range []string{"更新根拠:", "セキュリティ根拠:", "安全な更新候補 1 件を適用済みです", "リリース経過日数の根拠を十分に確認できない"} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("expected localized evidence text to include %q:\n%s", want, text)

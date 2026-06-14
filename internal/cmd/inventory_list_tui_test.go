@@ -204,10 +204,10 @@ func TestPrintListTextDetailsExpandsDescriptions(t *testing.T) {
 }
 
 func TestPrintListTextSurfacesReviewEvidence(t *testing.T) {
-	evidence := listEvidenceIndex{Updates: map[string][]string{}, Security: map[string][]string{}, Backends: map[string][]string{}}
-	listEvidenceAdd(evidence.Updates, listEvidenceExactKey("brew", "cask", "demo-app"), "brew held: release age gate")
-	listEvidenceAdd(evidence.Security, listEvidenceExactKey("brew", "cask", "demo-app"), "brew/cask demo-app: hold")
-	listEvidenceAdd(evidence.Backends, listEvidenceExactKey("mise", "tool", "cargo:fd-find"), "aqua prebuilt CLI is preferred")
+	evidence := plan.EvidenceIndex{Updates: map[string][]string{}, Security: map[string][]string{}, Backends: map[string][]string{}}
+	plan.AddEvidence(evidence.Updates, plan.EvidenceExactKey("brew", "cask", "demo-app"), "brew held: release age gate")
+	plan.AddEvidence(evidence.Security, plan.EvidenceExactKey("brew", "cask", "demo-app"), "brew/cask demo-app: hold")
+	plan.AddEvidence(evidence.Backends, plan.EvidenceExactKey("mise", "tool", "cargo:fd-find"), "aqua prebuilt CLI is preferred")
 	report := listReport{
 		Status:  plan.StatusHeld,
 		Root:    "/repo",
