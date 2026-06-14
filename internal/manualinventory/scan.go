@@ -5,7 +5,19 @@ import (
 	"sort"
 	"strings"
 	"unicode"
+
+	"github.com/webkaz-labs/updev/internal/manualinventory/platform"
 )
+
+type App struct {
+	Name          string
+	Source        string
+	Path          string
+	BundleID      string
+	IdentifierKey string
+	Identifier    string
+	Version       string
+}
 
 type Scanner func(root string, defaultRoot string) []App
 
@@ -34,15 +46,31 @@ func ScanApplications(root string, defaultRoot string) []App {
 func ApplicationScanners() []Scanner {
 	return []Scanner{
 		func(root string, defaultRoot string) []App {
-			return ScanMacApplications(root, defaultRoot)
+			return appsFromPlatform(platform.ScanMacApplications(root, defaultRoot))
 		},
 		func(root string, defaultRoot string) []App {
-			return ScanLinuxApplications(root, defaultRoot)
+			return appsFromPlatform(platform.ScanLinuxApplications(root, defaultRoot))
 		},
 		func(root string, defaultRoot string) []App {
-			return ScanWindowsApplications(root, defaultRoot)
+			return appsFromPlatform(platform.ScanWindowsApplications(root, defaultRoot))
 		},
 	}
+}
+
+func appsFromPlatform(apps []platform.App) []App {
+	out := make([]App, 0, len(apps))
+	for _, app := range apps {
+		out = append(out, App{
+			Name:          app.Name,
+			Source:        app.Source,
+			Path:          app.Path,
+			BundleID:      app.BundleID,
+			IdentifierKey: app.IdentifierKey,
+			Identifier:    app.Identifier,
+			Version:       app.Version,
+		})
+	}
+	return out
 }
 
 func AppKey(app App) string {
@@ -69,4 +97,13 @@ func normalizedAppKey(name string) string {
 		}
 	}
 	return builder.String()
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if trimmed := strings.TrimSpace(value); trimmed != "" {
+			return trimmed
+		}
+	}
+	return ""
 }

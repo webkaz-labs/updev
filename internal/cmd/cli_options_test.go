@@ -46,13 +46,13 @@ func TestBuildVersionReport(t *testing.T) {
 	if report.SchemaVersion != 1 || report.Tool != toolName || report.Version != toolVersion {
 		t.Fatalf("unexpected version report: %#v", report)
 	}
-	if report.Major != 0 || report.Minor != 7 || report.Patch != 4 || report.Contract != "pre_stable" {
+	if report.Major != 0 || report.Minor != 7 || report.Patch != 5 || report.Contract != "pre_stable" {
 		t.Fatalf("unexpected version semantics: %#v", report)
 	}
 }
 
 func TestBuildSupportReportFiltersSupportLabels(t *testing.T) {
-	report := buildSupportReport(supportOptions{format: "json", surface: "provider", label: support.LabelExperimental})
+	report := buildSupportReport(supportOptions{Format: "json", Surface: "provider", Label: support.LabelExperimental})
 	if report.SchemaVersion != supportReportSchemaVersion || report.Tool != toolName || report.Version != toolVersion {
 		t.Fatalf("unexpected support report metadata: %#v", report)
 	}
@@ -74,7 +74,7 @@ func TestParseSupportOptions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if opts.surface != "command" || opts.label != "compatibility" || opts.format != "json" {
+	if opts.Surface != "command" || opts.Label != "compatibility" || opts.Format != "json" {
 		t.Fatalf("unexpected support options: %#v", opts)
 	}
 	for _, args := range [][]string{
@@ -90,7 +90,7 @@ func TestParseSupportOptions(t *testing.T) {
 
 func TestSupportTextMentionsLabels(t *testing.T) {
 	var builder strings.Builder
-	printSupportText(&builder, buildSupportReport(supportOptions{format: "text", surface: "provider"}), false)
+	printSupportText(&builder, buildSupportReport(supportOptions{Format: "text", Surface: "provider"}), false)
 	out := builder.String()
 	for _, want := range []string{"updev support", "supported_preview", "experimental", "homebrew", "linux"} {
 		if !strings.Contains(out, want) {
