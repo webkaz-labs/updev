@@ -11,16 +11,13 @@ stays an integer schema contract. `v0.x` releases are public preview releases;
 
 ## Current Release
 
-The current implemented release is `updev v0.7.5`. `updev version`,
+The current implemented release is `updev v0.7.6`. `updev version`,
 `updev --version`, and `updev -v` report this command contract.
 
-`updev v0.7.5` is the public-preview scalability completion patch for the
-`v0.7.x` P1 structural refactor. It keeps the supported macOS/Homebrew/mise
-preview path, then lowers `internal/cmd` and `manualinventory` below their
-documented ceilings, moves portable manual app scanners into a nested owner
-package, extracts inventory collection/cache, support report rendering,
-Homebrew advisory mapping, and shared route-state helpers into owning packages,
-and preserves provider log streaming outside the alternate-screen TUI.
+`updev v0.7.6` is a public-preview hotfix on top of the `v0.7.5` scalability
+completion patch. It preserves the same supported macOS/Homebrew/mise preview
+scope and fixes a Japanese support-catalog help string so the label-filter
+detail mentions the `/` free-text shortcut consistently with the English text.
 
 Current support promise:
 
@@ -36,6 +33,8 @@ Current support promise:
 
 Released patch notes:
 
+- [v0.7.6](release-notes/v0.7.6.md): Japanese TUI help text consistency fix
+  for the support-catalog label filter.
 - [v0.7.5](release-notes/v0.7.5.md): scalability refactor completion with
   package-count gates, manual inventory platform split, owner-package
   extractions, and route-state helper consolidation.
