@@ -2,9 +2,9 @@ package securityadvisory
 
 import (
 	"context"
-	"github.com/webkaz-labs/updev/internal/plan"
 	"encoding/json"
 	"fmt"
+	"github.com/webkaz-labs/updev/internal/plan"
 	"io"
 	"net/http"
 	"net/url"
