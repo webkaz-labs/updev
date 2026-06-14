@@ -87,6 +87,64 @@ func TestListHubRouterOpensBackendTableWithoutSubprogram(t *testing.T) {
 	}
 }
 
+func TestListHubRouterOpensSupportCatalogWithoutSubprogram(t *testing.T) {
+	report := listReport{Status: plan.StatusOK, Root: "/repo"}
+	model := newListHubRouterModel(report, backendPlanReport{}, false, updateReport{}, false, listHubActionSupport, nil, false)
+	if model.screen != listHubRouterDetail || model.stateKey != listHubActionSupport {
+		t.Fatalf("expected support catalog detail view, screen=%q state=%q", model.screen, model.stateKey)
+	}
+	view := model.View().Content
+	for _, want := range []string{"updev support catalog", "provider/homebrew", "experimental"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("expected support catalog view to include %q:\n%s", want, view)
+		}
+	}
+	updated, _ := model.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyDown}))
+	model = updated.(listHubRouterModel)
+	updated, _ = model.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyDown}))
+	model = updated.(listHubRouterModel)
+	updated, _ = model.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyEnter}))
+	model = updated.(listHubRouterModel)
+	if view := model.View().Content; !strings.Contains(view, "support_label") {
+		t.Fatalf("expected expanded support catalog row to include support_label:\n%s", view)
+	}
+	updated, _ = model.handleAction(listSupportFilterActionValue("label", "experimental"))
+	model = updated.(listHubRouterModel)
+	if model.stateKey != "support-filter:label:experimental" {
+		t.Fatalf("expected support label filter state, got %q", model.stateKey)
+	}
+	if view := model.View().Content; !strings.Contains(view, "experimental") || strings.Contains(view, "supported_preview command") {
+		t.Fatalf("expected support label filter to show only experimental rows:\n%s", view)
+	}
+	updated, _ = model.handleAction(listSupportFilterActionValue("label", "all"))
+	model = updated.(listHubRouterModel)
+	if view := model.View().Content; !strings.Contains(view, "supported_preview") || !strings.Contains(view, "experimental") {
+		t.Fatalf("expected support label all filter to restore catalog rows:\n%s", view)
+	}
+}
+
+func TestListHubRouterProviderFilterShowsNonDefaultSupportLabel(t *testing.T) {
+	report := listReport{
+		Status: plan.StatusOK,
+		Root:   "/repo",
+		Providers: []plan.ProviderSummary{{
+			Name:    "vscode",
+			Desired: 1,
+			Live:    1,
+		}},
+	}
+	rows := listProviderFilterRows(report)
+	if len(rows) != 1 {
+		t.Fatalf("expected provider row, got %#v", rows)
+	}
+	if !strings.Contains(rows[0].Summary, "support=experimental") {
+		t.Fatalf("expected non-default support label in provider summary, got %#v", rows[0])
+	}
+	if !strings.Contains(strings.Join(rows[0].Metadata, "\n"), "support_label: experimental") {
+		t.Fatalf("expected support label metadata, got %#v", rows[0])
+	}
+}
+
 func TestListHubRouterRefreshesBackendEvidenceAsynchronously(t *testing.T) {
 	t.Setenv("UPDEV_NERD_FONT", "0")
 	report := listReport{Status: plan.StatusOK, Root: "/repo", Items: []plan.Item{{

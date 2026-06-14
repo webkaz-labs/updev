@@ -347,6 +347,30 @@ The routed dashboard/list/detail flow is the accepted baseline. Current and
 future provider gates should build on the same action-review model instead of
 creating separate flows.
 
+## v0.7.3 Support Label TUI Rules
+
+`v0.7.3` makes support labels visible in the TUI only when they change a human
+decision. Do not repeat every catalog label on every row.
+
+- Provider rows and provider details may show support labels. Hide
+  `supported_preview` in dense lists unless there is spare space; show
+  `experimental`, `compatibility`, and `deferred` as compact badges because they
+  change user expectations.
+- `doctor dependencies` text/detail rows show the exact compatibility-ledger
+  `support_label`, because those rows review provider command/API contract
+  support.
+- Manual inventory evidence may show inventory-source support labels in detail
+  metadata only. Avoid adding another always-visible list column.
+- Command and report surface labels belong in a support-catalog route reachable
+  from both `updev hub` and the list hub. They are not duplicated on unrelated
+  update/inventory dashboards.
+- The full support catalog route keeps the same filterable TUI pattern as other
+  high-information lists: surface filter, label filter, query filter,
+  expandable details, and Back/Home restoration.
+- The support-catalog route is the only place where command and report support
+  labels are shown as first-class rows. Other dashboards should link to that
+  route instead of duplicating the catalog.
+
 ## Completed Performance Checklist
 
 - [x] Continue reducing PTY route-suite runtime; fast PTY smoke is the default

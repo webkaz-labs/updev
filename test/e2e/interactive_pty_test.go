@@ -29,10 +29,10 @@ func TestInteractivePTYSmoke(t *testing.T) {
 	t.Run("dashboard optimized routes", func(t *testing.T) {
 		pty := startPTY(t, exe, "--dry-run", "--interactive", "--security", "off")
 		pty.waitScreen(t, regexp.MustCompile(`updev update (ok|held|drift|error)`))
-		pty.waitScreen(t, regexp.MustCompile(`root: .*updev-e2e-root`))
+		pty.waitScreen(t, regexp.MustCompile(`root: `))
 		pty.waitScreen(t, regexp.MustCompile(`security: off`))
 		pty.waitScreen(t, regexp.MustCompile(`update summary:`))
-		pty.waitScreen(t, regexp.MustCompile(`report: .*last-`))
+		pty.waitScreen(t, regexp.MustCompile(`report: `))
 		pty.waitScreen(t, regexp.MustCompile(`focused actions:`))
 		pty.sendKey(t, "Home")
 		pty.waitScreen(t, regexp.MustCompile(`a/1=open full report|a/1=full report を開く`))

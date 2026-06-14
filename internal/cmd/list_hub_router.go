@@ -29,6 +29,11 @@ type listHubFilterAction struct {
 	Value string
 }
 
+type listSupportFilterAction struct {
+	Kind  string
+	Value string
+}
+
 type listHubRouterScreen string
 
 const (
@@ -170,7 +175,7 @@ func (m *listHubRouterModel) refreshCurrentScreen() {
 		return
 	}
 	switch m.stateKey {
-	case listHubActionFull, listHubActionManual, listHubActionBackends, listHubActionUpdates, listHubActionSecurity, listHubActionDetails:
+	case listHubActionFull, listHubActionManual, listHubActionBackends, listHubActionUpdates, listHubActionSecurity, listHubActionSupport, listHubActionDetails:
 		m.showAction(m.stateKey, m.returnAction)
 	}
 }
@@ -202,6 +207,10 @@ func (m listHubRouterModel) handleAction(action string) (tea.Model, tea.Cmd) {
 			m.showAction(m.returnAction, listHubActionFull)
 			return m, nil
 		}
+		if strings.HasPrefix(m.stateKey, "support-filter:") && m.returnAction != "" {
+			m.showAction(m.returnAction, listHubActionFull)
+			return m, nil
+		}
 		if strings.HasPrefix(m.stateKey, "filter-result:") && m.returnAction != "" {
 			m.showAction(m.returnAction, listHubActionFull)
 			return m, nil
@@ -214,6 +223,10 @@ func (m listHubRouterModel) handleAction(action string) (tea.Model, tea.Cmd) {
 	}
 	if filter, ok := parseListHubFilterAction(action); ok {
 		m.showFilterResult(filter)
+		return m, nil
+	}
+	if filter, ok := parseListSupportFilterAction(action); ok {
+		m.showSupportFilterResult(filter)
 		return m, nil
 	}
 	if route, ok := parseListRouteAction(action); ok {
@@ -280,6 +293,8 @@ func (m *listHubRouterModel) showAction(action string, returnAction string) {
 			return
 		}
 		m.showEmptyDetail("updev security review", listHubActionSecurity, returnAction)
+	case listHubActionSupport:
+		m.showSupportCatalog(supportOptions{surface: "all"}, listHubActionSupport, returnAction)
 	case listHubActionDetails:
 		detailReport := derivedListReport(m.report, listOptions{limit: 10})
 		m.showDetail("updev list details", listDetailRows(detailReport), listHubActionDetails, returnAction)
@@ -452,12 +467,60 @@ func (m *listHubRouterModel) showFilterResult(filter listHubFilterAction) {
 	m.showListFiltered(title, report, stateKey, filter.Kind, "", "")
 }
 
+const listSupportFilterActionPrefix = "support-filter"
+
+func listSupportFilterActionValue(kind string, value string) string {
+	return strings.Join([]string{listSupportFilterActionPrefix, kind, value}, "\t")
+}
+
+func parseListSupportFilterAction(value string) (listSupportFilterAction, bool) {
+	parts := strings.Split(value, "\t")
+	if len(parts) != 3 || parts[0] != listSupportFilterActionPrefix {
+		return listSupportFilterAction{}, false
+	}
+	if strings.TrimSpace(parts[1]) == "" || strings.TrimSpace(parts[2]) == "" {
+		return listSupportFilterAction{}, false
+	}
+	return listSupportFilterAction{Kind: parts[1], Value: parts[2]}, true
+}
+
+func (m *listHubRouterModel) showSupportFilterResult(filter listSupportFilterAction) {
+	opts := supportOptions{surface: "all"}
+	switch filter.Kind {
+	case "surface":
+		opts.surface = filter.Value
+	case "label":
+		if filter.Value != "all" {
+			opts.label = filter.Value
+		}
+	}
+	stateKey := "support-filter:" + filter.Kind + ":" + filter.Value
+	m.showSupportCatalog(opts, stateKey, listHubActionSupport)
+}
+
 func (m *listHubRouterModel) showInput(title string, description string, placeholder string, stateKey string, returnAction string) {
 	model := newTextInputBrowserModel(title, description, placeholder, "", m.color)
 	m.screen = listHubRouterInput
 	m.stateKey = stateKey
 	m.returnAction = returnAction
 	m.input = model
+}
+
+func (m *listHubRouterModel) showSupportCatalog(opts supportOptions, stateKey string, returnAction string) {
+	report := buildSupportReport(opts)
+	rows := append(supportCatalogFilterRows(), supportCatalogDetailRows(report)...)
+	m.showDetail(supportCatalogTitle(opts), rows, stateKey, returnAction)
+}
+
+func supportCatalogTitle(opts supportOptions) string {
+	parts := []string{"updev support catalog"}
+	if opts.surface != "" && opts.surface != "all" {
+		parts = append(parts, "surface="+opts.surface)
+	}
+	if opts.label != "" {
+		parts = append(parts, "label="+opts.label)
+	}
+	return strings.Join(parts, " ")
 }
 
 func (m *listHubRouterModel) showRouteDetail(route listRouteAction) {
@@ -525,11 +588,20 @@ func parseListHubFilterStateKey(stateKey string) (listHubFilterAction, bool) {
 func listProviderFilterRows(report listReport) []detailBrowserRow {
 	rows := make([]detailBrowserRow, 0, len(report.Providers))
 	for _, provider := range report.Providers {
+		summaryParts := []string{fmt.Sprintf("desired=%d live=%d missing=%d extra=%d", provider.Desired, provider.Live, provider.Missing, provider.Extra)}
+		if label := providerSupportLabel(provider.Name); supportLabelIsDenseBadge(label) {
+			summaryParts = append(summaryParts, "support="+label)
+		}
+		metadata := []string{}
+		if label := providerSupportLabel(provider.Name); label != "" {
+			metadata = append(metadata, "support_label: "+label)
+		}
 		rows = append(rows, detailBrowserRow{
-			Title:   provider.Name,
-			Status:  string(plan.ProviderStatus(provider)),
-			Summary: fmt.Sprintf("desired=%d live=%d missing=%d extra=%d", provider.Desired, provider.Live, provider.Missing, provider.Extra),
-			Detail:  tr("Open installed inventory rows for this provider.", "この provider の installed inventory 行を開きます。"),
+			Title:    provider.Name,
+			Status:   string(plan.ProviderStatus(provider)),
+			Summary:  strings.Join(summaryParts, " "),
+			Detail:   tr("Open installed inventory rows for this provider.", "この provider の installed inventory 行を開きます。"),
+			Metadata: metadata,
 			Actions: []detailBrowserAction{{
 				Value:       listHubFilterActionValue(listHubActionProvider, provider.Name),
 				Label:       tr("open provider", "provider を開く"),
@@ -656,7 +728,7 @@ func (m listHubRouterModel) loadingTitle(title string, stateKey string) string {
 		return title
 	}
 	switch stateKey {
-	case listHubActionFull, listHubActionManual, listHubActionBackends, listHubActionDetails:
+	case listHubActionFull, listHubActionManual, listHubActionBackends, listHubActionSupport, listHubActionDetails:
 		return title + " " + tr("(backend evidence loading)", "(backend evidence 準備中)")
 	default:
 		if _, ok := parseListHubFilterStateKey(stateKey); ok {
@@ -669,8 +741,11 @@ func (m listHubRouterModel) loadingTitle(title string, stateKey string) string {
 func (m listHubRouterModel) currentAction() string {
 	if m.stateKey != "" {
 		switch m.stateKey {
-		case listHubActionFull, listHubActionManual, listHubActionBackends, listHubActionUpdates, listHubActionSecurity, listHubActionDetails:
+		case listHubActionFull, listHubActionManual, listHubActionBackends, listHubActionUpdates, listHubActionSecurity, listHubActionSupport, listHubActionDetails:
 			return m.stateKey
+		}
+		if strings.HasPrefix(m.stateKey, "support-filter:") {
+			return listHubActionSupport
 		}
 	}
 	if m.returnAction != "" {

@@ -314,7 +314,7 @@ func TestInventoryPlanAddsBrewAndVendorGuidance(t *testing.T) {
 	if len(brewRow.Actions) != 1 || !strings.Contains(brewRow.Actions[0].Value, "review-cask") {
 		t.Fatalf("expected brew plan row to expose review-cask action, got %#v", brewRow.Actions)
 	}
-	if !containsSubstring(brewRow.Metadata, "managed_by=brew") || !containsSubstring(brewRow.Metadata, "ownership_confidence=high") || !containsSubstring(brewRow.Metadata, "provider_metadata=Homebrew cask inventory") {
+	if !containsSubstring(brewRow.Metadata, "managed_by=brew") || !containsSubstring(brewRow.Metadata, "ownership_confidence=high") || !containsSubstring(brewRow.Metadata, "provider_metadata=Homebrew cask inventory") || !containsSubstring(brewRow.Metadata, "support_label=supported_preview") {
 		t.Fatalf("expected brew detail metadata to expose ownership evidence, got %#v", brewRow.Metadata)
 	}
 	if action, target, ok := parseManualPlanDetailAction(brewRow.Actions[0].Value); !ok || action != "review-cask" || target != "firefox" {

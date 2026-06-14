@@ -107,6 +107,24 @@ func TestDependencyCompatibilityLedgerMarksRequiredDriftUnsupported(t *testing.T
 	}
 }
 
+func TestDependencyContractTextShowsSupportLabel(t *testing.T) {
+	var builder strings.Builder
+	printDependencyContractText(&builder, dependencyContractReport{
+		Status: plan.StatusOK,
+		Checks: []dependencyContractCheck{{
+			Tool:     "mise",
+			Feature:  "current-json",
+			Required: true,
+			Status:   plan.StatusOK,
+			Version:  "2026.6.1",
+		}},
+	}, false)
+	out := builder.String()
+	if !strings.Contains(out, "support_label") || !strings.Contains(out, "supported_preview") {
+		t.Fatalf("expected dependency text to include support label:\n%s", out)
+	}
+}
+
 func TestWriteDependencyCompatibilityLedger(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "compatibility-ledger.json")
 	ledger := dependencyCompatibilityLedger{SchemaVersion: 1, GeneratedAt: "2026-06-14T01:02:03Z", Root: "/repo", Entries: []dependencyCompatibilityEntry{{Tool: "mise", Feature: "current-json", Status: plan.StatusOK, Supported: true}}}
