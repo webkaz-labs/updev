@@ -139,3 +139,118 @@ func printSupportText(w io.Writer, report supportReport, color bool) {
 		}, rows, color)
 	}
 }
+
+func supportCatalogDetailRows(report supportReport) []detailBrowserRow {
+	rows := make([]detailBrowserRow, 0, len(report.Entries))
+	for _, entry := range report.Entries {
+		metadata := []string{
+			"surface: " + entry.Surface,
+			"support_label: " + entry.Label,
+		}
+		if entry.Scope != "" {
+			metadata = append(metadata, "scope: "+entry.Scope)
+		}
+		for _, evidence := range entry.Evidence {
+			metadata = append(metadata, "evidence: "+evidence)
+		}
+		for _, limitation := range entry.Limitations {
+			metadata = append(metadata, "limitation: "+limitation)
+		}
+		if entry.Next != "" {
+			metadata = append(metadata, "next: "+entry.Next)
+		}
+		rows = append(rows, detailBrowserRow{
+			Title:    entry.Surface + "/" + entry.Name,
+			Status:   entry.Label,
+			Summary:  entry.Summary,
+			Detail:   entry.Summary,
+			Metadata: metadata,
+		})
+	}
+	return rows
+}
+
+func supportCatalogFilterRows() []detailBrowserRow {
+	surfaceActions := []detailBrowserAction{}
+	for _, surface := range []string{"all", "provider", "command", "report", "inventory_source"} {
+		surfaceActions = append(surfaceActions, detailBrowserAction{
+			Value:       listSupportFilterActionValue("surface", surface),
+			Label:       surface,
+			Description: tr("filter support catalog by surface", "support catalog を surface で絞り込みます"),
+		})
+	}
+	labelActions := []detailBrowserAction{}
+	for _, label := range []string{"all", support.LabelSupportedPreview, support.LabelExperimental, support.LabelCompatibility, support.LabelDeferred} {
+		labelActions = append(labelActions, detailBrowserAction{
+			Value:       listSupportFilterActionValue("label", label),
+			Label:       label,
+			Description: tr("filter support catalog by label", "support catalog を label で絞り込みます"),
+		})
+	}
+	return []detailBrowserRow{
+		{
+			Title:   tr("surface filter", "surface filter"),
+			Status:  string(plan.StatusOK),
+			Summary: "all / provider / command / report / inventory_source",
+			Detail:  tr("Choose a support surface. Use / for free-text query filtering.", "support surface を選択します。自由検索は / を使います。"),
+			Actions: surfaceActions,
+		},
+		{
+			Title:   tr("label filter", "label filter"),
+			Status:  string(plan.StatusOK),
+			Summary: strings.Join([]string{support.LabelSupportedPreview, support.LabelExperimental, support.LabelCompatibility, support.LabelDeferred}, " / "),
+			Detail:  tr("Choose a support label. Use / for free-text query filtering.", "support label を選択します。自由検索は / を使います。"),
+			Actions: labelActions,
+		},
+	}
+}
+
+func providerSupportLabel(name string) string {
+	name = strings.TrimSpace(strings.ToLower(name))
+	switch name {
+	case "brew":
+		name = "homebrew"
+	case "manual":
+		name = "manual-apps"
+	}
+	for _, entry := range support.Catalog() {
+		if entry.Surface == "provider" && strings.EqualFold(entry.Name, name) {
+			return entry.Label
+		}
+	}
+	return ""
+}
+
+func manualInventorySourceSupportLabel(evidence manualReviewEvidence) (string, string) {
+	source := strings.ToLower(strings.TrimSpace(evidence.Source))
+	scanner := strings.ToLower(strings.TrimSpace(evidence.Scanner))
+	sourceName := ""
+	switch {
+	case strings.Contains(source, "mac app store"), strings.Contains(source, "mas list"):
+		sourceName = "mac-app-store"
+	case strings.Contains(source, "homebrew cask"):
+		sourceName = "homebrew-cask"
+	case strings.Contains(source, "homebrew tap docs"):
+		sourceName = "manual-markdown"
+	case strings.Contains(source, "app bundle"), scanner == "macos_app_bundle":
+		sourceName = "macos-app-bundle"
+	}
+	if sourceName == "" {
+		return "", ""
+	}
+	for _, entry := range support.Catalog() {
+		if entry.Surface == "inventory_source" && entry.Name == sourceName {
+			return sourceName, entry.Label
+		}
+	}
+	return sourceName, ""
+}
+
+func supportLabelIsDenseBadge(label string) bool {
+	switch label {
+	case support.LabelExperimental, support.LabelCompatibility, support.LabelDeferred:
+		return true
+	default:
+		return false
+	}
+}

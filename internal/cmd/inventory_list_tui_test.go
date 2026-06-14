@@ -435,7 +435,7 @@ func TestListHubChoicesExposeFiltersAndNavigation(t *testing.T) {
 	for _, choice := range choices {
 		values[choice.Value] = true
 	}
-	for _, want := range []string{listHubActionAttention, listHubActionProvider, listHubActionKind, listHubActionCategory, listHubActionStatus, listHubActionQuery, listHubActionManual, listHubActionBackends, listHubActionLimited, listHubActionDetails, listHubActionFull, updevActionExit} {
+	for _, want := range []string{listHubActionAttention, listHubActionProvider, listHubActionKind, listHubActionCategory, listHubActionStatus, listHubActionQuery, listHubActionManual, listHubActionBackends, listHubActionSupport, listHubActionLimited, listHubActionDetails, listHubActionFull, updevActionExit} {
 		if !values[want] {
 			t.Fatalf("expected list hub choice %q in %#v", want, choices)
 		}
@@ -461,6 +461,9 @@ func TestListHubChoicesExposeBackendWhileEvidenceIsLoading(t *testing.T) {
 func TestShouldRunListHubRouterIncludesQuery(t *testing.T) {
 	if !shouldRunListHubRouterAction(listHubActionQuery) {
 		t.Fatal("expected list query to run inside the list hub router")
+	}
+	if !shouldRunListHubRouterAction(listHubActionSupport) {
+		t.Fatal("expected support catalog to run inside the list hub router")
 	}
 }
 

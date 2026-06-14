@@ -11,16 +11,17 @@ stays an integer schema contract. `v0.x` releases are public preview releases;
 
 ## Current Release
 
-The current implemented release is `updev v0.7.2`. `updev version`,
+The current implemented release is `updev v0.7.3`. `updev version`,
 `updev --version`, and `updev -v` report this command contract.
 
-`updev v0.7.2` is a public-preview hardening patch release. It keeps the supported
+`updev v0.7.3` is a public-preview hardening patch release. It keeps the supported
 macOS/Homebrew/mise preview path from `v0.6.x`, adds machine-readable support
 labels for providers, commands, report families, and inventory sources, and
 uses those labels to clarify which surfaces are supported preview,
 experimental, compatibility-only, or deferred before any `v1.0.0` contract is
-considered. It also makes compatibility-ledger `support_label` output an
-unconditional JSON field, matching the documented schema.
+considered. It also makes those support labels visible in routed TUI review
+surfaces where they affect human decisions, while keeping `supported_preview`
+detail-only in dense lists.
 
 Current support promise:
 
@@ -36,6 +37,8 @@ Current support promise:
 
 Released patch notes:
 
+- [v0.7.3](release-notes/v0.7.3.md): support-label TUI visibility, provider
+  support badges, and dependency support-label text output.
 - [v0.7.2](release-notes/v0.7.2.md): compatibility-ledger JSON contract test
   precision for support labels.
 - [v0.7.1](release-notes/v0.7.1.md): compatibility-ledger JSON contract polish
@@ -172,6 +175,37 @@ finding proves them wrong:
      `docs/release-notes/<tag>.md`.
    - Keep docs-check coverage for embedded agent docs, release notes, source
      structure, and public export assumptions.
+
+### v0.7.3 Scope
+
+`v0.7.3` is the support-label TUI visibility patch. It does not add new support
+labels or promote experimental providers; it makes the existing v0.7 support
+catalog visible in the routed TUI where it changes a human decision.
+
+Included work:
+
+1. Add a support-catalog routed TUI view reachable from `updev hub` and the list
+   hub, with surface, label, and query filters plus expandable details.
+2. Show provider support labels in dense TUI rows only when they are
+   non-default: `experimental`, `compatibility`, or `deferred`.
+3. Keep `supported_preview` detail-only by default so supported paths do not
+   add visual noise to every row.
+4. Show exact compatibility-ledger `support_label` values in
+   `doctor dependencies` text/detail rows.
+5. Show inventory-source support labels only in manual inventory evidence
+   details, not as an always-visible list column.
+6. Preserve existing routed TUI invariants: Back/Home restoration, compact
+   badges, grouped high-information lists, deterministic `--plain`/JSON output,
+   and provider log streaming outside the alternate-screen TUI.
+
+Policy decisions for `v0.7.3`:
+
+- No provider support promotion is included.
+- No new support-label vocabulary is included.
+- No command/report label duplication on unrelated update or inventory
+  dashboards.
+- CLI/JSON support catalog output remains the source of truth; TUI display is a
+  human-review projection of that catalog.
 
 ### v0.7.0 Non-Goals
 
