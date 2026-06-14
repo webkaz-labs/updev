@@ -16,6 +16,16 @@ go_file_count() {
   find "$dir" -maxdepth 1 -type f -name '*.go' | wc -l | tr -d ' '
 }
 
+production_go_file_count() {
+  local dir="$1"
+  find "$dir" -maxdepth 1 -type f -name '*.go' ! -name '*_test.go' | wc -l | tr -d ' '
+}
+
+test_go_file_count() {
+  local dir="$1"
+  find "$dir" -maxdepth 1 -type f -name '*_test.go' | wc -l | tr -d ' '
+}
+
 if [[ ! -f "$doc" ]]; then
   fail "missing docs/SOURCE-STRUCTURE.md"
 else
@@ -26,15 +36,26 @@ else
     fi
   }
 
-  cmd_count="$(go_file_count "$root/internal/cmd")"
-  cmd_ceiling=45
+  cmd_count="$(production_go_file_count "$root/internal/cmd")"
+  cmd_ceiling=30
   cmd_status="within target"
   if (( cmd_count > cmd_ceiling )); then
     cmd_status="over target"
   fi
-  require_pattern "\| \`internal/cmd\` \| ${cmd_count} \| <= 45 \| ${cmd_ceiling} \| ${cmd_status} \|"
+  require_pattern "\| \`internal/cmd\` production files \| ${cmd_count} \| <= 30 \| ${cmd_ceiling} \| ${cmd_status} \|"
   if (( cmd_count > cmd_ceiling )); then
-    fail "internal/cmd has ${cmd_count} Go files; ceiling is ${cmd_ceiling}"
+    fail "internal/cmd has ${cmd_count} production Go files; ceiling is ${cmd_ceiling}"
+  fi
+
+  cmd_test_count="$(test_go_file_count "$root/internal/cmd")"
+  cmd_test_ceiling=20
+  cmd_test_status="within target"
+  if (( cmd_test_count > cmd_test_ceiling )); then
+    cmd_test_status="over target"
+  fi
+  require_pattern "\| \`internal/cmd\` test files \| ${cmd_test_count} \| <= 20 \| ${cmd_test_ceiling} \| ${cmd_test_status} \|"
+  if (( cmd_test_count > cmd_test_ceiling )); then
+    fail "internal/cmd has ${cmd_test_count} test Go files; ceiling is ${cmd_test_ceiling}"
   fi
 
   while IFS= read -r dir; do
