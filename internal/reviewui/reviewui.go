@@ -68,6 +68,20 @@ type State struct {
 	Action   string
 }
 
+func EnsureStateCache(states map[string]State) map[string]State {
+	if states == nil {
+		return map[string]State{}
+	}
+	return states
+}
+
+func CachedState(states map[string]State, key string) State {
+	if states == nil || key == "" {
+		return State{}
+	}
+	return states[key]
+}
+
 func TakeAction(state *State) string {
 	if state == nil {
 		return ""

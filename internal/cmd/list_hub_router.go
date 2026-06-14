@@ -10,6 +10,7 @@ import (
 
 	"github.com/webkaz-labs/updev/internal/plan"
 	"github.com/webkaz-labs/updev/internal/reviewui"
+	"github.com/webkaz-labs/updev/internal/support"
 )
 
 type listHubRouterResult struct {
@@ -85,9 +86,7 @@ func runListHubRouter(report listReport, backendPlan backendPlanReport, backendL
 }
 
 func newListHubRouterModel(report listReport, backendPlan backendPlanReport, backendLoading bool, lastUpdate updateReport, hasLastUpdate bool, initialAction string, detailStates map[string]detailBrowserState, color bool) listHubRouterModel {
-	if detailStates == nil {
-		detailStates = map[string]detailBrowserState{}
-	}
+	detailStates = reviewui.EnsureStateCache(detailStates)
 	model := listHubRouterModel{
 		report:         report,
 		backendPlan:    backendPlan,
@@ -294,7 +293,7 @@ func (m *listHubRouterModel) showAction(action string, returnAction string) {
 		}
 		m.showEmptyDetail("updev security review", listHubActionSecurity, returnAction)
 	case listHubActionSupport:
-		m.showSupportCatalog(supportOptions{surface: "all"}, listHubActionSupport, returnAction)
+		m.showSupportCatalog(supportOptions{Surface: "all"}, listHubActionSupport, returnAction)
 	case listHubActionDetails:
 		detailReport := derivedListReport(m.report, listOptions{limit: 10})
 		m.showDetail("updev list details", listDetailRows(detailReport), listHubActionDetails, returnAction)
@@ -485,13 +484,13 @@ func parseListSupportFilterAction(value string) (listSupportFilterAction, bool) 
 }
 
 func (m *listHubRouterModel) showSupportFilterResult(filter listSupportFilterAction) {
-	opts := supportOptions{surface: "all"}
+	opts := supportOptions{Surface: "all"}
 	switch filter.Kind {
 	case "surface":
-		opts.surface = filter.Value
+		opts.Surface = filter.Value
 	case "label":
 		if filter.Value != "all" {
-			opts.label = filter.Value
+			opts.Label = filter.Value
 		}
 	}
 	stateKey := "support-filter:" + filter.Kind + ":" + filter.Value
@@ -514,13 +513,82 @@ func (m *listHubRouterModel) showSupportCatalog(opts supportOptions, stateKey st
 
 func supportCatalogTitle(opts supportOptions) string {
 	parts := []string{"updev support catalog"}
-	if opts.surface != "" && opts.surface != "all" {
-		parts = append(parts, "surface="+opts.surface)
+	if opts.Surface != "" && opts.Surface != "all" {
+		parts = append(parts, "surface="+opts.Surface)
 	}
-	if opts.label != "" {
-		parts = append(parts, "label="+opts.label)
+	if opts.Label != "" {
+		parts = append(parts, "label="+opts.Label)
 	}
 	return strings.Join(parts, " ")
+}
+
+func supportCatalogDetailRows(report supportReport) []detailBrowserRow {
+	rows := make([]detailBrowserRow, 0, len(report.Entries))
+	for _, entry := range report.Entries {
+		metadata := []string{
+			"surface: " + entry.Surface,
+			"support_label: " + entry.Label,
+		}
+		if entry.Scope != "" {
+			metadata = append(metadata, "scope: "+entry.Scope)
+		}
+		for _, evidence := range entry.Evidence {
+			metadata = append(metadata, "evidence: "+evidence)
+		}
+		for _, limitation := range entry.Limitations {
+			metadata = append(metadata, "limitation: "+limitation)
+		}
+		if entry.Next != "" {
+			metadata = append(metadata, "next: "+entry.Next)
+		}
+		rows = append(rows, detailBrowserRow{
+			Title:    entry.Surface + "/" + entry.Name,
+			Status:   entry.Label,
+			Summary:  entry.Summary,
+			Detail:   entry.Summary,
+			Metadata: metadata,
+		})
+	}
+	return rows
+}
+
+func supportCatalogFilterRows() []detailBrowserRow {
+	surfaceActions := []detailBrowserAction{}
+	for _, surface := range []string{"all", "provider", "command", "report", "inventory_source"} {
+		surfaceActions = append(surfaceActions, detailBrowserAction{
+			Value:       listSupportFilterActionValue("surface", surface),
+			Label:       surface,
+			Description: tr("filter support catalog by surface", "support catalog を surface で絞り込みます"),
+		})
+	}
+	labelActions := []detailBrowserAction{}
+	for _, label := range []string{"all", support.LabelSupportedPreview, support.LabelExperimental, support.LabelCompatibility, support.LabelDeferred} {
+		labelActions = append(labelActions, detailBrowserAction{
+			Value:       listSupportFilterActionValue("label", label),
+			Label:       label,
+			Description: tr("filter support catalog by label", "support catalog を label で絞り込みます"),
+		})
+	}
+	return []detailBrowserRow{
+		{
+			Title:   tr("surface filter", "surface filter"),
+			Status:  string(plan.StatusOK),
+			Summary: "all / provider / command / report / inventory_source",
+			Detail:  tr("Choose a support surface. Use / for free-text query filtering.", "support surface を選択します。自由検索は / を使います。"),
+			Actions: surfaceActions,
+		},
+		{
+			Title:   tr("label filter", "label filter"),
+			Status:  string(plan.StatusOK),
+			Summary: strings.Join([]string{support.LabelSupportedPreview, support.LabelExperimental, support.LabelCompatibility, support.LabelDeferred}, " / "),
+			Detail:  tr("Choose a support label. Use / for free-text query filtering.", "support label を選択します。"),
+			Actions: labelActions,
+		},
+	}
+}
+
+func providerSupportLabel(name string) string {
+	return support.ProviderLabel(name)
 }
 
 func (m *listHubRouterModel) showRouteDetail(route listRouteAction) {
@@ -589,7 +657,7 @@ func listProviderFilterRows(report listReport) []detailBrowserRow {
 	rows := make([]detailBrowserRow, 0, len(report.Providers))
 	for _, provider := range report.Providers {
 		summaryParts := []string{fmt.Sprintf("desired=%d live=%d missing=%d extra=%d", provider.Desired, provider.Live, provider.Missing, provider.Extra)}
-		if label := providerSupportLabel(provider.Name); supportLabelIsDenseBadge(label) {
+		if label := providerSupportLabel(provider.Name); support.LabelIsDenseBadge(label) {
 			summaryParts = append(summaryParts, "support="+label)
 		}
 		metadata := []string{}
@@ -702,7 +770,7 @@ func (m *listHubRouterModel) showEmptyDetail(title string, stateKey string, retu
 }
 
 func (m *listHubRouterModel) showDetail(title string, rows []detailBrowserRow, stateKey string, returnAction string) {
-	model := newDetailBrowserModel(title, rows, m.detailStates[stateKey], m.color)
+	model := newDetailBrowserModel(title, rows, reviewui.CachedState(m.detailStates, stateKey), m.color)
 	model.Width = m.width
 	model.Height = m.height
 	model.EnsureSelectedVisible()
@@ -714,7 +782,7 @@ func (m *listHubRouterModel) showDetail(title string, rows []detailBrowserRow, s
 
 func (m *listHubRouterModel) showTable(title string, sections []toolSection, stateKey string, returnAction string, actions reviewui.BrowserActions, labels reviewui.TableBrowserLabels) {
 	title = m.loadingTitle(title, stateKey)
-	model := reviewui.NewTableBrowserModel(title, sections, m.detailStates[stateKey], labels, actions, m.color)
+	model := reviewui.NewTableBrowserModel(title, sections, reviewui.CachedState(m.detailStates, stateKey), labels, actions, m.color)
 	model.Width = m.width
 	model.Height = m.height
 	m.screen = listHubRouterTable

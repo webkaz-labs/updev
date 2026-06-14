@@ -20,7 +20,9 @@ support files such as `mise.toml`. Implementation belongs under `internal/`.
     brew/       Homebrew/Brewfile provider plus manifest parsing, metadata, outdated JSON, safety finding, and posture helpers
     githubrepo/ GitHub repository/release URL parsing, release/tag metadata, and posture helpers
     inventoryannotate/ inventory report annotations that combine provider evidence with root/profile policy
-    manualinventory/ platform/source scanners and source parsers for manual and external apps
+    inventoryrun/ inventory collection, cache, and sorting orchestration
+    manualinventory/ manual app review/source model and source parsers
+      platform/ macOS/Linux/Windows manual app platform scanners
     mise/       mise provider, manifest/outdated JSON helpers, safety finding, registry/provider metadata resolvers, and backend evidence helpers
     nativeaudit/ provider-native audit evidence model, target discovery, summaries, JSON schemas, and parsers
     registryaudit/ package-registry security metadata and posture helpers
@@ -93,6 +95,28 @@ Provider-native commands must go through `internal/runner`. Tests should use
 fake runners that fix stdout/stderr/exit status. Avoid embedding shell parsing
 in providers when structured provider output is available.
 
+Provider command contracts are owned by the provider or scanner package that
+knows the external tool. That owner should build argv/env, prefer structured
+output over prose, parse stdout/stderr into typed results, and normalize
+provider-specific errors. Command handlers may decide when to run a provider and
+how to adapt typed results into reports or routes, but they should not parse
+provider output or reconstruct provider command chains inline.
+
+Provider update, scan, and audit commands stay on the `runner` path so stdout
+and stderr can stream outside the alternate-screen TUI. Bubble Tea
+`ExecProcess` is reserved for a future shared `reviewui` foreground-process
+action: temporarily leave the TUI for an editor, explicit agent enrichment, or
+another user-initiated review command, then return to the same route/focus
+state. Do not use `ExecProcess` for routine provider execution where visible
+logs, caching, or typed parser ownership matter.
+
+Use existing libraries and owner packages before adding one-off parsing:
+`encoding/json` for provider JSON, existing structured source helpers or a
+dedicated parser package for TOML/manifest data, provider packages such as
+`brew`, `mise`, `vscode`, `registryaudit`, `nativeaudit`, `securityscanner`, and
+`manualinventory` for external tool formats, and `textui` for terminal width,
+color, and badge rendering.
+
 Tests that run the real `mise` command while overriding `HOME` must preserve
 trust for the repository-local `mise.toml` through `MISE_TRUSTED_CONFIG_PATHS`;
 otherwise tool-local config trust can make unrelated tests fail.
@@ -110,7 +134,7 @@ Known direct subprocess exceptions:
 - `manualinventory.RunAgentCommand` launches the configured local agent command
   for manual inventory metadata enrichment after explicit opt-in; command code
   validates the structured draft before writing anything.
-- `cmd.readGlobalDefault` shells out to `defaults` to read macOS global locale
+- `i18n.readGlobalDefault` shells out to `defaults` to read macOS global locale
   when environment locale is not enough.
 - `cmd.githubTokenFromCLI` may call `gh auth token` as an isolated credential
   retrieval fallback; provider and scanner commands still go through
@@ -169,8 +193,8 @@ support catalog are now part of the preview contract:
 | TTY navigation and prompts | `reviewui` plus command-local route adapters | focus/scroll/action state, Back/Home semantics, confirmations, and write-flow state stay shared where the behavior is not domain-specific. |
 | Tables, widths, badges, and color | `textui` | ANSI-safe width calculations and compact badges are not reimplemented in command files. |
 | Root/config/cache/policy paths | `updevpath` | commands and providers do not guess repository-local defaults; compatibility fallbacks are explicit. |
-| Inventory annotations | `inventoryannotate`, `plan`, provider packages | report enrichment should be data-backed and available to cached report views, not TUI-only. |
-| Portable manual inventory evidence | `manualinventory` | macOS, Linux fixture-backed, and Windows fixture-backed scanners normalize into the same review/evidence model and remain explicitly experimental outside macOS. |
+| Inventory collection and annotations | `inventoryrun`, `inventoryannotate`, `plan`, provider packages | collection/cache/sort and report enrichment should be data-backed and available to cached report views, not TUI-only. |
+| Portable manual inventory evidence | `manualinventory`, `manualinventory/platform` | macOS, Linux fixture-backed, and Windows fixture-backed scanners normalize into the same review/evidence model and remain explicitly experimental outside macOS. |
 | Agent guidance | root embed plus `cmd` read-only commands | `updev skill`, `updev skill --full`, and `updev help agent` embed the canonical `docs/agent/` files instead of duplicating command reference in Go strings. |
 | Support labels | `internal/support` plus thin `cmd` adapters | providers, commands, report families, and inventory sources use one catalog for `supported_preview`, `experimental`, `compatibility`, and `deferred` labels. |
 

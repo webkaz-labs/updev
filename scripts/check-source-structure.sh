@@ -27,12 +27,12 @@ else
   }
 
   cmd_count="$(go_file_count "$root/internal/cmd")"
-  cmd_ceiling=50
+  cmd_ceiling=45
   cmd_status="within target"
   if (( cmd_count > cmd_ceiling )); then
     cmd_status="over target"
   fi
-  require_pattern "\| \`internal/cmd\` \| ${cmd_count} \| <= 50 \| ${cmd_ceiling} \| ${cmd_status} \|"
+  require_pattern "\| \`internal/cmd\` \| ${cmd_count} \| <= 45 \| ${cmd_ceiling} \| ${cmd_status} \|"
   if (( cmd_count > cmd_ceiling )); then
     fail "internal/cmd has ${cmd_count} Go files; ceiling is ${cmd_ceiling}"
   fi
@@ -53,9 +53,9 @@ else
       fi
       require_pattern "\| \`${package}\` \| ${count} \| ${status} \|"
     fi
-  done < <(find "$root/internal" -mindepth 1 -maxdepth 1 -type d | sort)
+  done < <(find "$root/internal" -type f -name '*.go' -exec dirname {} \; | sort -u)
 
-  require_pattern "\| all other \`internal/\*\` packages \| <= 20 each \| <= 20 \| 20 \| within target \|"
+  require_pattern "\| all other \`internal/\*\` packages, including nested owner packages \| <= 20 each \| <= 20 \| 20 \| within target \|"
 fi
 
 if (( failures > 0 )); then

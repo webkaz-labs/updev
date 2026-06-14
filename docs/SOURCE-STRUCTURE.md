@@ -13,21 +13,22 @@ temporary ceiling.
 
 | Package | Current Go files | Target | Temporary ceiling | Status | Next action |
 |---------|------------------|--------|-------------------|--------|-------------|
-| `internal/cmd` | 50 | <= 50 | 50 | within target | At ceiling; do not add another cmd file before extracting provider, security, review UI, support catalog, or inventory logic. |
-| all other `internal/*` packages | <= 20 each | <= 20 | 20 | within target | Split by domain before adding the 21st Go source file. |
+| `internal/cmd` | 45 | <= 45 | 45 | within target | At release target; do not add another cmd file without extracting an owning package in the same change. |
+| all other `internal/*` packages, including nested owner packages | <= 20 each | <= 20 | 20 | within target | Split by domain before adding the 21st Go source file. |
 
 Current largest non-`cmd` packages:
 
 | Package | Current Go files | Status |
 |---------|------------------|--------|
-| `internal/manualinventory` | 20 | at ceiling |
-| `internal/brew` | 14 | ok |
+| `internal/brew` | 16 | ok |
+| `internal/manualinventory` | 14 | ok |
 | `internal/mise` | 13 | ok |
 | `internal/reviewui` | 12 | ok |
 | `internal/registryaudit` | 9 | ok |
 | `internal/securitygate` | 9 | ok |
 | `internal/securityscanner` | 8 | ok |
 | `internal/githubrepo` | 6 | ok |
+| `internal/manualinventory/platform` | 6 | ok |
 | `internal/nativeaudit` | 6 | ok |
 | `internal/securityadvisory` | 6 | ok |
 | `internal/backend` | 5 | ok |
@@ -234,26 +235,53 @@ Current v0.7.0 guardrails:
   focused actions, grouped rows, and item-visible safety/update evidence should
   be tested or manually accepted before another UX refactor lands.
 
-Current v0.7.4 extraction result:
+Current v0.7.5 extraction result:
 
-- No new `internal/cmd` files were added.
-- List/detail evidence projection moved to `internal/plan`, and cmd now treats
-  it as a report/list adapter dependency.
-- Provider evidence quality improved at the key-matching boundary: provider
-  prefix rows and version-delta rows produce cleaner item identities before
-  route/action badges are rendered.
-- The next extraction should still choose one cohesive slice from the table
-  below before adding new provider, scanner, or policy surface.
+- `internal/cmd` is at the v0.7.5 ceiling of 45 Go files.
+- `internal/manualinventory` core is below its target at 14 Go files.
+- Platform manual app scanners moved to `internal/manualinventory/platform`.
+- Inventory collection/cache/sort behavior moved to `internal/inventoryrun`.
+- Support report construction and text rendering moved to `internal/support`.
+- Homebrew advisory package mapping and posture review counting moved to
+  `internal/brew`.
+- Shared route-state cache helpers live in `internal/reviewui`, and list/update
+  routers use them instead of open-coded nil-map and lookup handling.
+- The source-structure check now counts nested owner packages and enforces the
+  `internal/cmd` v0.7.5 ceiling.
 
-Next extraction candidates after v0.7.0:
+v0.7.5 scalability completion result:
+
+`v0.7.5` finishes the P1 structural scalability refactor. Future provider
+evidence, scanner, and policy work should no longer add provider parsing,
+scanner parsing, route-state, or badge logic to `internal/cmd`.
 
 | Area | Current pressure | Preferred destination | Done when |
 |------|------------------|-----------------------|-----------|
 | Update/security report assembly | `cmd` still owns much of the stitching between provider findings, update steps, and TTY routes. | Keep final report mutation in `cmd`, but move provider-neutral decision grouping or reason derivation into `securitygate`, `updatereason`, or `securityreason` when it can be tested without TUI imports. | JSON/report fields stay stable, localized text still renders at the boundary, and update dashboard tests keep passing. |
 | List/detail evidence badges | Inventory, manual, backend, and security views must keep consistent compact markers. | `textui` for badge rendering and width behavior; `plan` or provider packages for evidence classification. | A new badge or evidence class is not implemented separately in multiple command files. |
 | Routed TTY return behavior | `updev`, `last`, and `list` share route-stack expectations but still have command-specific adapters. | `reviewui` for state stack, action consumption, confirmation state, and focus/scroll restoration; `cmd` only maps routes to domain views. | Returning from child views restores the expected parent row/filter without clearing focused actions. |
+| TUI foreground external process | TUI actions may later need to open an editor or explicit agent command and return to the same route. | Future shared `reviewui` wrapper around Bubble Tea `ExecProcess`; provider update/scan/audit execution stays on `runner`. | The release records the boundary, but does not replace provider log-streaming commands with `ExecProcess`. |
 | Portable manual inventory sources | `manualinventory` is at its temporary ceiling after adding Linux/Windows fixture-backed scanners. | Split platform scanners into subpackages or a scanner registry package before adding distro package, registry, Start Menu, scoop, or choco evidence. | No repository-local app prose or machine-local path assumption is required by default, and package count stays within budget. |
-| Provider metadata resolvers | vfox/asdf-style backend evidence must scale beyond one tool. | Provider-owned data registries and bounded resolver contracts, especially under `mise`, `githubrepo`, and `registryaudit`. | Adding a known resolver path is data-backed and tested, not a tool-name branch in `cmd`. |
+| External CLI and parser ownership | Provider/scanner command outputs are already mostly owned by provider packages, but refactors can accidentally add ad hoc parsing to `cmd`. | `runner` for subprocess execution; provider/scanner packages for argv/env construction, structured output parsing, and provider-specific error normalization; `textui` for terminal width/color. | Direct subprocess exceptions stay documented and checked, and every touched provider/scanner command has parser tests in the owning package. |
+
+Targets for the completed P1 refactor:
+
+- `internal/cmd` is at the v0.7.5 target, `<= 45` Go files.
+- `internal/manualinventory` core is below the target, `<= 15` Go files after
+  platform/source split.
+- No new provider/scanner/policy/parser business logic is added to
+  `internal/cmd`.
+- New provider metadata resolvers, including future vfox/asdf-style work, use
+  provider-owned data registries and bounded resolver contracts rather than
+  command-local or tool-name branches.
+
+Implementation order:
+
+1. Split `manualinventory`.
+2. Extract shared routed TTY state into `reviewui`.
+3. Extract provider-neutral update/security report assembly.
+4. Clean up badge/evidence display boundaries.
+5. Audit external CLI/parser ownership and update this ledger.
 
 Do not add new tool-name-only fixes, direct provider command calls, implicit
 repository-local defaults, or TUI-only behavior that is missing from the report

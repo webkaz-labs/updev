@@ -11,15 +11,16 @@ stays an integer schema contract. `v0.x` releases are public preview releases;
 
 ## Current Release
 
-The current implemented release is `updev v0.7.4`. `updev version`,
+The current implemented release is `updev v0.7.5`. `updev version`,
 `updev --version`, and `updev -v` report this command contract.
 
-`updev v0.7.4` is a public-preview foundation patch release. It keeps the
-supported macOS/Homebrew/mise preview path from `v0.6.x` and the support-label
-catalog from `v0.7.3`, then starts the next `v0.7.x` workstreams by moving
-list evidence projection into an owning package, tightening evidence key
-matching for provider update/security rows, and preserving the existing
-scanner and policy boundaries without promoting experimental providers.
+`updev v0.7.5` is the public-preview scalability completion patch for the
+`v0.7.x` P1 structural refactor. It keeps the supported macOS/Homebrew/mise
+preview path, then lowers `internal/cmd` and `manualinventory` below their
+documented ceilings, moves portable manual app scanners into a nested owner
+package, extracts inventory collection/cache, support report rendering,
+Homebrew advisory mapping, and shared route-state helpers into owning packages,
+and preserves provider log streaming outside the alternate-screen TUI.
 
 Current support promise:
 
@@ -35,6 +36,9 @@ Current support promise:
 
 Released patch notes:
 
+- [v0.7.5](release-notes/v0.7.5.md): scalability refactor completion with
+  package-count gates, manual inventory platform split, owner-package
+  extractions, and route-state helper consolidation.
 - [v0.7.4](release-notes/v0.7.4.md): list evidence projection extraction,
   tighter evidence key matching, and v0.7.x workstream foundation checks.
 - [v0.7.3](release-notes/v0.7.3.md): support-label TUI visibility, provider
@@ -209,10 +213,10 @@ Policy decisions for `v0.7.3`:
 
 ## v0.7.4 Scope
 
-`v0.7.4` is the current `v0.7.x` foundation patch. It starts the four
-workstreams below without turning the preview into a broad feature release:
-first reduce structural pressure, then improve evidence and policy surfaces
-where the current model can already prove the behavior.
+`v0.7.4` was the `v0.7.x` foundation patch that started the four workstreams
+below without turning the preview into a broad feature release: first reduce
+structural pressure, then improve evidence and policy surfaces where the model
+could already prove the behavior.
 
 Policy decisions for `v0.7.4`:
 
@@ -286,6 +290,107 @@ workstreams are ordered by dependency: reduce structural friction first, then
 improve provider evidence, then harden scanners and policy flows on top of the
 cleaner model.
 
+### v0.7.5 Scope: Scalability Refactor Completion
+
+`v0.7.5` finishes the `v0.7.x` P1 structural scalability refactor. This does
+not mean every future provider is implemented; it means the codebase is no
+longer blocked by `internal/cmd` or `manualinventory` file-count pressure, and
+future provider, scanner, policy, and TUI work has clear owning packages.
+
+Policy decisions for `v0.7.5`:
+
+- **Release shape**: maintenance/refactor patch with behavior-preserving
+  extraction. Do not bundle broad provider evidence expansion, scanner defaults,
+  or policy feature growth into this release.
+- **Definition of done**: finish the structural P1 so later `v0.7.x` work can
+  add provider evidence quality, scanner hardening, and policy ergonomics
+  without adding command-package sprawl.
+- **Package budgets**: reduce `internal/cmd` below its current ceiling and
+  split `internal/manualinventory` before adding more manual/portable scanner
+  logic.
+- **Provider logs**: keep provider-native command output outside the
+  alternate-screen TUI. Refactors must not hide Homebrew/mise logs or delay the
+  first useful screen unnecessarily.
+- **TUI foreground process boundary**: evaluate Bubble Tea `ExecProcess` as the
+  future common mechanism only for foreground external processes launched from a
+  TUI action, such as `$EDITOR`, policy/override editing, or explicit
+  agent-enrichment review. Do not move provider update, scan, or audit execution
+  away from the runner/log-streaming path in this release.
+- **External CLI contracts**: provider-native command construction, structured
+  parsing, and provider-specific error normalization must live with the provider
+  owner package or an explicit scanner/native-audit owner. Command handlers may
+  adapt reports and routes, but must not parse provider output or build
+  provider command chains inline.
+
+Included work:
+
+1. **Manual inventory package split**
+   - Split `internal/manualinventory` by source/platform so the core package
+     moves below its temporary ceiling.
+   - Kept macOS, Linux fixture-backed, Windows fixture-backed, structured
+     source parsing, override draft, and agent-enrichment contracts data-backed
+     and tested under the owning package.
+   - Does not add repository-local app prose, machine-local defaults, or
+     tool-name branches as public defaults.
+
+2. **Routed TTY state extraction**
+   - Moved reusable route-state cache helpers into `reviewui` where behavior is
+     not domain-specific.
+   - Keeps `cmd` route adapters thin: they map report routes to domain views and
+     final write operations only.
+   - Documents where Bubble Tea `ExecProcess` should be used later for
+     foreground TUI actions, but avoid replacing existing provider update/log
+     execution during the structural refactor.
+   - Preserves accepted behavior for `updev`, `updev last`, `updev list`,
+     manual inventory, backend convergence, security details, and policy
+     review.
+
+3. **Update/security report assembly extraction**
+   - Moved inventory collection/cache/sort and support report construction out
+     of `cmd` into `inventoryrun` and `support`.
+   - Keeps final report mutation, security route construction, and write
+     actions in `cmd` until a broader report model owns them.
+   - Preserves JSON/text/TUI parity for held, review, allow, updated, skipped,
+     and error decisions.
+
+4. **Badge and evidence display boundary cleanup**
+   - Keeps badge priority, compact labels, width truncation, color, and Nerd Font
+     marker decisions in `textui`.
+   - Moved Homebrew advisory mapping and posture review counts into the `brew`
+     owner package.
+   - Ensures a new evidence class or badge is not implemented separately in
+     multiple command files.
+
+5. **External CLI and parser audit**
+   - Re-runs the direct subprocess audit and keeps all direct `exec.Command`
+     exceptions documented in `ARCHITECTURE.md` and enforced by
+     `scripts/check-direct-subprocesses.sh`.
+   - Prefers structured provider output and library parsers over ad hoc text
+     parsing: JSON with `encoding/json`, TOML/manifest parsing through the
+     existing structured source helpers or a deliberate parser package, and
+     terminal width/color through `textui`.
+   - For every provider/scanner command touched by the refactor, verifies argv/env
+     construction, stdout/stderr parsing, timeout/error normalization, and tests
+     are owned by the provider/scanner package rather than `cmd`.
+
+`v0.7.5` exit criteria:
+
+- `internal/cmd` has fewer than 50 Go files, with a target of `<= 45`.
+- `internal/manualinventory` core has fewer than 20 Go files, with a target of
+  `<= 15` for the remaining core package after platform/source split.
+- No new provider, scanner, policy, or parser business logic is added to
+  `internal/cmd`.
+- Direct subprocess exceptions remain synced between `ARCHITECTURE.md` and
+  `scripts/check-direct-subprocesses.sh`.
+- External CLI results touched by the release are parsed through structured
+  provider/scanner owners, not route/render handlers.
+- Fast validation and smoke checks pass: `mise -C tools/updev run check`,
+  `mise -C tools/updev run docs-check`, `git diff --check`,
+  `chezmoi apply --dry-run`, and fast TTY smoke for `updev --dry-run
+  --interactive`, `updev last`, and `updev list`.
+- `SOURCE-STRUCTURE.md`, `ARCHITECTURE.md`, and `ROADMAP.md` reflect the final
+  ownership boundaries before tagging.
+
 ### 1. Scalability Refactor
 
 Goal: make future provider and TUI work cheaper without changing the public
@@ -302,6 +407,10 @@ workflow.
   code.
 - Add or extend placement checks only where they catch real drift without
   forcing artificial package splits.
+- Audit external CLI execution and parsing during extraction: provider commands
+  must go through `runner` or a documented exception, structured provider output
+  should be parsed by the provider/scanner owner package, and command handlers
+  should not own ad hoc parser logic.
 
 Exit criteria:
 
