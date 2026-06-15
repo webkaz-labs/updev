@@ -544,7 +544,8 @@ func manualReviewEvidenceEmpty(evidence manualReviewEvidence) bool {
 func manualPlanDetailActions(item manualPlanItem, root string) []detailBrowserAction {
 	actions := []detailBrowserAction{}
 	if item.State == "installed" && manualinventory.PlanActionNeedsReview(item.Action) {
-		actions = append(actions,
+		actions = append(
+			actions,
 			detailBrowserAction{Value: manualPlanDetailActionValue("accept", item.Name), Label: tr("accept override", "override を採用"), Description: tr("append the suggested manual inventory override", "提案された manual inventory override を追記します")},
 			detailBrowserAction{Value: manualPlanDetailActionValue("ignore", item.Name), Label: tr("ignore local app", "local app として無視"), Description: tr("append a local-only ignore override", "local-only の ignore override を追記します")},
 			detailBrowserAction{Value: manualPlanDetailActionValue("edit", item.Name), Label: tr("edit override", "override を編集"), Description: tr("open the suggested override before writing", "書き込む前に提案 override を editor で開きます")},

@@ -15,6 +15,8 @@ import (
 	"github.com/webkaz-labs/updev/internal/securityreason"
 )
 
+const npmPackagePageURLBase = "https://www.npmjs.com/package/"
+
 type NPMPosture struct {
 	Provider      string            `json:"provider"`
 	Kind          string            `json:"kind"`
@@ -218,7 +220,7 @@ func NPMPostureFromMetadata(requestedName string, pkg string, version string, me
 		Deprecated:    deprecated,
 		Decision:      "allow",
 		Confidence:    "medium",
-		URL:           "https://www.npmjs.com/package/" + pkg,
+		URL:           NPMPackagePageURL(pkg),
 	}
 	switch {
 	case deprecated != "":
@@ -286,10 +288,14 @@ func NPMPostureUnavailable(requestedName string, pkg string, version string, err
 		Decision:   "review",
 		Confidence: "low",
 		Reason:     "npm registry metadata unavailable: " + err.Error(),
-		URL:        "https://www.npmjs.com/package/" + pkg,
+		URL:        NPMPackagePageURL(pkg),
 	}
 	setNPMPostureReason(&posture, securityreason.RegistryMetadataUnavailable, posture.Reason)
 	return posture
+}
+
+func NPMPackagePageURL(pkg string) string {
+	return npmPackagePageURLBase + pkg
 }
 
 func NormalizeNPMRepositoryURL(rawURL string) string {

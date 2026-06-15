@@ -11,15 +11,15 @@ stays an integer schema contract. `v0.x` releases are public preview releases;
 
 ## Current Release
 
-The current implemented release is `updev v0.7.8`. `updev version`,
+The current implemented release is `updev v0.7.9`. `updev version`,
 `updev --version`, and `updev -v` report this command contract.
 
-`updev v0.7.8` is the required large refactor that follows the v0.7.7
-guardrail patch. It preserves the same supported macOS/Homebrew/mise preview
-scope, keeps provider log streaming outside the alternate-screen TUI, and
-reduces `internal/cmd` to the stricter production/test budgets so the next
-provider evidence, scanner hardening, and policy ergonomics work can proceed
-without command-package sprawl.
+`updev v0.7.9` is the agent-friendly quality tooling patch after the v0.7.8
+large refactor. It preserves the same supported macOS/Homebrew/mise preview
+scope, keeps provider log streaming outside the alternate-screen TUI, promotes
+the proven Go CLI quality-tooling subset into the shared standard, and keeps
+slower vulnerability, supply-chain, and agent-quality checks in the release or
+scheduled `audit` path.
 
 Current support promise:
 
@@ -33,8 +33,54 @@ Current support promise:
   reports; behavior must also be represented in cached reports and JSON/text
   output where relevant.
 
+Current release validation:
+
+- [x] `mise -C tools/updev run check`
+- [x] `mise -C tools/updev run audit`
+- [x] `mise -C tools/updev run docs-check`
+- [x] `git diff --check`
+- [x] `chezmoi apply --dry-run`
+- [x] `agent-quality` reports active error count `0` and records the known
+  `scanner_secret` false positive in `SOURCE-STRUCTURE.md`.
+- [x] `SOURCE-STRUCTURE.md` explains the remaining complexity findings and
+  promotion policy.
+- [x] `AGENTS.md` and `VALIDATION.md` explain the `check` vs `audit` split.
+
+## Next Release Planning
+
+The next `v0.7.x` patches should continue the roadmap after `v0.7.9` without
+making stable `v1.0.0` promises. Keep each slice small enough to validate and
+release independently.
+
+Scope:
+
+1. **Provider evidence quality**
+   - Improve Homebrew/mise held/review explanations with source URLs, release
+     dates, cache age, and item-scoped commands.
+   - Keep opaque mise/vfox paths review-held unless the evidence resolver can
+     prove exact candidate release age and source identity.
+
+2. **Scanner hardening**
+   - Make explicit scanner/native-audit evidence more structured and bounded.
+   - Keep slow or broad scanners out of the default update gate.
+
+3. **Policy ergonomics**
+   - Add diagnostics and guided edit/renew/narrow flows where users already
+     review security details.
+   - Keep broad permanent allow rules behind explicit user intent.
+
+Non-goals:
+
+- support-label promotion;
+- making broad complexity or agent-quality findings release-blocking;
+- replacing provider log streaming with Bubble Tea foreground process
+  execution.
+
 Released patch notes:
 
+- [v0.7.9](release-notes/v0.7.9.md): agent-friendly quality tooling patch with
+  promoted Go CLI standard gates, slower audit checks, and non-blocking
+  agent-quality evidence.
 - [v0.7.8](release-notes/v0.7.8.md): large refactor with sync/config owner
   packages, consolidated routed adapters, and stricter command package budgets.
 - [v0.7.7](release-notes/v0.7.7.md): command production-file budget hardening
@@ -638,7 +684,84 @@ Exit criteria:
   remain held.
 - Opaque cases remain visible, actionable, and review-only.
 
-### 3. Scanner Hardening
+### 3. Agent-Friendly Quality Tooling
+
+Goal: make agent-produced changes easier to review by catching deterministic
+format, bug-class, supply-chain, and "looks correct but is sloppy" problems
+before release review.
+
+Adopt the tooling in phases so `check` stays useful for daily work and noisier
+security/style tools can prove themselves before becoming release-blocking:
+
+1. **P1: low-noise local gates**
+   - Add `golangci-lint v2` with a curated, low-noise config. Start with
+     linters that are actionable for agents: `govet`, `staticcheck`,
+     `misspell`, `nolintlint`, `noctx`, `bodyclose`, `tparallel`, and
+     whitespace/format checks.
+   - Add stricter formatting through `gofumpt` plus import grouping through
+     `goimports` or `gci`. Keep this compatible with public export, because
+     module path rewriting can change import layout.
+   - Keep `gosec`, broad `errcheck`, and broad `unused` out of the default
+     blocking set until their signal/noise ratio is proven on this codebase.
+
+2. **P2: vulnerability and public-repo supply-chain checks**
+   - Add `govulncheck` as `mise run vuln` and include it in a slower
+     `mise run audit` path. Start as a release/scheduled/manual gate before
+     deciding whether it belongs in every PR check.
+   - Add public-repo security hygiene checks where useful: CodeQL,
+     Dependabot for Go modules and GitHub Actions, GitHub Actions SHA pinning
+     review, and release artifact attestation/verification.
+   - If SARIF upload is enabled, keep it public-repo-only and do not require
+     local developer credentials.
+
+3. **P3: agent-code quality audits**
+   - Trial deterministic "AI slop" style audits such as `aislop` as
+     non-blocking `audit` evidence. Target patterns that ordinary tests miss:
+     narrative comments, dead scaffolding, oversized functions, duplicated
+     helpers, and generic placeholder names.
+   - Promote a finding class to blocking only after repeated dogfood shows it
+     is accurate, actionable, and not duplicating existing lint/test coverage.
+
+Operational rule:
+
+- Keep `mise run check` fast and low-noise for ordinary agent iterations.
+- Keep `mise run audit` / scheduled CI for slower vulnerability, SAST, and
+  AI-quality checks.
+- The proven subset is now promoted into the shared Go CLI standard in
+  `docs/go-cli/`: fast low-noise local gates plus slower release/scheduled
+  audit gates. Keep broad SAST, broad complexity, and generic AI-quality
+  findings non-blocking unless a later release promotes a narrow finding class.
+
+Current implementation status:
+
+- P1 local gates are implemented for daily use: `fmt-check` uses pinned
+  `gofumpt` plus `goimports`, `golangci-lint` runs a curated v2 low-noise
+  linter set, and `lint` remains part of the normal `check` task.
+- `golangci-lint` is run through a pinned script instead of a mise tool entry
+  because mise's GitHub artifact-attestation install path can fail in
+  restricted agent sandboxes before the linter starts.
+- P2/P3 are implemented as slower audit surfaces: `vuln` runs pinned
+  `govulncheck`, `audit` combines vulnerability, GitHub Actions supply-chain,
+  and non-blocking agent-code-quality checks, `agent-quality` runs pinned
+  `aislop` when Node/npm are available plus built-in heuristics, and scheduled
+  public-repo workflows cover CodeQL, Dependency Review, Dependabot updates,
+  and release asset provenance attestation.
+- The current `aislop` finding baseline and blocking-promotion policy live in
+  [SOURCE-STRUCTURE.md](SOURCE-STRUCTURE.md#agent-quality-audit-ledger).
+- Action refs intentionally remain on trusted version tags, not immutable SHAs,
+  during preview. `supply-chain` reports this as review evidence so the project
+  can decide later whether SHA pinning is worth the maintenance cost.
+
+Exit criteria:
+
+- Agent changes fail early for formatting/import drift, obvious bug-class
+  static analysis, and docs/source-structure drift.
+- Release review can cite one command for fast checks and one command for
+  deeper audit checks.
+- The Go CLI standard records only tools that have proven low-noise behavior
+  in updev, not aspirational one-off experiments.
+
+### 4. Scanner Hardening
 
 Goal: make explicit scanner paths more useful without turning routine updates
 into a slow full security platform.
@@ -661,7 +784,7 @@ Exit criteria:
   holds.
 - Slow or broad scans remain opt-in and documented.
 
-### 4. Policy Ergonomics
+### 5. Policy Ergonomics
 
 Goal: make local allow/review/hold/block rules understandable and maintainable
 from both human TUI flows and agent/CI JSON flows.

@@ -557,7 +557,10 @@ func TestListHubRouterTogglesInstalledAndManualWithoutSubprogram(t *testing.T) {
 			Status:   plan.StatusDrift,
 		}},
 	}
-	model := newListHubRouterModel(report, backendPlanReport{}, false, updateReport{}, false, listHubActionFull, nil, false)
+	model := newListHubRouterModel(listHubRouterOptions{
+		Report:        report,
+		InitialAction: listHubActionFull,
+	})
 	if model.screen != listHubRouterTable || model.stateKey != listHubActionFull {
 		t.Fatalf("expected installed inventory table, screen=%q state=%q", model.screen, model.stateKey)
 	}
@@ -583,7 +586,10 @@ func TestListHubRouterBackReturnsToSelectorHub(t *testing.T) {
 		Name:     "ripgrep",
 		Status:   plan.StatusOK,
 	}}}
-	model := newListHubRouterModel(report, backendPlanReport{}, false, updateReport{}, false, listHubActionFull, nil, false)
+	model := newListHubRouterModel(listHubRouterOptions{
+		Report:        report,
+		InitialAction: listHubActionFull,
+	})
 	updated, _ := model.Update(tea.KeyPressMsg(tea.Key{Text: "b", Code: 'b'}))
 	model = updated.(listHubRouterModel)
 	if model.finalAction != updevActionBack {
@@ -602,7 +608,11 @@ func TestListHubRouterOpensBackendTableWithoutSubprogram(t *testing.T) {
 		RecommendedName:     "bat",
 		Action:              "review",
 	}}}
-	model := newListHubRouterModel(report, backendPlan, false, updateReport{}, false, listHubActionBackends, nil, false)
+	model := newListHubRouterModel(listHubRouterOptions{
+		Report:        report,
+		BackendPlan:   backendPlan,
+		InitialAction: listHubActionBackends,
+	})
 	if model.screen != listHubRouterTable || model.stateKey != listHubActionBackends {
 		t.Fatalf("expected backend table, screen=%q state=%q", model.screen, model.stateKey)
 	}
@@ -613,7 +623,10 @@ func TestListHubRouterOpensBackendTableWithoutSubprogram(t *testing.T) {
 
 func TestListHubRouterOpensSupportCatalogWithoutSubprogram(t *testing.T) {
 	report := listReport{Status: plan.StatusOK, Root: "/repo"}
-	model := newListHubRouterModel(report, backendPlanReport{}, false, updateReport{}, false, listHubActionSupport, nil, false)
+	model := newListHubRouterModel(listHubRouterOptions{
+		Report:        report,
+		InitialAction: listHubActionSupport,
+	})
 	if model.screen != listHubRouterDetail || model.stateKey != listHubActionSupport {
 		t.Fatalf("expected support catalog detail view, screen=%q state=%q", model.screen, model.stateKey)
 	}
@@ -686,7 +699,11 @@ func TestListHubRouterRefreshesBackendEvidenceAsynchronously(t *testing.T) {
 		RecommendedName:     "ripgrep",
 		Action:              "review",
 	}}}
-	model := newListHubRouterModel(report, backendPlanReport{}, true, updateReport{}, false, listHubActionFull, nil, false)
+	model := newListHubRouterModel(listHubRouterOptions{
+		Report:         report,
+		BackendLoading: true,
+		InitialAction:  listHubActionFull,
+	})
 	initialView := model.View().Content
 	if !strings.Contains(initialView, "backend evidence loading") || strings.Contains(initialView, "open backend review") {
 		t.Fatalf("expected initial list view to render before backend evidence is ready:\n%s", initialView)
@@ -733,7 +750,11 @@ func TestListHubRouterRefreshesFilteredBackendEvidenceAsynchronously(t *testing.
 		RecommendedName:     "ripgrep",
 		Action:              "review",
 	}}}
-	model := newListHubRouterModel(report, backendPlanReport{}, true, updateReport{}, false, listHubActionProvider, nil, false)
+	model := newListHubRouterModel(listHubRouterOptions{
+		Report:         report,
+		BackendLoading: true,
+		InitialAction:  listHubActionProvider,
+	})
 	updated, _ := model.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyEnter}))
 	model = updated.(listHubRouterModel)
 	if model.screen != listHubRouterTable || model.stateKey != "filter-result:provider:brew" {
@@ -775,7 +796,10 @@ func TestListHubRouterProviderFilterStaysInsideRouter(t *testing.T) {
 			Status:   plan.StatusOK,
 		}},
 	}
-	model := newListHubRouterModel(report, backendPlanReport{}, false, updateReport{}, false, listHubActionProvider, nil, false)
+	model := newListHubRouterModel(listHubRouterOptions{
+		Report:        report,
+		InitialAction: listHubActionProvider,
+	})
 	if model.screen != listHubRouterDetail || model.stateKey != "filter-menu:"+listHubActionProvider || !model.detail.PrimaryEnterAction {
 		t.Fatalf("expected provider filter menu inside router, screen=%q state=%q primary=%v", model.screen, model.stateKey, model.detail.PrimaryEnterAction)
 	}
@@ -810,7 +834,10 @@ func TestListHubRouterQueryInputStaysInsideRouter(t *testing.T) {
 			Status:   plan.StatusOK,
 		}},
 	}
-	model := newListHubRouterModel(report, backendPlanReport{}, false, updateReport{}, false, listHubActionQuery, nil, false)
+	model := newListHubRouterModel(listHubRouterOptions{
+		Report:        report,
+		InitialAction: listHubActionQuery,
+	})
 	if model.screen != listHubRouterInput || model.stateKey != listHubActionQuery {
 		t.Fatalf("expected list query input inside router, screen=%q state=%q", model.screen, model.stateKey)
 	}
@@ -839,7 +866,12 @@ func TestListHubRouterSecurityCustomAllowInputsStayInsideRouter(t *testing.T) {
 			Reason:   "review required",
 		}},
 	}}}
-	model := newListHubRouterModel(report, backendPlanReport{}, false, lastUpdate, true, listHubActionSecurity, nil, false)
+	model := newListHubRouterModel(listHubRouterOptions{
+		Report:        report,
+		LastUpdate:    lastUpdate,
+		HasLastUpdate: true,
+		InitialAction: listHubActionSecurity,
+	})
 	action := securityDetailActionValue("allow-custom", "brew", "cask", "demo")
 	updated, _ := model.handleAction(action)
 	model = updated.(listHubRouterModel)
@@ -874,7 +906,12 @@ func TestListHubRouterSecurityShowsProviderSummaryRows(t *testing.T) {
 		{Provider: "mise", Status: plan.StatusOK},
 		{Provider: "brew", Status: plan.StatusHeld, Findings: []safetyFinding{{Provider: "brew", Kind: "cask", Name: "wezterm@nightly", Decision: "review", Reason: "host mismatch"}}},
 	}}
-	model := newListHubRouterModel(report, backendPlanReport{}, false, lastUpdate, true, listHubActionSecurity, nil, false)
+	model := newListHubRouterModel(listHubRouterOptions{
+		Report:        report,
+		LastUpdate:    lastUpdate,
+		HasLastUpdate: true,
+		InitialAction: listHubActionSecurity,
+	})
 	view := model.View().Content
 	for _, want := range []string{"updev security review", "mise security", "brew"} {
 		if !strings.Contains(view, want) {
@@ -894,7 +931,11 @@ func TestListHubRouterKeepsBackendRouteLoadingUntilAsyncPlanArrives(t *testing.T
 		Name:     "ripgrep",
 		Status:   plan.StatusOK,
 	}}}
-	model := newListHubRouterModel(report, backendPlanReport{}, true, updateReport{}, false, listHubActionBackends, nil, false)
+	model := newListHubRouterModel(listHubRouterOptions{
+		Report:         report,
+		BackendLoading: true,
+		InitialAction:  listHubActionBackends,
+	})
 	if model.screen != listHubRouterTable || model.stateKey != listHubActionBackends || !model.backendLoading {
 		t.Fatalf("expected backend route to remain loading, screen=%q state=%q backendLoading=%v", model.screen, model.stateKey, model.backendLoading)
 	}
@@ -919,7 +960,11 @@ func TestListHubRouterRouteBackReturnsToOriginView(t *testing.T) {
 		RecommendedName:     "ripgrep",
 		Action:              "review",
 	}}}
-	model := newListHubRouterModel(report, backendPlan, false, updateReport{}, false, listHubActionFull, nil, false)
+	model := newListHubRouterModel(listHubRouterOptions{
+		Report:        report,
+		BackendPlan:   backendPlan,
+		InitialAction: listHubActionFull,
+	})
 	model.showRouteDetail(listRouteAction{Domain: listHubActionBackends, Provider: "brew", Kind: "brew", Name: "ripgrep"})
 	if model.screen != listHubRouterDetail || !strings.HasPrefix(model.stateKey, "route:") {
 		t.Fatalf("expected route detail, screen=%q state=%q", model.screen, model.stateKey)
@@ -961,7 +1006,11 @@ func TestListHubRouterClearsRowActionAfterReturningToInventory(t *testing.T) {
 		}},
 		Evidence: addBackendListEvidence(plan.EvidenceIndex{}, backendPlan),
 	}
-	model := newListHubRouterModel(report, backendPlan, false, updateReport{}, false, listHubActionFull, nil, false)
+	model := newListHubRouterModel(listHubRouterOptions{
+		Report:        report,
+		BackendPlan:   backendPlan,
+		InitialAction: listHubActionFull,
+	})
 	updated, _ := model.Update(tea.KeyPressMsg(tea.Key{Text: "a", Code: 'a'}))
 	model = updated.(listHubRouterModel)
 	if model.screen != listHubRouterDetail || !strings.HasPrefix(model.stateKey, "route:") {

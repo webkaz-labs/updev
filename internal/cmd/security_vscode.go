@@ -31,17 +31,19 @@ const (
 	vscodeMinUpdateAgeDaysEnvName    = "UPDEV_VSCODE_MIN_UPDATE_AGE_DAYS"
 )
 
-type vscodePosture = vscode.Posture
-type vscodeMarketplaceRequest = vscode.MarketplaceRequest
-type vscodeMarketplaceFilter = vscode.MarketplaceFilter
-type vscodeMarketplaceCriterion = vscode.MarketplaceCriterion
-type vscodeMarketplaceResponse = vscode.MarketplaceResponse
-type vscodeMarketplaceResult = vscode.MarketplaceResult
-type vscodeExtension = vscode.Extension
-type vscodePublisher = vscode.Publisher
-type vscodeVersion = vscode.Version
-type vscodeProperty = vscode.Property
-type vscodeStatistic = vscode.Statistic
+type (
+	vscodePosture              = vscode.Posture
+	vscodeMarketplaceRequest   = vscode.MarketplaceRequest
+	vscodeMarketplaceFilter    = vscode.MarketplaceFilter
+	vscodeMarketplaceCriterion = vscode.MarketplaceCriterion
+	vscodeMarketplaceResponse  = vscode.MarketplaceResponse
+	vscodeMarketplaceResult    = vscode.MarketplaceResult
+	vscodeExtension            = vscode.Extension
+	vscodePublisher            = vscode.Publisher
+	vscodeVersion              = vscode.Version
+	vscodeProperty             = vscode.Property
+	vscodeStatistic            = vscode.Statistic
+)
 
 func includeVSCodeExtensionsByDefault() bool {
 	if value, ok := boolEnv(includeVSCodeEnvName); ok {

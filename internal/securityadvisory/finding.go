@@ -1,10 +1,11 @@
 package securityadvisory
 
 import (
-	"github.com/webkaz-labs/updev/internal/securitygate"
 	"sort"
 	"strconv"
 	"strings"
+
+	"github.com/webkaz-labs/updev/internal/securitygate"
 )
 
 func AppendUniqueFindings(findings []Finding, additions ...Finding) []Finding {

@@ -37,7 +37,8 @@ func TestNormalizeSkippedItemNamesHomebrewTrustWarnings(t *testing.T) {
 }
 
 func TestAppendUniqueUpdatedKeepsHomebrewAndTapKeysSeparate(t *testing.T) {
-	got := AppendUniqueUpdated(nil,
+	got := AppendUniqueUpdated(
+		nil,
 		"Updated Homebrew from abc to def.",
 		"Updated 3 taps (homebrew/core, webkaz/tap and microsoft/git).",
 	)

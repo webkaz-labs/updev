@@ -4,13 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/webkaz-labs/updev/internal/plan"
 	"io"
 	"net/http"
 	"net/url"
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/webkaz-labs/updev/internal/plan"
 )
 
 func (version *GitHubAdvisoryPatchedVersion) UnmarshalJSON(data []byte) error {
@@ -37,7 +38,16 @@ func QueryGitHubAdvisories(ctx context.Context, client *http.Client, apiBase str
 			continue
 		}
 		for _, advisoryType := range []string{"reviewed", "malware"} {
-			advisories, err := fetchGitHubAdvisories(ctx, client, apiBase, token, ecosystem, pkg.Package, pkg.Version, advisoryType)
+			advisories, err := fetchGitHubAdvisories(githubAdvisoryQuery{
+				Context:      ctx,
+				Client:       client,
+				APIBase:      apiBase,
+				Token:        token,
+				Ecosystem:    ecosystem,
+				PackageName:  pkg.Package,
+				Version:      pkg.Version,
+				AdvisoryType: advisoryType,
+			})
 			if err != nil {
 				return findings, err
 			}
@@ -74,17 +84,36 @@ func fixedVersionsFromGitHubAdvisory(advisory GitHubAdvisory, pkg Package) []str
 	return versions
 }
 
-func fetchGitHubAdvisories(ctx context.Context, client *http.Client, apiBase string, token string, ecosystem string, packageName string, version string, advisoryType string) ([]GitHubAdvisory, error) {
-	endpoint, err := url.Parse(strings.TrimRight(apiBase, "/") + "/advisories")
+type githubAdvisoryQuery struct {
+	Context      context.Context
+	Client       *http.Client
+	APIBase      string
+	Token        string
+	Ecosystem    string
+	PackageName  string
+	Version      string
+	AdvisoryType string
+}
+
+func fetchGitHubAdvisories(query githubAdvisoryQuery) ([]GitHubAdvisory, error) {
+	ctx := query.Context
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	client := query.Client
+	if client == nil {
+		client = http.DefaultClient
+	}
+	endpoint, err := url.Parse(strings.TrimRight(query.APIBase, "/") + "/advisories")
 	if err != nil {
 		return nil, err
 	}
-	query := endpoint.Query()
-	query.Set("type", advisoryType)
-	query.Set("ecosystem", ecosystem)
-	query.Set("affects", packageName+"@"+version)
-	query.Set("per_page", "100")
-	endpoint.RawQuery = query.Encode()
+	values := endpoint.Query()
+	values.Set("type", query.AdvisoryType)
+	values.Set("ecosystem", query.Ecosystem)
+	values.Set("affects", query.PackageName+"@"+query.Version)
+	values.Set("per_page", "100")
+	endpoint.RawQuery = values.Encode()
 	requestCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
 	request, err := http.NewRequestWithContext(requestCtx, http.MethodGet, endpoint.String(), nil)
@@ -93,7 +122,7 @@ func fetchGitHubAdvisories(ctx context.Context, client *http.Client, apiBase str
 	}
 	request.Header.Set("Accept", "application/vnd.github+json")
 	request.Header.Set("X-GitHub-Api-Version", "2022-11-28")
-	if token != "" {
+	if token := strings.TrimSpace(query.Token); token != "" {
 		request.Header.Set("Authorization", "Bearer "+token)
 	}
 	response, err := client.Do(request)

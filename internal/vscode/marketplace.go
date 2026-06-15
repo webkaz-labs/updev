@@ -16,6 +16,8 @@ import (
 	"github.com/webkaz-labs/updev/internal/securityreason"
 )
 
+const marketplaceExtensionPageURLBase = "https://marketplace.visualstudio.com/items?itemName="
+
 type Thresholds struct {
 	MinInstallCount  float64
 	MinAverageRating float64
@@ -223,7 +225,7 @@ func PostureFromMetadata(requestedName string, metadata Extension, thresholds Th
 		AverageRating:     averageRating,
 		Decision:          "allow",
 		Confidence:        "medium",
-		URL:               "https://marketplace.visualstudio.com/items?itemName=" + requestedName,
+		URL:               MarketplaceExtensionPageURL(requestedName),
 	}
 	setPostureReason(&posture, securityreason.VSCodePostureReason(securityreason.VSCodeMarketplaceAllowed, requestedName, "VS Code Marketplace posture is allowed", nil))
 	switch {
@@ -278,10 +280,14 @@ func PostureUnavailable(extension string, err error) Posture {
 		Decision:    "review",
 		Confidence:  "low",
 		Remediation: "retry when Marketplace metadata is reachable or review the extension manually before adding a policy override",
-		URL:         "https://marketplace.visualstudio.com/items?itemName=" + extension,
+		URL:         MarketplaceExtensionPageURL(extension),
 	}
 	setPostureReason(&posture, securityreason.VSCodePostureReason(securityreason.VSCodeMarketplaceUnavailable, extension, "VS Code Marketplace metadata unavailable: "+err.Error(), map[string]string{"error": err.Error()}))
 	return posture
+}
+
+func MarketplaceExtensionPageURL(extension string) string {
+	return marketplaceExtensionPageURLBase + extension
 }
 
 func StatisticValue(statistics []Statistic, name string) (float64, bool) {

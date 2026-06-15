@@ -56,6 +56,35 @@ Current largest non-`cmd` packages:
   grows further, extract the production owner package first and move the tests
   with that owner.
 
+## Agent-Quality Audit Ledger
+
+`mise run agent-quality` runs pinned `aislop@0.12.0` as non-blocking audit
+evidence. The current baseline is intentionally tracked here instead of making
+all `aislop` findings release-blocking immediately.
+
+Current `aislop` baseline:
+
+| Finding class | Current count | Decision | Next action |
+|---------------|---------------|----------|-------------|
+| ignored return values | 0 errors | blocking candidate for new regressions | The initial 8 findings were resolved by validating security actions, surfacing TUI errors, degrading OSV detail fetch failures explicitly, and checking config scanner errors. Promote this class to blocking only after a few releases confirm low false positives for new findings. |
+| possible hardcoded secret | 1 known false positive | documented allow | `internal/securityreason/reason.go` defines the stable reason code `scanner_secret`; it is not a secret. `check-agent-quality.sh` filters this known false positive from active errors while still reporting the known-false-positive count. Revisit if `aislop` adds precise line/rule suppressions. |
+| hardcoded URL | 5 warnings | documented allow, not blocking | Package-page URLs now live behind provider helper functions. Remaining hits are env-overrideable default API endpoints or stable public detail URL bases. Do not block this class until the rule can distinguish configurable endpoints from durable public reference URLs. |
+| too many parameters | 12 warnings | refactor backlog | Prefer options structs when touching route/browser constructors or provider helper APIs. Do not churn stable call sites just to satisfy the metric. |
+| function too long | 16 warnings | refactor backlog | Continue extracting report assembly, localization, and route construction into owner packages during planned scalability refactors. |
+| file too large | 13 warnings | refactor backlog | Keep the existing package/file budgets as the primary guardrail; use the `aislop` file-size output as a prioritization signal for future splits. |
+
+Blocking promotion policy:
+
+- `agent-quality` remains non-blocking by default. `UPDEV_AGENT_QUALITY_STRICT=1`
+  is only for experiments or focused cleanup branches.
+- A class can become release-blocking only after the baseline is cleared or
+  documented, the rule has low false positives for at least several updev
+  releases, and the remediation is mechanical enough for agents to apply
+  consistently.
+- Do not promote broad complexity findings directly. Use them to choose
+  refactor slices, then enforce durable package/source-count budgets through
+  `check-source-structure.sh`.
+
 ## Refactor Ledger
 
 Completed P1 foundation slices:
