@@ -235,14 +235,20 @@ func TestConfirmModelUsesInjectedActionsAndLabels(t *testing.T) {
 }
 
 func TestTextInputModelEditsAndUsesInjectedActions(t *testing.T) {
-	model := NewTextInputModel("query", "description", "placeholder", "", TextInputActions{
-		Submit: "search",
-		Back:   "return",
-		Exit:   "quit",
-	}, TextInputLabels{
-		Controls: "custom input controls",
-		Input:    "filter:",
-	}, false)
+	model := NewTextInputModel(TextInputOptions{
+		Title:       "query",
+		Description: "description",
+		Placeholder: "placeholder",
+		Actions: TextInputActions{
+			Submit: "search",
+			Back:   "return",
+			Exit:   "quit",
+		},
+		Labels: TextInputLabels{
+			Controls: "custom input controls",
+			Input:    "filter:",
+		},
+	})
 	updated, _ := model.Update(tea.KeyPressMsg(tea.Key{Text: "g", Code: 'g'}))
 	model = updated.(TextInputModel)
 	updated, _ = model.Update(tea.KeyPressMsg(tea.Key{Text: "o", Code: 'o'}))

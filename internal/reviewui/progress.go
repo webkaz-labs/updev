@@ -101,47 +101,54 @@ func clearProgressLine(w io.Writer) {
 
 func InventoryProgressMessage(lang string, refresh bool) string {
 	if refresh {
-		return i18n.Pick(lang,
+		return i18n.Pick(
+			lang,
 			"Refreshing package inventory...",
 			"パッケージ inventory を更新中...",
 		)
 	}
-	return i18n.Pick(lang,
+	return i18n.Pick(
+		lang,
 		"Loading package inventory...",
 		"パッケージ inventory を読み込み中...",
 	)
 }
 
 func SafetyProgressMessage(lang string) string {
-	return i18n.Pick(lang,
+	return i18n.Pick(
+		lang,
 		"Checking update safety gates...",
 		"更新前の安全性を確認中...",
 	)
 }
 
 func DescriptionTranslationProgressMessage(lang string) string {
-	return i18n.Pick(lang,
+	return i18n.Pick(
+		lang,
 		"Refreshing translated descriptions...",
 		"説明の翻訳 cache を更新中...",
 	)
 }
 
 func ReviewPlanProgressMessage(lang string) string {
-	return i18n.Pick(lang,
+	return i18n.Pick(
+		lang,
 		"Preparing review actions...",
 		"確認アクションを準備中...",
 	)
 }
 
 func SecurityScanProgressMessage(lang string) string {
-	return i18n.Pick(lang,
+	return i18n.Pick(
+		lang,
 		"Collecting security evidence...",
 		"セキュリティ証跡を収集中...",
 	)
 }
 
 func SecurityReviewProgressMessage(lang string) string {
-	return i18n.Pick(lang,
+	return i18n.Pick(
+		lang,
 		"Preparing security review candidates...",
 		"セキュリティ review 候補を準備中...",
 	)
@@ -149,19 +156,22 @@ func SecurityReviewProgressMessage(lang string) string {
 
 func SyncProgressMessage(lang string, refresh bool) string {
 	if refresh {
-		return i18n.Pick(lang,
+		return i18n.Pick(
+			lang,
 			"Refreshing sync inventory...",
 			"sync inventory を更新中...",
 		)
 	}
-	return i18n.Pick(lang,
+	return i18n.Pick(
+		lang,
 		"Loading sync inventory...",
 		"sync inventory を読み込み中...",
 	)
 }
 
 func MutationProgressMessage(lang string, action string) string {
-	return i18n.Pick(lang,
+	return i18n.Pick(
+		lang,
 		"Applying "+action+" and validating inventory...",
 		action+" を適用して inventory を検証中...",
 	)

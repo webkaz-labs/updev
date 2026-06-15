@@ -183,7 +183,13 @@ func TestRunUpdateStepStreamsProviderLogsWhenRequested(t *testing.T) {
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
 	step := updateSteps()[0]
-	result := runUpdateStepWithWriters(context.Background(), fake, step, false, "", &stdout, &stderr)
+	result := runUpdateStepWithWriters(updateStepRunOptions{
+		Context: context.Background(),
+		Runner:  fake,
+		Step:    step,
+		Stdout:  &stdout,
+		Stderr:  &stderr,
+	})
 	if result.Status != plan.StatusOK {
 		t.Fatalf("expected ok step, got %#v", result)
 	}
@@ -1031,7 +1037,14 @@ func TestUpdateDashboardDetailRowsExposeHubActions(t *testing.T) {
 	if !strings.Contains(dashboardView, "focused actions: a/1=filter updates") {
 		t.Fatalf("expected dashboard view to expose focused row action hint:\n%s", dashboardView)
 	}
-	summaryModel := newUpdateSummaryBrowserModel(updateHubTitle(report), report, manualPlan, backendPlan, detailBrowserState{}, updateHubActionLogs, false)
+	summaryModel := newUpdateSummaryBrowserModel(updateSummaryBrowserOptions{
+		Title:       updateHubTitle(report),
+		Report:      report,
+		ManualPlan:  manualPlan,
+		BackendPlan: backendPlan,
+		State:       detailBrowserState{},
+		FocusAction: updateHubActionLogs,
+	})
 	summaryModel.Height = 80
 	dashboardView = summaryModel.View().Content
 	for _, want := range []string{"updev update held", "root: /repo", "security: strict", "safety summary:", "update summary:", "focused actions:", "a/1=open update details", "updates", "security attention", "inventory drift", "review actions"} {
@@ -1052,7 +1065,14 @@ func TestUpdateDashboardDetailRowsExposeHubActions(t *testing.T) {
 			}
 		}
 	}
-	focusedLowerSummary := newUpdateSummaryBrowserModel(updateHubTitle(report), report, manualPlan, backendPlan, detailBrowserState{}, updateHubActionManualPlan, false)
+	focusedLowerSummary := newUpdateSummaryBrowserModel(updateSummaryBrowserOptions{
+		Title:       updateHubTitle(report),
+		Report:      report,
+		ManualPlan:  manualPlan,
+		BackendPlan: backendPlan,
+		State:       detailBrowserState{},
+		FocusAction: updateHubActionManualPlan,
+	})
 	focusedLowerSummary.Height = 16
 	focusedLowerSummary.EnsureSelectedVisible()
 	focusedLowerView := focusedLowerSummary.View().Content
@@ -1090,7 +1110,14 @@ func TestUpdateDashboardDetailRowsExposeHubActions(t *testing.T) {
 	if route, ok := firstUpdateSummaryRoute(summaryModel.Lines, "brew"); !ok || route.Base != updateHubActionLogs || route.Provider != "brew" {
 		t.Fatalf("expected brew update row to route to provider-filtered logs, route=%+v ok=%v", route, ok)
 	}
-	reviewFocused := newUpdateSummaryBrowserModel(updateHubTitle(report), report, manualPlan, backendPlan, detailBrowserState{}, updateHubActionManualPlan, false)
+	reviewFocused := newUpdateSummaryBrowserModel(updateSummaryBrowserOptions{
+		Title:       updateHubTitle(report),
+		Report:      report,
+		ManualPlan:  manualPlan,
+		BackendPlan: backendPlan,
+		State:       detailBrowserState{},
+		FocusAction: updateHubActionManualPlan,
+	})
 	reviewFocused.Height = 80
 	reviewView := reviewFocused.View().Content
 	if !strings.Contains(reviewView, "action") || !strings.Contains(reviewView, "summary") {
@@ -1099,7 +1126,15 @@ func TestUpdateDashboardDetailRowsExposeHubActions(t *testing.T) {
 	if strings.Contains(reviewView, "[Enter: open manual review]") {
 		t.Fatalf("expected review action row to avoid inline Enter badge:\n%s", reviewView)
 	}
-	coloredSummaryModel := newUpdateSummaryBrowserModel(updateHubTitle(report), report, manualPlan, backendPlan, detailBrowserState{}, updateHubActionLogs, true)
+	coloredSummaryModel := newUpdateSummaryBrowserModel(updateSummaryBrowserOptions{
+		Title:       updateHubTitle(report),
+		Report:      report,
+		ManualPlan:  manualPlan,
+		BackendPlan: backendPlan,
+		State:       detailBrowserState{},
+		FocusAction: updateHubActionLogs,
+		Color:       true,
+	})
 	coloredSummaryModel.Height = 80
 	coloredSummaryView := coloredSummaryModel.View().Content
 	if !strings.Contains(coloredSummaryView, "\033[1m\033[35mupdates") || !strings.Contains(coloredSummaryView, "\033[1m\033[35mreview actions") {
@@ -1296,7 +1331,7 @@ func TestRunUpdateStrictSafetyHoldsTooNewBrewCandidate(t *testing.T) {
 	t.Setenv("UPDEV_GITHUB_API_URL", server.URL)
 	t.Setenv("UPDEV_OSV_API_URL", server.URL)
 	fake := &fakeCommandRunner{results: map[string]runner.Result{
-		"env\x00HOMEBREW_NO_AUTO_UPDATE=1\x00HOMEBREW_NO_INSTALL_FROM_API=1\x00brew\x00outdated\x00--json=v2\x00--greedy": runner.Result{Stdout: `{"formulae":[{"name":"jq","installed_versions":["1.7"],"current_version":"1.8.1"}],"casks":[]}`},
+		"env\x00HOMEBREW_NO_AUTO_UPDATE=1\x00HOMEBREW_NO_INSTALL_FROM_API=1\x00brew\x00outdated\x00--json=v2\x00--greedy": {Stdout: `{"formulae":[{"name":"jq","installed_versions":["1.7"],"current_version":"1.8.1"}],"casks":[]}`},
 	}}
 	code := runUpdate(updateOptions{format: "text", root: root, security: "strict"}, fake)
 	if code != 2 {

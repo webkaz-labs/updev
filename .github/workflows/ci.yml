@@ -31,6 +31,9 @@ jobs:
       - name: Staticcheck
         run: scripts/check-staticcheck.sh
 
+      - name: GolangCI-Lint
+        run: scripts/check-golangci-lint.sh
+
       - name: Shellcheck
         run: |
           if ! command -v shellcheck >/dev/null 2>&1; then

@@ -13,32 +13,36 @@ import (
 	"github.com/webkaz-labs/updev/internal/securityscanner"
 )
 
-type scannerEvidence = securityscanner.Evidence
-type scannerFinding = securityscanner.Finding
+type (
+	scannerEvidence = securityscanner.Evidence
+	scannerFinding  = securityscanner.Finding
+)
 
-type osvScannerReport = securityscanner.OSVReport
-type osvScannerResult = securityscanner.OSVResult
-type osvScannerSource = securityscanner.OSVSource
-type osvScannerPackage = securityscanner.OSVPackage
-type osvScannerPackageInfo = securityscanner.PackageInfo
-type osvScannerVuln = securityscanner.OSVVuln
-type osvScannerGroup = securityscanner.OSVGroup
-type gitleaksFinding = securityscanner.GitleaksFinding
-type zizmorFinding = securityscanner.ZizmorFinding
-type zizmorLocation = securityscanner.ZizmorLocation
-type trivyReport = securityscanner.TrivyReport
-type trivyResult = securityscanner.TrivyResult
-type trivyVulnerability = securityscanner.TrivyVulnerability
-type trivyMisconfiguration = securityscanner.TrivyMisconfig
-type trivyCauseMetadata = securityscanner.TrivyCauseMetadata
-type trivySecret = securityscanner.TrivySecret
-type grypeReport = securityscanner.GrypeReport
-type grypeMatch = securityscanner.GrypeMatch
-type grypeVulnerability = securityscanner.GrypeVulnerability
-type grypeFix = securityscanner.GrypeFix
-type grypeArtifact = securityscanner.GrypeArtifact
-type grypeLocation = securityscanner.GrypeLocation
-type grypeMatchDetail = securityscanner.GrypeMatchDetail
+type (
+	osvScannerReport      = securityscanner.OSVReport
+	osvScannerResult      = securityscanner.OSVResult
+	osvScannerSource      = securityscanner.OSVSource
+	osvScannerPackage     = securityscanner.OSVPackage
+	osvScannerPackageInfo = securityscanner.PackageInfo
+	osvScannerVuln        = securityscanner.OSVVuln
+	osvScannerGroup       = securityscanner.OSVGroup
+	gitleaksFinding       = securityscanner.GitleaksFinding
+	zizmorFinding         = securityscanner.ZizmorFinding
+	zizmorLocation        = securityscanner.ZizmorLocation
+	trivyReport           = securityscanner.TrivyReport
+	trivyResult           = securityscanner.TrivyResult
+	trivyVulnerability    = securityscanner.TrivyVulnerability
+	trivyMisconfiguration = securityscanner.TrivyMisconfig
+	trivyCauseMetadata    = securityscanner.TrivyCauseMetadata
+	trivySecret           = securityscanner.TrivySecret
+	grypeReport           = securityscanner.GrypeReport
+	grypeMatch            = securityscanner.GrypeMatch
+	grypeVulnerability    = securityscanner.GrypeVulnerability
+	grypeFix              = securityscanner.GrypeFix
+	grypeArtifact         = securityscanner.GrypeArtifact
+	grypeLocation         = securityscanner.GrypeLocation
+	grypeMatchDetail      = securityscanner.GrypeMatchDetail
+)
 
 func scannerEvidenceFromOptions(ctx context.Context, commandRunner commandRunner, opts securityOptions, desired []securityPackage) []scannerEvidence {
 	if !securityScannersShouldRun(opts) {

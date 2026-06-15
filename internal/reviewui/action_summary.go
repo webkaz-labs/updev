@@ -55,22 +55,33 @@ type ActionSummaryModel struct {
 	actionMap    []int
 }
 
-func NewActionSummaryModel(title string, lines []ActionSummaryLine, state State, focusAction string, labels ActionSummaryLabels, actions ActionSummaryActions, focusMatcher func(string, string) bool, color bool) ActionSummaryModel {
+type ActionSummaryOptions struct {
+	Title        string
+	Lines        []ActionSummaryLine
+	State        State
+	FocusAction  string
+	Labels       ActionSummaryLabels
+	Actions      ActionSummaryActions
+	FocusMatcher func(string, string) bool
+	Color        bool
+}
+
+func NewActionSummaryModel(options ActionSummaryOptions) ActionSummaryModel {
 	model := ActionSummaryModel{
-		Title:        title,
-		Lines:        lines,
-		State:        state,
-		Color:        color,
-		Labels:       fillActionSummaryLabels(labels),
-		Actions:      fillActionSummaryActions(actions),
-		FocusMatcher: focusMatcher,
+		Title:        options.Title,
+		Lines:        options.Lines,
+		State:        options.State,
+		Color:        options.Color,
+		Labels:       fillActionSummaryLabels(options.Labels),
+		Actions:      fillActionSummaryActions(options.Actions),
+		FocusMatcher: options.FocusMatcher,
 	}
 	model.refreshActionMap()
-	if state.Offset == 0 && state.Selected == 0 && state.Action == "" {
+	if options.State.Offset == 0 && options.State.Selected == 0 && options.State.Action == "" {
 		model.TopAnchor = true
 	}
-	if focusAction != "" {
-		model.FocusAction(focusAction)
+	if options.FocusAction != "" {
+		model.FocusAction(options.FocusAction)
 	}
 	model.ClampSelection()
 	return model
@@ -321,7 +332,8 @@ func (m ActionSummaryModel) selectedHint() string {
 	line := m.Lines[lineIndex]
 	label := firstNonEmpty(line.Label, line.Action)
 	position := fmt.Sprintf("%d/%d", m.State.Selected+1, len(m.actionMap))
-	return fmt.Sprintf("%s %s  %s",
+	return fmt.Sprintf(
+		"%s %s  %s",
 		textui.StyleDim(m.Labels.FocusedPrefix, m.Color),
 		textui.StyleAction("a/1="+label, m.Color),
 		textui.StyleCount(position, m.Color),

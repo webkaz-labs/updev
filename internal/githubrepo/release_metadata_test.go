@@ -21,7 +21,11 @@ func TestFetchReleaseOrTagByTagUsesReleaseMetadata(t *testing.T) {
 	}))
 	defer server.Close()
 
-	release, evidence, err := FetchReleaseOrTagByTag(context.Background(), server.Client(), server.URL, "test-token", "owner/tool", "v1.2.3", false)
+	release, evidence, err := FetchReleaseOrTagByTag(testReleaseTagQuery(server, ReleaseTagQuery{
+		Token:      "test-token",
+		Repository: "owner/tool",
+		Tag:        "v1.2.3",
+	}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -45,7 +49,11 @@ func TestFetchReleaseOrTagByTagFallsBackToCommitTagDate(t *testing.T) {
 	}))
 	defer server.Close()
 
-	release, evidence, err := FetchReleaseOrTagByTag(context.Background(), server.Client(), server.URL, "", "owner/tool", "v1.2.3", true)
+	release, evidence, err := FetchReleaseOrTagByTag(testReleaseTagQuery(server, ReleaseTagQuery{
+		Repository: "owner/tool",
+		Tag:        "v1.2.3",
+		Inferred:   true,
+	}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -58,10 +66,20 @@ func TestFetchReleaseOrTagByTagReturnsBothErrors(t *testing.T) {
 	server := httptest.NewServer(http.NotFoundHandler())
 	defer server.Close()
 
-	_, _, err := FetchReleaseOrTagByTag(context.Background(), server.Client(), server.URL, "", "owner/tool", "v1.2.3", false)
+	_, _, err := FetchReleaseOrTagByTag(testReleaseTagQuery(server, ReleaseTagQuery{
+		Repository: "owner/tool",
+		Tag:        "v1.2.3",
+	}))
 	if err == nil || !strings.Contains(err.Error(), "tag metadata fallback failed") {
 		t.Fatalf("expected combined release/tag error, got %v", err)
 	}
+}
+
+func testReleaseTagQuery(server *httptest.Server, query ReleaseTagQuery) ReleaseTagQuery {
+	query.Context = context.Background()
+	query.Client = server.Client()
+	query.APIBase = server.URL
+	return query
 }
 
 func TestParseReleaseTime(t *testing.T) {

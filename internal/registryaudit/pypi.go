@@ -15,6 +15,8 @@ import (
 	"github.com/webkaz-labs/updev/internal/securityreason"
 )
 
+const pyPIProjectPageURLBase = "https://pypi.org/project/"
+
 type PyPIPosture struct {
 	Provider      string            `json:"provider"`
 	Kind          string            `json:"kind"`
@@ -146,12 +148,12 @@ func PyPIPostureFromMetadata(requestedName string, pkg string, version string, m
 		Version:       version,
 		Latest:        metadata.Info.Version,
 		PublishedDate: release.UploadTimeISO8601,
-		ProjectURL:    firstNonEmpty(metadata.Info.ProjectURL, "https://pypi.org/project/"+pkg),
+		ProjectURL:    firstNonEmpty(metadata.Info.ProjectURL, PyPIProjectPageURL(pkg)),
 		RepositoryURL: PyPIRepositoryURL(metadata.Info.ProjectURLs),
 		Yanked:        release.Yanked,
 		Decision:      "allow",
 		Confidence:    "medium",
-		URL:           "https://pypi.org/project/" + pkg,
+		URL:           PyPIProjectPageURL(pkg),
 	}
 	switch {
 	case version != "" && !releaseFound:
@@ -214,8 +216,12 @@ func PyPIPostureUnavailable(requestedName string, pkg string, version string, er
 		Decision:   "review",
 		Confidence: "low",
 		Reason:     "PyPI metadata unavailable: " + err.Error(),
-		URL:        "https://pypi.org/project/" + pkg,
+		URL:        PyPIProjectPageURL(pkg),
 	}
 	setPyPIPostureReason(&posture, securityreason.RegistryMetadataUnavailable, posture.Reason)
 	return posture
+}
+
+func PyPIProjectPageURL(pkg string) string {
+	return pyPIProjectPageURLBase + pkg
 }

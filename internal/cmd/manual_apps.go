@@ -29,8 +29,10 @@ type manualAppOverride struct {
 	Lifecycle string   `json:"lifecycle,omitempty"`
 }
 
-type manualStructuredApp = manualinventory.StructuredApp
-type manualMASApp = manualinventory.MASApp
+type (
+	manualStructuredApp = manualinventory.StructuredApp
+	manualMASApp        = manualinventory.MASApp
+)
 
 func manualAppSections(root string, filters listOptions, inventoryItems []plan.Item) []toolSection {
 	if !listIncludesManual(filters) {
@@ -455,9 +457,11 @@ func joinManualDetailParts(values ...string) string {
 
 type manualScannedApp = manualinventory.App
 
-type manualReviewCandidate = manualinventory.ReviewCandidate
-type manualReviewEvidence = manualinventory.ReviewEvidence
-type manualReviewOverrideFields = manualinventory.ReviewOverrideFields
+type (
+	manualReviewCandidate      = manualinventory.ReviewCandidate
+	manualReviewEvidence       = manualinventory.ReviewEvidence
+	manualReviewOverrideFields = manualinventory.ReviewOverrideFields
+)
 
 func manualReviewRow(sectionName string, row toolRow) manualinventory.ReviewRow {
 	return manualinventory.ReviewRow{
@@ -596,7 +600,8 @@ func manualMASListSectionsFromApps(apps []manualMASApp) []toolSection {
 		if app.Version != "" {
 			details = append(details, "version: "+app.Version)
 		}
-		details = append(details,
+		details = append(
+			details,
 			"managed_by: mas",
 			"update_owner: mas",
 			"ownership_confidence: high",

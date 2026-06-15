@@ -120,8 +120,8 @@ func ConfigPath() string {
 }
 
 func TruthyEnv(name string) bool {
-	value, _ := BoolEnv(name)
-	return value
+	value, ok := BoolEnv(name)
+	return ok && value
 }
 
 func BoolEnv(name string) (bool, bool) {
@@ -276,6 +276,9 @@ func ParseTOML(data string) Config {
 				report.Path = stringValue
 			}
 		}
+	}
+	if err := scanner.Err(); err != nil {
+		return Config{}
 	}
 	return config
 }

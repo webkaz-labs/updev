@@ -9,7 +9,15 @@ import (
 )
 
 func newDetailBrowserModel(title string, rows []detailBrowserRow, state detailBrowserState, color bool) DetailBrowserModel {
-	return NewDetailBrowserModel(title, rows, state, DetailBrowserLabels{}, DetailBrowserFormatters{}, BrowserActions{Back: "back", Home: "home", Exit: "exit"}, color)
+	return NewDetailBrowserModel(DetailBrowserOptions{
+		Title:   title,
+		Rows:    rows,
+		State:   state,
+		Labels:  DetailBrowserLabels{},
+		Format:  DetailBrowserFormatters{},
+		Actions: BrowserActions{Back: "back", Home: "home", Exit: "exit"},
+		Color:   color,
+	})
 }
 
 func TestDetailBrowserModelTogglesAndRendersExpandedDetail(t *testing.T) {

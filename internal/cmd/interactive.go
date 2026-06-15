@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"charm.land/huh/v2"
+
 	"github.com/webkaz-labs/updev/internal/reviewui"
 	"github.com/webkaz-labs/updev/internal/textui"
 )
@@ -24,13 +25,17 @@ const (
 	updevActionExit = "exit"
 )
 
-type textInputBrowserModel = reviewui.TextInputModel
-type confirmBrowserModel = reviewui.ConfirmModel
+type (
+	textInputBrowserModel = reviewui.TextInputModel
+	confirmBrowserModel   = reviewui.ConfirmModel
+)
 
-type detailBrowserRow = reviewui.DetailRow
-type detailBrowserAction = reviewui.DetailAction
-type detailBrowserState = reviewui.State
-type detailBrowserModel = reviewui.DetailBrowserModel
+type (
+	detailBrowserRow    = reviewui.DetailRow
+	detailBrowserAction = reviewui.DetailAction
+	detailBrowserState  = reviewui.State
+	detailBrowserModel  = reviewui.DetailBrowserModel
+)
 
 const (
 	browserMouseOff   = reviewui.MouseOff
@@ -39,14 +44,22 @@ const (
 )
 
 func newTextInputBrowserModel(title string, description string, placeholder string, defaultValue string, color bool) textInputBrowserModel {
-	return reviewui.NewTextInputModel(title, description, placeholder, defaultValue, reviewui.TextInputActions{
-		Submit: "submit",
-		Back:   updevActionBack,
-		Exit:   updevActionExit,
-	}, reviewui.TextInputLabels{
-		Controls: tr("Enter submit, Backspace edit, Ctrl+u clear, b/Esc Back, q Exit", "Enter で確定、Backspace で編集、Ctrl+u でクリア、b/Esc で戻る、q で終了"),
-		Input:    tr("query:", "query:"),
-	}, color)
+	return reviewui.NewTextInputModel(reviewui.TextInputOptions{
+		Title:       title,
+		Description: description,
+		Placeholder: placeholder,
+		Default:     defaultValue,
+		Actions: reviewui.TextInputActions{
+			Submit: "submit",
+			Back:   updevActionBack,
+			Exit:   updevActionExit,
+		},
+		Labels: reviewui.TextInputLabels{
+			Controls: tr("Enter submit, Backspace edit, Ctrl+u clear, b/Esc Back, q Exit", "Enter で確定、Backspace で編集、Ctrl+u でクリア、b/Esc で戻る、q で終了"),
+			Input:    tr("query:", "query:"),
+		},
+		Color: color,
+	})
 }
 
 func newConfirmBrowserModel(title string, prompt string, description string, color bool) confirmBrowserModel {
@@ -75,7 +88,15 @@ func runPrimaryActionBrowserWithState(title string, rows []detailBrowserRow, sta
 }
 
 func newDetailBrowserModel(title string, rows []detailBrowserRow, state detailBrowserState, color bool) detailBrowserModel {
-	return reviewui.NewDetailBrowserModel(title, rows, state, detailBrowserLabelsForLocale(), detailBrowserFormattersForLocale(), detailBrowserActions(), color)
+	return reviewui.NewDetailBrowserModel(reviewui.DetailBrowserOptions{
+		Title:   title,
+		Rows:    rows,
+		State:   state,
+		Labels:  detailBrowserLabelsForLocale(),
+		Format:  detailBrowserFormattersForLocale(),
+		Actions: detailBrowserActions(),
+		Color:   color,
+	})
 }
 
 func detailBrowserActions() reviewui.BrowserActions {
@@ -170,9 +191,11 @@ func detailBrowserActionKeyIndex(key string) (int, bool) {
 	return reviewui.DetailBrowserActionKeyIndex(key)
 }
 
-type toolTableBrowserModel = reviewui.TableBrowserModel
-type toolTableMouseMsg = reviewui.TableMouseMsg
-type toolTableWheelMsg = reviewui.TableWheelMsg
+type (
+	toolTableBrowserModel = reviewui.TableBrowserModel
+	toolTableMouseMsg     = reviewui.TableMouseMsg
+	toolTableWheelMsg     = reviewui.TableWheelMsg
+)
 
 func runToolTableBrowserWithState(title string, sections []toolSection, state detailBrowserState, color bool) (detailBrowserState, error) {
 	return reviewui.RunTableBrowserWithState(title, sections, state, tableBrowserLabels(), tableBrowserActions(), color)

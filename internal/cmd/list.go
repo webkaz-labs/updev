@@ -68,8 +68,10 @@ type listReport struct {
 	Limit            int                     `json:"-"`
 }
 
-type toolSection = reviewui.Section
-type toolRow = reviewui.Row
+type (
+	toolSection = reviewui.Section
+	toolRow     = reviewui.Row
+)
 
 type listTranslationUpdate struct {
 	Attempted bool
@@ -290,7 +292,7 @@ func translateBatch(pending map[string]string) (map[string]string, error) {
 	responsePath := responseFile.Name()
 	_ = responseFile.Close()
 	defer os.Remove(responsePath)
-	command := exec.Command("codex", "exec", "--skip-git-repo-check", "--output-last-message", responsePath, "-")
+	command := exec.CommandContext(context.Background(), "codex", "exec", "--skip-git-repo-check", "--output-last-message", responsePath, "-")
 	command.Stdin = strings.NewReader(prompt)
 	output, err := command.CombinedOutput()
 	if err != nil {
@@ -737,7 +739,16 @@ func runListHub(report listReport, selectorHub bool) {
 		}
 		defaultAction = action
 		if shouldRunListHubRouterAction(action) {
-			result, updatedStates, err := runListHubRouter(report, backendPlan, backendLoading, lastUpdate.Report, hasLastUpdate, action, detailStates, textui.ColorEnabled())
+			result, updatedStates, err := runListHubRouter(listHubRouterOptions{
+				Report:         report,
+				BackendPlan:    backendPlan,
+				BackendLoading: backendLoading,
+				LastUpdate:     lastUpdate.Report,
+				HasLastUpdate:  hasLastUpdate,
+				InitialAction:  action,
+				DetailStates:   detailStates,
+				Color:          textui.ColorEnabled(),
+			})
 			if err == nil && result.Action != "" {
 				detailStates = updatedStates
 				if result.BackendReady {
@@ -771,7 +782,16 @@ func runListHub(report listReport, selectorHub bool) {
 				continue
 			}
 			defaultAction = listHubActionProvider
-			handled, exit := runListFilteredSelection("updev list "+provider, derivedListReport(report, listOptions{provider: provider}), detailStates, &defaultAction, &pendingAction, &backendPlan, lastUpdate.Report, hasLastUpdate)
+			handled, exit := runListFilteredSelection(listFilteredSelectionOptions{
+				Title:         "updev list " + provider,
+				Report:        derivedListReport(report, listOptions{provider: provider}),
+				DetailStates:  detailStates,
+				DefaultAction: &defaultAction,
+				PendingAction: &pendingAction,
+				BackendPlan:   &backendPlan,
+				LastUpdate:    lastUpdate.Report,
+				HasLastUpdate: hasLastUpdate,
+			})
 			if exit {
 				return
 			}
@@ -785,7 +805,16 @@ func runListHub(report listReport, selectorHub bool) {
 				continue
 			}
 			defaultAction = listHubActionKind
-			handled, exit := runListFilteredSelection("updev list "+kind, derivedListReport(report, listOptions{kind: kind}), detailStates, &defaultAction, &pendingAction, &backendPlan, lastUpdate.Report, hasLastUpdate)
+			handled, exit := runListFilteredSelection(listFilteredSelectionOptions{
+				Title:         "updev list " + kind,
+				Report:        derivedListReport(report, listOptions{kind: kind}),
+				DetailStates:  detailStates,
+				DefaultAction: &defaultAction,
+				PendingAction: &pendingAction,
+				BackendPlan:   &backendPlan,
+				LastUpdate:    lastUpdate.Report,
+				HasLastUpdate: hasLastUpdate,
+			})
 			if exit {
 				return
 			}
@@ -799,7 +828,16 @@ func runListHub(report listReport, selectorHub bool) {
 				continue
 			}
 			defaultAction = listHubActionCategory
-			handled, exit := runListFilteredSelection("updev list "+category, derivedListReport(report, listOptions{category: category}), detailStates, &defaultAction, &pendingAction, &backendPlan, lastUpdate.Report, hasLastUpdate)
+			handled, exit := runListFilteredSelection(listFilteredSelectionOptions{
+				Title:         "updev list " + category,
+				Report:        derivedListReport(report, listOptions{category: category}),
+				DetailStates:  detailStates,
+				DefaultAction: &defaultAction,
+				PendingAction: &pendingAction,
+				BackendPlan:   &backendPlan,
+				LastUpdate:    lastUpdate.Report,
+				HasLastUpdate: hasLastUpdate,
+			})
 			if exit {
 				return
 			}
@@ -813,7 +851,16 @@ func runListHub(report listReport, selectorHub bool) {
 				continue
 			}
 			defaultAction = listHubActionStatus
-			handled, exit := runListFilteredSelection("updev list "+status, derivedListReport(report, listOptions{status: status}), detailStates, &defaultAction, &pendingAction, &backendPlan, lastUpdate.Report, hasLastUpdate)
+			handled, exit := runListFilteredSelection(listFilteredSelectionOptions{
+				Title:         "updev list " + status,
+				Report:        derivedListReport(report, listOptions{status: status}),
+				DetailStates:  detailStates,
+				DefaultAction: &defaultAction,
+				PendingAction: &pendingAction,
+				BackendPlan:   &backendPlan,
+				LastUpdate:    lastUpdate.Report,
+				HasLastUpdate: hasLastUpdate,
+			})
 			if exit {
 				return
 			}
@@ -827,7 +874,16 @@ func runListHub(report listReport, selectorHub bool) {
 				continue
 			}
 			defaultAction = listHubActionQuery
-			handled, exit := runListFilteredSelection("updev list query", derivedListReport(report, listOptions{query: query}), detailStates, &defaultAction, &pendingAction, &backendPlan, lastUpdate.Report, hasLastUpdate)
+			handled, exit := runListFilteredSelection(listFilteredSelectionOptions{
+				Title:         "updev list query",
+				Report:        derivedListReport(report, listOptions{query: query}),
+				DetailStates:  detailStates,
+				DefaultAction: &defaultAction,
+				PendingAction: &pendingAction,
+				BackendPlan:   &backendPlan,
+				LastUpdate:    lastUpdate.Report,
+				HasLastUpdate: hasLastUpdate,
+			})
 			if exit {
 				return
 			}
@@ -838,7 +894,18 @@ func runListHub(report listReport, selectorHub bool) {
 		case listHubActionManual:
 			defaultAction = listHubActionManual
 			manualReport := derivedListReport(report, listOptions{provider: manualProviderName})
-			handled, exit := runListFilteredSelectionWithViewActions("updev list manual", manualReport, detailStates, &defaultAction, &pendingAction, &backendPlan, lastUpdate.Report, hasLastUpdate, listHubActionFull, listHubActionFull)
+			handled, exit := runListFilteredSelection(listFilteredSelectionOptions{
+				Title:          "updev list manual",
+				Report:         manualReport,
+				DetailStates:   detailStates,
+				DefaultAction:  &defaultAction,
+				PendingAction:  &pendingAction,
+				BackendPlan:    &backendPlan,
+				LastUpdate:     lastUpdate.Report,
+				HasLastUpdate:  hasLastUpdate,
+				NextAction:     listHubActionFull,
+				PreviousAction: listHubActionFull,
+			})
 			if exit {
 				return
 			}
@@ -953,7 +1020,15 @@ func runListHub(report listReport, selectorHub bool) {
 				continue
 			}
 			if route, ok := parseListRouteAction(action); ok {
-				outcome := runListRouteDetail(report.Root, route, backendPlan, lastUpdate.Report, hasLastUpdate, detailStates, textui.ColorEnabled())
+				outcome := runListRouteDetail(listRouteDetailOptions{
+					Root:          report.Root,
+					Route:         route,
+					BackendPlan:   backendPlan,
+					LastUpdate:    lastUpdate.Report,
+					HasLastUpdate: hasLastUpdate,
+					DetailStates:  detailStates,
+					Color:         textui.ColorEnabled(),
+				})
 				if outcome == listRouteDetailExit {
 					return
 				}
@@ -1091,7 +1166,8 @@ func listHubChoices(report listReport, backendPlan backendPlanReport, backendLoa
 			choices = append(choices, updevChoice{Value: listHubActionSecurity, Label: tr("Security review", "security review"), Description: tr("Review cached security holds, advisories, and policy actions.", "cached security hold / advisory / policy action を確認します。")})
 		}
 	}
-	choices = append(choices,
+	choices = append(
+		choices,
 		updevChoice{Value: listHubActionSupport, Label: tr("Support catalog", "support catalog"), Description: tr("Review support labels for providers, commands, reports, and inventory sources.", "provider / command / report / inventory source の support label を確認します。")},
 		updevChoice{Value: listHubActionLimited, Label: tr("Compact list", "compact list"), Description: tr("Show at most 10 rows per section.", "各 section 最大 10 行で表示します。")},
 		updevChoice{Value: listHubActionDetails, Label: tr("Details", "詳細"), Description: tr("Show limited rows plus expanded descriptions.", "絞り込んだ行と展開可能な説明を表示します。")},
@@ -1185,33 +1261,56 @@ func selectListQuery() (string, bool) {
 	return value, true
 }
 
-func runListFilteredSelection(title string, report listReport, detailStates map[string]detailBrowserState, defaultAction *string, pendingAction *string, backendPlan *backendPlanReport, lastUpdate updateReport, hasLastUpdate bool) (bool, bool) {
-	return runListFilteredSelectionWithViewActions(title, report, detailStates, defaultAction, pendingAction, backendPlan, lastUpdate, hasLastUpdate, "", "")
+type listFilteredSelectionOptions struct {
+	Title          string
+	Report         listReport
+	DetailStates   map[string]detailBrowserState
+	DefaultAction  *string
+	PendingAction  *string
+	BackendPlan    *backendPlanReport
+	LastUpdate     updateReport
+	HasLastUpdate  bool
+	NextAction     string
+	PreviousAction string
 }
 
-func runListFilteredSelectionWithViewActions(title string, report listReport, detailStates map[string]detailBrowserState, defaultAction *string, pendingAction *string, backendPlan *backendPlanReport, lastUpdate updateReport, hasLastUpdate bool, nextAction string, previousAction string) (bool, bool) {
+func runListFilteredSelection(options listFilteredSelectionOptions) (bool, bool) {
 	for {
-		action, handled := runListFilteredBrowserWithViewActions(title, report, detailStates, textui.ColorEnabled(), nextAction, previousAction)
+		action, handled := runListFilteredBrowserWithViewActions(options.Title, options.Report, options.DetailStates, textui.ColorEnabled(), options.NextAction, options.PreviousAction)
 		if route, ok := parseListRouteAction(action); ok {
-			outcome := runListRouteDetail(report.Root, route, *backendPlan, lastUpdate, hasLastUpdate, detailStates, textui.ColorEnabled())
+			backendPlan := backendPlanReport{}
+			if options.BackendPlan != nil {
+				backendPlan = *options.BackendPlan
+			}
+			outcome := runListRouteDetail(listRouteDetailOptions{
+				Root:          options.Report.Root,
+				Route:         route,
+				BackendPlan:   backendPlan,
+				LastUpdate:    options.LastUpdate,
+				HasLastUpdate: options.HasLastUpdate,
+				DetailStates:  options.DetailStates,
+				Color:         textui.ColorEnabled(),
+			})
 			if outcome == listRouteDetailExit {
 				return true, true
 			}
 			if outcome == listRouteDetailHome {
-				if defaultAction != nil {
-					*defaultAction = listHubActionFull
+				if options.DefaultAction != nil {
+					*options.DefaultAction = listHubActionFull
 				}
-				if pendingAction != nil {
-					*pendingAction = ""
+				if options.PendingAction != nil {
+					*options.PendingAction = ""
 				}
 				return true, false
 			}
 			if route.Domain == listHubActionBackends {
-				*backendPlan = buildBackendPlanReport(context.Background(), backendOptions{command: "plan", root: report.Root})
+				if options.BackendPlan != nil {
+					*options.BackendPlan = buildBackendPlanReport(context.Background(), backendOptions{command: "plan", root: options.Report.Root})
+				}
 			}
 			continue
 		}
-		return handleListFilteredAction(action, handled, defaultAction, pendingAction)
+		return handleListFilteredAction(action, handled, options.DefaultAction, options.PendingAction)
 	}
 }
 
@@ -1481,25 +1580,37 @@ func parseListRouteAction(value string) (listRouteAction, bool) {
 	return listRouteAction{Domain: parts[1], Provider: parts[2], Kind: parts[3], Name: parts[4]}, true
 }
 
-func runListRouteDetail(root string, route listRouteAction, backendPlan backendPlanReport, lastUpdate updateReport, hasLastUpdate bool, detailStates map[string]detailBrowserState, color bool) listRouteDetailOutcome {
+type listRouteDetailOptions struct {
+	Root          string
+	Route         listRouteAction
+	BackendPlan   backendPlanReport
+	LastUpdate    updateReport
+	HasLastUpdate bool
+	DetailStates  map[string]detailBrowserState
+	Color         bool
+}
+
+func runListRouteDetail(options listRouteDetailOptions) listRouteDetailOutcome {
+	route := options.Route
+	detailStates := reviewui.EnsureStateCache(options.DetailStates)
 	stateKey := "route:" + route.Domain + ":" + route.Provider + ":" + route.Kind + ":" + route.Name
 	var rows []detailBrowserRow
 	title := routeDetailTitle(route)
 	switch route.Domain {
 	case listHubActionManual:
-		manualPlan := buildInventoryPlanReport(inventoryPlanOptions{root: root, provider: manualProviderName, query: route.Name})
+		manualPlan := buildInventoryPlanReport(inventoryPlanOptions{root: options.Root, provider: manualProviderName, query: route.Name})
 		rows = manualPlanDetailRows(manualPlan)
 	case listHubActionBackends:
-		rows = backendDetailRowsForListRoute(backendPlan, route)
+		rows = backendDetailRowsForListRoute(options.BackendPlan, route)
 	case listHubActionUpdates:
-		if hasLastUpdate {
-			filtered := filterUpdateReport(lastUpdate, lastReportOptions{section: "logs", provider: route.Provider, query: route.Name})
+		if options.HasLastUpdate {
+			filtered := filterUpdateReport(options.LastUpdate, lastReportOptions{section: "logs", provider: route.Provider, query: route.Name})
 			rows = updateLogDetailRows(filtered)
 		}
 	case listHubActionSecurity:
-		if hasLastUpdate {
+		if options.HasLastUpdate {
 			opts := lastReportOptions{section: "security", provider: route.Provider, query: route.Name}
-			filtered := filterUpdateReport(lastUpdate, opts)
+			filtered := filterUpdateReport(options.LastUpdate, opts)
 			rows = updateSecurityDetailRowsForFilter(filtered, opts)
 		}
 	default:
@@ -1508,7 +1619,7 @@ func runListRouteDetail(root string, route listRouteAction, backendPlan backendP
 	if len(rows) == 0 {
 		rows = []detailBrowserRow{emptyRouteDetailRow(route)}
 	}
-	state, err := runDetailBrowserWithState(title, rows, initialRouteDetailState(detailStates[stateKey]), color)
+	state, err := runDetailBrowserWithState(title, rows, initialRouteDetailState(detailStates[stateKey]), options.Color)
 	if err != nil {
 		return listRouteDetailBack
 	}
@@ -1524,13 +1635,13 @@ func runListRouteDetail(root string, route listRouteAction, backendPlan backendP
 	}
 	switch route.Domain {
 	case listHubActionManual:
-		_ = handleManualPlanDetailAction(root, state.Action)
+		_ = handleManualPlanDetailAction(options.Root, state.Action)
 	case listHubActionBackends:
-		_ = handleBackendDetailAction(root, state.Action)
+		_ = handleBackendDetailAction(options.Root, state.Action)
 	case listHubActionSecurity:
-		if hasLastUpdate {
-			_ = handleMiseBumpDetailAction(&lastUpdate, state.Action)
-			_ = handleSecurityDetailAction(&lastUpdate, state.Action)
+		if options.HasLastUpdate {
+			_ = handleMiseBumpDetailAction(&options.LastUpdate, state.Action)
+			_ = handleSecurityDetailAction(&options.LastUpdate, state.Action)
 		}
 	}
 	return listRouteDetailBack
@@ -1633,7 +1744,8 @@ func listEvidenceSummary(evidence plan.EvidenceIndex, color bool) string {
 }
 
 func listEvidenceCountSummary(updates int, security int, backends int, color bool) string {
-	return fmt.Sprintf("%s=%s %s=%s %s=%s",
+	return fmt.Sprintf(
+		"%s=%s %s=%s %s=%s",
 		textui.StyleRequested("upd", color),
 		textui.StyleCount(fmt.Sprint(updates), color),
 		textui.StyleRequested("sec", color),
@@ -2660,8 +2772,19 @@ type listHubRouterModel struct {
 	confirm confirmBrowserModel
 }
 
-func runListHubRouter(report listReport, backendPlan backendPlanReport, backendLoading bool, lastUpdate updateReport, hasLastUpdate bool, initialAction string, detailStates map[string]detailBrowserState, color bool) (listHubRouterResult, map[string]detailBrowserState, error) {
-	model := newListHubRouterModel(report, backendPlan, backendLoading, lastUpdate, hasLastUpdate, initialAction, detailStates, color)
+type listHubRouterOptions struct {
+	Report         listReport
+	BackendPlan    backendPlanReport
+	BackendLoading bool
+	LastUpdate     updateReport
+	HasLastUpdate  bool
+	InitialAction  string
+	DetailStates   map[string]detailBrowserState
+	Color          bool
+}
+
+func runListHubRouter(options listHubRouterOptions) (listHubRouterResult, map[string]detailBrowserState, error) {
+	model := newListHubRouterModel(options)
 	final, err := tea.NewProgram(model).Run()
 	if err != nil {
 		return listHubRouterResult{}, model.detailStates, err
@@ -2678,17 +2801,18 @@ func runListHubRouter(report listReport, backendPlan backendPlanReport, backendL
 	return listHubRouterResult{}, model.detailStates, nil
 }
 
-func newListHubRouterModel(report listReport, backendPlan backendPlanReport, backendLoading bool, lastUpdate updateReport, hasLastUpdate bool, initialAction string, detailStates map[string]detailBrowserState, color bool) listHubRouterModel {
-	detailStates = reviewui.EnsureStateCache(detailStates)
+func newListHubRouterModel(options listHubRouterOptions) listHubRouterModel {
+	detailStates := reviewui.EnsureStateCache(options.DetailStates)
 	model := listHubRouterModel{
-		report:         report,
-		backendPlan:    backendPlan,
-		backendLoading: backendLoading,
-		lastUpdate:     lastUpdate,
-		hasLastUpdate:  hasLastUpdate,
+		report:         options.Report,
+		backendPlan:    options.BackendPlan,
+		backendLoading: options.BackendLoading,
+		lastUpdate:     options.LastUpdate,
+		hasLastUpdate:  options.HasLastUpdate,
 		detailStates:   detailStates,
-		color:          color,
+		color:          options.Color,
 	}
+	initialAction := options.InitialAction
 	if initialAction == "" {
 		initialAction = listHubActionFull
 	}
@@ -3472,7 +3596,10 @@ func routedDetailWriteActionSpec(value string) (detailWriteActionSpec, bool) {
 				Description: description,
 			}, true
 		}
-		decision, reason, expires, _ := defaultSecurityDetailActionInputs(action)
+		decision, reason, expires, ok := defaultSecurityDetailActionInputs(action)
+		if !ok {
+			return detailWriteActionSpec{}, false
+		}
 		spec := detailWriteActionSpec{
 			Title:          tr("security policy action", "security policy 操作"),
 			Prompt:         fmt.Sprintf(tr("Mark %s/%s %s as %s?", "%s/%s %s を %s にしますか?"), provider, kind, name, decision),
@@ -3505,7 +3632,12 @@ func applyRoutedDetailWriteAction(root string, report *updateReport, value strin
 	}
 	if action, provider, kind, name, ok := parseSecurityDetailAction(value); ok {
 		if !securityDetailActionRequiresCustomInput(action) {
-			_, reason, expires, _ = defaultSecurityDetailActionInputs(action)
+			_, defaultReason, defaultExpires, ok := defaultSecurityDetailActionInputs(action)
+			if !ok {
+				return false
+			}
+			reason = defaultReason
+			expires = defaultExpires
 		}
 		return applyConfirmedSecurityDetailActionSilently(report, action, provider, kind, name, strings.TrimSpace(reason), strings.TrimSpace(expires))
 	}

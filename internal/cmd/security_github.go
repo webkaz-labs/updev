@@ -19,19 +19,23 @@ import (
 	"github.com/webkaz-labs/updev/internal/updevpath"
 )
 
-const defaultGitHubAPIURL = "https://api.github.com"
-const githubRepositoryCacheMaxAge = 6 * time.Hour
-const githubRepositoryCacheVersion = 1
+const (
+	defaultGitHubAPIURL          = "https://api.github.com"
+	githubRepositoryCacheMaxAge  = 6 * time.Hour
+	githubRepositoryCacheVersion = 1
+)
 
 var githubCLITokenCache struct {
 	sync.Once
 	value string
 }
 
-type githubPosture = githubrepo.Posture
-type githubRepository = githubrepo.Repository
-type githubSecurityAndAnalysis = githubrepo.SecurityAndAnalysis
-type githubSecurityFeature = githubrepo.SecurityFeature
+type (
+	githubPosture             = githubrepo.Posture
+	githubRepository          = githubrepo.Repository
+	githubSecurityAndAnalysis = githubrepo.SecurityAndAnalysis
+	githubSecurityFeature     = githubrepo.SecurityFeature
+)
 
 type githubURLPostureRequest struct {
 	provider string

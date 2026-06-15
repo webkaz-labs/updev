@@ -13,8 +13,10 @@ import (
 	"github.com/webkaz-labs/updev/internal/textui"
 )
 
-const backendPlanReportSchemaVersion = backend.ReportSchemaVersion
-const backendDetailActionPrefix = "backend"
+const (
+	backendPlanReportSchemaVersion = backend.ReportSchemaVersion
+	backendDetailActionPrefix      = "backend"
+)
 
 type backendOptions struct {
 	command string
@@ -22,9 +24,11 @@ type backendOptions struct {
 	root    string
 }
 
-type backendPlanReport = backend.Report
-type backendFinding = backend.Finding
-type backendPreferenceTier = backend.PreferenceTier
+type (
+	backendPlanReport     = backend.Report
+	backendFinding        = backend.Finding
+	backendPreferenceTier = backend.PreferenceTier
+)
 
 func parseBackendOptions(command string, args []string) (backendOptions, error) {
 	opts := backendOptions{command: command, format: "text", root: defaultRoot()}

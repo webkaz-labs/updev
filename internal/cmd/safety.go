@@ -27,10 +27,12 @@ import (
 	"github.com/webkaz-labs/updev/internal/updevpath"
 )
 
-type safetyGate = securitygate.Gate
-type safetySummary = securitygate.Summary
-type safetyFinding = securitygate.Finding
-type brewSafetyEntry = brew.ManifestEntry
+type (
+	safetyGate      = securitygate.Gate
+	safetySummary   = securitygate.Summary
+	safetyFinding   = securitygate.Finding
+	brewSafetyEntry = brew.ManifestEntry
+)
 
 type brewSafetyManifest struct {
 	brew.Manifest
@@ -728,7 +730,15 @@ func inferredHomebrewGitHubReleaseTags(finding safetyFinding) (string, []string,
 }
 
 func fetchGitHubReleaseOrTagByTag(ctx context.Context, client *http.Client, apiBase string, repository string, tag string, inferred bool) (githubrepo.Release, string, error) {
-	return githubrepo.FetchReleaseOrTagByTag(ctx, client, apiBase, githubToken(), repository, tag, inferred)
+	return githubrepo.FetchReleaseOrTagByTag(githubrepo.ReleaseTagQuery{
+		Context:    ctx,
+		Client:     client,
+		APIBase:    apiBase,
+		Token:      githubToken(),
+		Repository: repository,
+		Tag:        tag,
+		Inferred:   inferred,
+	})
 }
 
 func parseGitHubReleaseTime(release githubrepo.Release) (time.Time, error) {
@@ -1436,7 +1446,7 @@ func applyMiseNPMReleaseAge(ctx context.Context, client *http.Client, registryBa
 	deprecated := firstNonEmpty(versionInfo.Deprecated, metadata.Deprecated)
 	finding.Kind = "npm"
 	finding.RepositoryURL = registryaudit.NormalizeNPMRepositoryURL(firstNonEmpty(versionInfo.Repository.URL, metadata.Repository.URL))
-	finding.URL = "https://www.npmjs.com/package/" + pkg
+	finding.URL = registryaudit.NPMPackagePageURL(pkg)
 	finding.Evidence = appendEvidence(finding.Evidence, "npm registry metadata")
 	switch {
 	case version == "":
@@ -1468,7 +1478,7 @@ func applyMiseCargoReleaseAge(ctx context.Context, client *http.Client, apiBase 
 	versionInfo, versionFound := registryaudit.CratesIOVersionByNumber(metadata.Versions, version)
 	finding.Kind = "cargo"
 	finding.RepositoryURL = metadata.Crate.Repository
-	finding.URL = "https://crates.io/crates/" + crate
+	finding.URL = registryaudit.CratesIOCratePageURL(crate)
 	finding.Evidence = appendEvidence(finding.Evidence, "crates.io metadata")
 	switch {
 	case version == "":
@@ -1498,7 +1508,7 @@ func applyMisePyPIReleaseAge(ctx context.Context, client *http.Client, apiBase s
 	release, releaseFound := registryaudit.PyPIReleaseForVersion(metadata.Releases, version)
 	finding.Kind = "pipx"
 	finding.RepositoryURL = registryaudit.PyPIRepositoryURL(metadata.Info.ProjectURLs)
-	finding.URL = "https://pypi.org/project/" + pkg
+	finding.URL = registryaudit.PyPIProjectPageURL(pkg)
 	finding.Evidence = appendEvidence(finding.Evidence, "PyPI metadata")
 	switch {
 	case version == "":

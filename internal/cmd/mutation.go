@@ -17,8 +17,10 @@ import (
 	"github.com/webkaz-labs/updev/internal/snapshot"
 )
 
-const mutationReportSchemaVersion = 1
-const rollbackReportSchemaVersion = 1
+const (
+	mutationReportSchemaVersion = 1
+	rollbackReportSchemaVersion = 1
+)
 
 type mutationOptions struct {
 	action   string
@@ -575,7 +577,7 @@ func runEdit(args []string) int {
 	if len(editorArgs) == 0 {
 		editorArgs = []string{"vi"}
 	}
-	command := exec.Command(editorArgs[0], append(editorArgs[1:], path)...)
+	command := exec.CommandContext(context.Background(), editorArgs[0], append(editorArgs[1:], path)...)
 	command.Stdin = os.Stdin
 	command.Stdout = os.Stdout
 	command.Stderr = &stderr

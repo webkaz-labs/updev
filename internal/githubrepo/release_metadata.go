@@ -16,6 +16,31 @@ type Release struct {
 	CreatedAt   string `json:"created_at"`
 }
 
+type ReleaseTagQuery struct {
+	Context    context.Context
+	Client     *http.Client
+	APIBase    string
+	Token      string
+	Repository string
+	Tag        string
+	Inferred   bool
+}
+
+type apiClient struct {
+	ctx     context.Context
+	client  *http.Client
+	apiBase string
+	token   string
+}
+
+type jsonRequest struct {
+	api         apiClient
+	endpoint    string
+	bodyLimit   int64
+	errorPrefix string
+	out         any
+}
+
 type gitObject struct {
 	Type string `json:"type"`
 	SHA  string `json:"sha"`
@@ -41,26 +66,37 @@ type gitCommit struct {
 	Committer gitIdentity `json:"committer"`
 }
 
-func fetchReleaseByTag(ctx context.Context, client *http.Client, apiBase string, token string, repository string, tag string) (Release, error) {
-	endpoint := strings.TrimRight(apiBase, "/") + "/repos/" + repository + "/releases/tags/" + neturl.PathEscape(tag)
+func newAPIClient(ctx context.Context, client *http.Client, apiBase string, token string) apiClient {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if client == nil {
+		client = http.DefaultClient
+	}
+	return apiClient{ctx: ctx, client: client, apiBase: apiBase, token: token}
+}
+
+func fetchReleaseByTag(api apiClient, repository string, tag string) (Release, error) {
+	endpoint := strings.TrimRight(api.apiBase, "/") + "/repos/" + repository + "/releases/tags/" + neturl.PathEscape(tag)
 	var release Release
-	if err := fetchJSON(ctx, client, endpoint, token, &release); err != nil {
+	if err := fetchJSON(api, endpoint, &release); err != nil {
 		return Release{}, err
 	}
 	return release, nil
 }
 
-func FetchReleaseOrTagByTag(ctx context.Context, client *http.Client, apiBase string, token string, repository string, tag string, inferred bool) (Release, string, error) {
-	release, releaseErr := fetchReleaseByTag(ctx, client, apiBase, token, repository, tag)
+func FetchReleaseOrTagByTag(query ReleaseTagQuery) (Release, string, error) {
+	api := newAPIClient(query.Context, query.Client, query.APIBase, query.Token)
+	release, releaseErr := fetchReleaseByTag(api, query.Repository, query.Tag)
 	if releaseErr == nil {
-		if inferred {
+		if query.Inferred {
 			return release, "GitHub inferred release metadata", nil
 		}
 		return release, "GitHub release metadata", nil
 	}
-	release, tagErr := fetchTagDateByRef(ctx, client, apiBase, token, repository, tag)
+	release, tagErr := fetchTagDateByRef(api, query.Repository, query.Tag)
 	if tagErr == nil {
-		if inferred {
+		if query.Inferred {
 			return release, "GitHub inferred tag metadata", nil
 		}
 		return release, "GitHub tag metadata", nil
@@ -68,47 +104,47 @@ func FetchReleaseOrTagByTag(ctx context.Context, client *http.Client, apiBase st
 	return Release{}, "", fmt.Errorf("%w; tag metadata fallback failed: %v", releaseErr, tagErr)
 }
 
-func fetchTagDateByRef(ctx context.Context, client *http.Client, apiBase string, token string, repository string, tag string) (Release, error) {
-	endpoint := strings.TrimRight(apiBase, "/") + "/repos/" + repository + "/git/ref/tags/" + neturl.PathEscape(tag)
+func fetchTagDateByRef(api apiClient, repository string, tag string) (Release, error) {
+	endpoint := strings.TrimRight(api.apiBase, "/") + "/repos/" + repository + "/git/ref/tags/" + neturl.PathEscape(tag)
 	var ref gitRef
-	if err := fetchJSON(ctx, client, endpoint, token, &ref); err != nil {
+	if err := fetchJSON(api, endpoint, &ref); err != nil {
 		return Release{}, err
 	}
 	switch ref.Object.Type {
 	case "tag":
-		return fetchAnnotatedTagDate(ctx, client, apiBase, token, repository, ref.Object.SHA)
+		return fetchAnnotatedTagDate(api, repository, ref.Object.SHA)
 	case "commit":
-		return fetchCommitDate(ctx, client, apiBase, token, repository, ref.Object.SHA)
+		return fetchCommitDate(api, repository, ref.Object.SHA)
 	default:
 		return Release{}, fmt.Errorf("unsupported github tag object type: %s", ref.Object.Type)
 	}
 }
 
-func fetchAnnotatedTagDate(ctx context.Context, client *http.Client, apiBase string, token string, repository string, sha string) (Release, error) {
+func fetchAnnotatedTagDate(api apiClient, repository string, sha string) (Release, error) {
 	if sha == "" {
 		return Release{}, fmt.Errorf("github tag object sha is empty")
 	}
-	endpoint := strings.TrimRight(apiBase, "/") + "/repos/" + repository + "/git/tags/" + neturl.PathEscape(sha)
+	endpoint := strings.TrimRight(api.apiBase, "/") + "/repos/" + repository + "/git/tags/" + neturl.PathEscape(sha)
 	var tag gitTag
-	if err := fetchJSON(ctx, client, endpoint, token, &tag); err != nil {
+	if err := fetchJSON(api, endpoint, &tag); err != nil {
 		return Release{}, err
 	}
 	if strings.TrimSpace(tag.Tagger.Date) != "" {
 		return Release{CreatedAt: tag.Tagger.Date}, nil
 	}
 	if tag.Object.Type == "commit" && tag.Object.SHA != "" {
-		return fetchCommitDate(ctx, client, apiBase, token, repository, tag.Object.SHA)
+		return fetchCommitDate(api, repository, tag.Object.SHA)
 	}
 	return Release{}, fmt.Errorf("github annotated tag date is empty")
 }
 
-func fetchCommitDate(ctx context.Context, client *http.Client, apiBase string, token string, repository string, sha string) (Release, error) {
+func fetchCommitDate(api apiClient, repository string, sha string) (Release, error) {
 	if sha == "" {
 		return Release{}, fmt.Errorf("github commit object sha is empty")
 	}
-	endpoint := strings.TrimRight(apiBase, "/") + "/repos/" + repository + "/git/commits/" + neturl.PathEscape(sha)
+	endpoint := strings.TrimRight(api.apiBase, "/") + "/repos/" + repository + "/git/commits/" + neturl.PathEscape(sha)
 	var commit gitCommit
-	if err := fetchJSON(ctx, client, endpoint, token, &commit); err != nil {
+	if err := fetchJSON(api, endpoint, &commit); err != nil {
 		return Release{}, err
 	}
 	date := firstNonEmpty(commit.Committer.Date, commit.Author.Date)
@@ -132,43 +168,56 @@ func ParseReleaseTime(release Release) (time.Time, error) {
 }
 
 func FetchRepository(ctx context.Context, client *http.Client, apiBase string, token string, repository string) (Repository, error) {
+	api := newAPIClient(ctx, client, apiBase, token)
 	endpoint := strings.TrimRight(apiBase, "/") + "/repos/" + repository
 	var repo Repository
-	if err := fetchJSONWithLimit(ctx, client, endpoint, token, 2*1024*1024, "github repository query failed", &repo); err != nil {
+	if err := fetchJSONWithLimit(jsonRequest{
+		api:         api,
+		endpoint:    endpoint,
+		bodyLimit:   2 * 1024 * 1024,
+		errorPrefix: "github repository query failed",
+		out:         &repo,
+	}); err != nil {
 		return Repository{}, err
 	}
 	return repo, nil
 }
 
-func fetchJSON(ctx context.Context, client *http.Client, endpoint string, token string, out any) error {
-	return fetchJSONWithLimit(ctx, client, endpoint, token, 1024*1024, "github query failed", out)
+func fetchJSON(api apiClient, endpoint string, out any) error {
+	return fetchJSONWithLimit(jsonRequest{
+		api:         api,
+		endpoint:    endpoint,
+		bodyLimit:   1024 * 1024,
+		errorPrefix: "github query failed",
+		out:         out,
+	})
 }
 
-func fetchJSONWithLimit(ctx context.Context, client *http.Client, endpoint string, token string, bodyLimit int64, errorPrefix string, out any) error {
-	requestCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+func fetchJSONWithLimit(request jsonRequest) error {
+	requestCtx, cancel := context.WithTimeout(request.api.ctx, 10*time.Second)
 	defer cancel()
-	request, err := http.NewRequestWithContext(requestCtx, http.MethodGet, endpoint, nil)
+	httpRequest, err := http.NewRequestWithContext(requestCtx, http.MethodGet, request.endpoint, nil)
 	if err != nil {
 		return err
 	}
-	request.Header.Set("Accept", "application/vnd.github+json")
-	request.Header.Set("X-GitHub-Api-Version", "2022-11-28")
-	if token = strings.TrimSpace(token); token != "" {
-		request.Header.Set("Authorization", "Bearer "+token)
+	httpRequest.Header.Set("Accept", "application/vnd.github+json")
+	httpRequest.Header.Set("X-GitHub-Api-Version", "2022-11-28")
+	if token := strings.TrimSpace(request.api.token); token != "" {
+		httpRequest.Header.Set("Authorization", "Bearer "+token)
 	}
-	response, err := client.Do(request)
+	response, err := request.api.client.Do(httpRequest)
 	if err != nil {
 		return err
 	}
 	defer response.Body.Close()
-	body, err := io.ReadAll(io.LimitReader(response.Body, bodyLimit))
+	body, err := io.ReadAll(io.LimitReader(response.Body, request.bodyLimit))
 	if err != nil {
 		return err
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return fmt.Errorf("%s: HTTP %d: %s", errorPrefix, response.StatusCode, truncate(strings.TrimSpace(string(body)), 180))
+		return fmt.Errorf("%s: HTTP %d: %s", request.errorPrefix, response.StatusCode, truncate(strings.TrimSpace(string(body)), 180))
 	}
-	if err := json.Unmarshal(body, out); err != nil {
+	if err := json.Unmarshal(body, request.out); err != nil {
 		return err
 	}
 	return nil

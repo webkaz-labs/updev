@@ -602,7 +602,15 @@ func (m *TableBrowserModel) ensureSelectedVisible() {
 	}
 	sections := m.filteredSections()
 	for attempts := 0; attempts <= m.filteredRowCount(); attempts++ {
-		if TableRowBlockVisibleWithWidth(sections, m.State.Offset, m.visibleBodyLines(), m.State.Expanded, m.expandedDetailWidth(), m.State.Selected, m.labels.Labels) {
+		if TableRowBlockVisibleWithWidth(TableRowBlockOptions{
+			Sections:     sections,
+			Offset:       m.State.Offset,
+			MaxBodyLines: m.visibleBodyLines(),
+			Expanded:     m.State.Expanded,
+			Width:        m.expandedDetailWidth(),
+			Selected:     m.State.Selected,
+			Labels:       m.labels.Labels,
+		}) {
 			return
 		}
 		if m.State.Selected < m.State.Offset {
@@ -621,48 +629,58 @@ func (m *TableBrowserModel) ensureSelectedVisible() {
 	}
 }
 
-func TableRowBlockVisibleWithWidth(sections []Section, offset int, maxBodyLines int, expanded map[int]bool, width int, selected int, labels Labels) bool {
-	if maxBodyLines <= 0 || selected < 0 {
+type TableRowBlockOptions struct {
+	Sections     []Section
+	Offset       int
+	MaxBodyLines int
+	Expanded     map[int]bool
+	Width        int
+	Selected     int
+	Labels       Labels
+}
+
+func TableRowBlockVisibleWithWidth(options TableRowBlockOptions) bool {
+	if options.MaxBodyLines <= 0 || options.Selected < 0 {
 		return false
 	}
 	renderedLines := 0
 	rowIndex := 0
-	for sectionIndex, section := range sections {
+	for sectionIndex, section := range options.Sections {
 		sectionStart := rowIndex
 		sectionEnd := sectionStart + len(section.Rows)
-		if sectionEnd <= offset {
+		if sectionEnd <= options.Offset {
 			rowIndex = sectionEnd
 			continue
 		}
 		if sectionIndex > 0 && renderedLines > 0 {
 			renderedLines++
-			if renderedLines >= maxBodyLines {
+			if renderedLines >= options.MaxBodyLines {
 				return false
 			}
 		}
 		renderedLines += 2
-		if renderedLines >= maxBodyLines {
+		if renderedLines >= options.MaxBodyLines {
 			return false
 		}
 		windowStart := 0
-		if offset > sectionStart {
-			windowStart = offset - sectionStart
+		if options.Offset > sectionStart {
+			windowStart = options.Offset - sectionStart
 		}
 		rowIndex = sectionStart + windowStart
 		for rowOffset := windowStart; rowOffset < len(section.Rows); rowOffset++ {
-			if rowIndex < offset {
+			if rowIndex < options.Offset {
 				rowIndex++
 				continue
 			}
-			if renderedLines >= maxBodyLines {
+			if renderedLines >= options.MaxBodyLines {
 				return false
 			}
 			rowLines := 1
-			if expanded[rowIndex] {
-				rowLines += len(ExpandedLinesWithWidth(section.Rows[rowOffset], labels, width))
+			if options.Expanded[rowIndex] {
+				rowLines += len(ExpandedLinesWithWidth(section.Rows[rowOffset], options.Labels, options.Width))
 			}
-			if rowIndex == selected {
-				return renderedLines+rowLines <= maxBodyLines
+			if rowIndex == options.Selected {
+				return renderedLines+rowLines <= options.MaxBodyLines
 			}
 			renderedLines += rowLines
 			rowIndex++

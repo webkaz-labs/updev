@@ -416,6 +416,7 @@ go test ./...
 go build ./...
 shellcheck -S warning scripts/*.sh
 scripts/check-docs.sh
+mise run audit
 git diff --check
 ```
 
@@ -425,6 +426,7 @@ If you use mise, the local task runner wraps the same checks:
 mise install
 mise run lint
 mise run check
+mise run audit
 mise run docs-check
 ```
 
