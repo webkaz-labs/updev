@@ -55,6 +55,7 @@ var (
 	embeddedAgentUsageDoc = fallbackAgentUsageDoc
 	defaultLanguageValue  string
 	defaultLanguageOnce   sync.Once
+	configLoadErrorOnce   sync.Once
 )
 
 type versionReport struct {
@@ -89,7 +90,13 @@ type (
 )
 
 func loadUpdevConfig() updevConfig {
-	return updevconfig.Load()
+	config, err := updevconfig.LoadWithError()
+	if err != nil {
+		configLoadErrorOnce.Do(func() {
+			fmt.Fprintf(os.Stderr, "updev: warning: could not load config %s: %v\n", updevConfigPath(), err)
+		})
+	}
+	return config
 }
 
 func updevConfigPath() string {

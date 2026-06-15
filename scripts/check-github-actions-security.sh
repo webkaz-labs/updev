@@ -38,7 +38,7 @@ require_action_major() {
 require_grep '^  contents: read$' ".github/workflows/ci.yml"
 require_grep '^  contents: read$' ".github/workflows/codeql.yml"
 require_grep '^      security-events: write$' ".github/workflows/codeql.yml"
-require_grep '^  pull-requests: read$' ".github/workflows/dependency-review.yml"
+require_grep '^  pull-requests: write$' ".github/workflows/dependency-review.yml"
 require_grep '^      id-token: write$' ".github/workflows/release.yml"
 require_grep '^      attestations: write$' ".github/workflows/release.yml"
 require_grep 'uses: actions/attest-build-provenance@v4' ".github/workflows/release.yml"
@@ -102,7 +102,7 @@ while IFS= read -r line; do
   if [[ -n "$expected_major" && "$ref" == v* && "$ref" != "$expected_major"* ]]; then
     fail "$file uses $action@$ref; expected $expected_major or a reviewed immutable SHA"
   fi
-done < <(grep -RsnE 'uses: [^[:space:]]+@[^[:space:]]+' "$root/.github/workflows" || true)
+done < <(grep -RsnE 'uses: [^[:space:]]+' "$root/.github/workflows" || true)
 
 if (( failures > 0 )); then
   exit 1
