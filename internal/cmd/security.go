@@ -27,16 +27,20 @@ import (
 	"github.com/webkaz-labs/updev/internal/updevpath"
 )
 
-const defaultOSVAPIURL = "https://api.osv.dev/v1/querybatch"
-const defaultCISAKEVURL = "https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json"
-const defaultEPSSURL = "https://api.first.org/data/v1/epss"
-const defaultNPMRegistryURL = "https://registry.npmjs.org"
-const defaultCratesIOAPIURL = "https://crates.io"
-const defaultPyPIAPIURL = "https://pypi.org/pypi"
+const (
+	defaultOSVAPIURL      = "https://api.osv.dev/v1/querybatch"
+	defaultCISAKEVURL     = "https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json"
+	defaultEPSSURL        = "https://api.first.org/data/v1/epss"
+	defaultNPMRegistryURL = "https://registry.npmjs.org"
+	defaultCratesIOAPIURL = "https://crates.io"
+	defaultPyPIAPIURL     = "https://pypi.org/pypi"
+)
 
-type npmPosture = registryaudit.NPMPosture
-type cargoPosture = registryaudit.CargoPosture
-type pypiPosture = registryaudit.PyPIPosture
+type (
+	npmPosture   = registryaudit.NPMPosture
+	cargoPosture = registryaudit.CargoPosture
+	pypiPosture  = registryaudit.PyPIPosture
+)
 
 type securityOptions struct {
 	format        string
@@ -202,17 +206,22 @@ type securityPolicySummary = securitypolicy.Summary
 
 type securityPolicyRuleView = securitypolicy.RuleView
 
-type securityPackage = securityadvisory.Package
-type homebrewPosture = brew.Posture
-type homebrewMetadata = brew.Metadata
-type homebrewVersions = brew.MetadataVersions
-type homebrewURLs = brew.MetadataURLs
-type homebrewURL = brew.MetadataURL
+type (
+	securityPackage  = securityadvisory.Package
+	homebrewPosture  = brew.Posture
+	homebrewMetadata = brew.Metadata
+	homebrewVersions = brew.MetadataVersions
+	homebrewURLs     = brew.MetadataURLs
+	homebrewURL      = brew.MetadataURL
+)
 
 const defaultHomebrewAPIURL = "https://formulae.brew.sh/api"
 
 func homebrewPosturesFromItems(ctx context.Context, client *http.Client, apiBase string, root string, items []plan.Item) ([]homebrewPosture, error) {
-	manifest, _ := loadBrewSafetyManifest(root)
+	manifest, err := loadBrewSafetyManifest(root)
+	if err != nil {
+		manifest = brewSafetyManifest{}
+	}
 	return brew.PosturesFromItems(ctx, client, apiBase, items, func(kind string, name string) brew.ManifestEntry {
 		entry := manifest.entry(kind, name)
 		return homebrewAuditManifestEntry(entry)
@@ -267,8 +276,10 @@ func homebrewPostureReviewCount(postures []homebrewPosture) int {
 	return brew.PostureReviewCount(postures)
 }
 
-type homebrewTrustTarget = brew.TrustTarget
-type homebrewTrustState = brew.TrustState
+type (
+	homebrewTrustTarget = brew.TrustTarget
+	homebrewTrustState  = brew.TrustState
+)
 
 func homebrewTapTrustDependencyCheck(ctx context.Context, commandRunner runner.Runner, root string) dependencyContractCheck {
 	check := dependencyContractCheck{
@@ -1379,7 +1390,8 @@ func filterSecurityItemsForEcosystem(items []plan.Item, ecosystem string) []plan
 }
 
 func securityPackagesFromItems(items []plan.Item) []securityPackage {
-	packages, _ := securityScopeFromItems(items)
+	packages, skipped := securityScopeFromItems(items)
+	_ = skipped // This helper intentionally exposes only advisory package targets.
 	return packages
 }
 

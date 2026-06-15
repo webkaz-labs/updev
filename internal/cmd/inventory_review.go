@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"bytes"
+	"context"
 	"flag"
 	"fmt"
 	"io"
@@ -621,7 +622,8 @@ func manualReviewCandidateMatches(candidate manualReviewCandidate, query string)
 	}
 	parts = append(parts, candidate.SuggestedOverride.Aliases...)
 	for _, evidence := range candidate.Evidence {
-		parts = append(parts,
+		parts = append(
+			parts,
 			evidence.Scanner,
 			evidence.Source,
 			evidence.Path,
@@ -677,7 +679,7 @@ func editManualOverrideBlock(content string) (string, error) {
 		editorArgs = []string{"vi"}
 	}
 	var stderr bytes.Buffer
-	command := exec.Command(editorArgs[0], append(editorArgs[1:], path)...)
+	command := exec.CommandContext(context.Background(), editorArgs[0], append(editorArgs[1:], path)...)
 	command.Stdin = os.Stdin
 	command.Stdout = os.Stdout
 	command.Stderr = &stderr

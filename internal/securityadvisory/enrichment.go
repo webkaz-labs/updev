@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/webkaz-labs/updev/internal/plan"
 	"io"
 	"net/http"
 	"net/url"
@@ -12,6 +11,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/webkaz-labs/updev/internal/plan"
 )
 
 func EnrichWithKEV(ctx context.Context, client *http.Client, kevURL string, findings []Finding) ([]Finding, error) {

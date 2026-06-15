@@ -2488,7 +2488,8 @@ func TestGitHubPosturesFromRegistryUsesRepositoryURLs(t *testing.T) {
 }`))
 	}))
 	defer server.Close()
-	postures, err := githubPosturesFromRegistry(context.Background(), server.Client(), server.URL,
+	postures, err := githubPosturesFromRegistry(
+		context.Background(), server.Client(), server.URL,
 		[]npmPosture{{Provider: "mise", Name: "npm:@scope/tool", RepositoryURL: "https://github.com/scope/tool"}},
 		[]cargoPosture{{Provider: "mise", Name: "cargo:fd-find", RepositoryURL: "https://github.com/scope/tool"}},
 		[]pypiPosture{{Provider: "mise", Name: "pipx:frogmouth", ProjectURL: "https://example.com/frogmouth"}},

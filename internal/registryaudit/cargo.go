@@ -15,6 +15,8 @@ import (
 	"github.com/webkaz-labs/updev/internal/securityreason"
 )
 
+const cratesIOCratePageURLBase = "https://crates.io/crates/"
+
 type CargoPosture struct {
 	Provider      string            `json:"provider"`
 	Kind          string            `json:"kind"`
@@ -155,7 +157,7 @@ func CargoPostureFromMetadata(requestedName string, crate string, version string
 		Yanked:        versionInfo.Yanked,
 		Decision:      "allow",
 		Confidence:    "medium",
-		URL:           "https://crates.io/crates/" + crate,
+		URL:           CratesIOCratePageURL(crate),
 	}
 	switch {
 	case version != "" && !versionFound:
@@ -201,8 +203,12 @@ func CargoPostureUnavailable(requestedName string, crate string, version string,
 		Decision:   "review",
 		Confidence: "low",
 		Reason:     "crates.io metadata unavailable: " + err.Error(),
-		URL:        "https://crates.io/crates/" + crate,
+		URL:        CratesIOCratePageURL(crate),
 	}
 	setCargoPostureReason(&posture, securityreason.RegistryMetadataUnavailable, posture.Reason)
 	return posture
+}
+
+func CratesIOCratePageURL(crate string) string {
+	return cratesIOCratePageURLBase + crate
 }

@@ -5,12 +5,15 @@ import (
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
+
 	"github.com/webkaz-labs/updev/internal/textui"
 )
 
-type detailBrowserRow = DetailRow
-type detailBrowserAction = DetailAction
-type detailBrowserState = State
+type (
+	detailBrowserRow    = DetailRow
+	detailBrowserAction = DetailAction
+	detailBrowserState  = State
+)
 
 const (
 	browserMouseOff   MouseMode = MouseOff
@@ -86,30 +89,41 @@ func RunDetailBrowserModel(model DetailBrowserModel) (detailBrowserState, error)
 	return model.State, nil
 }
 
-func NewDetailBrowserModel(title string, rows []detailBrowserRow, state detailBrowserState, labels DetailBrowserLabels, format DetailBrowserFormatters, actions BrowserActions, color bool) DetailBrowserModel {
+type DetailBrowserOptions struct {
+	Title   string
+	Rows    []DetailRow
+	State   State
+	Labels  DetailBrowserLabels
+	Format  DetailBrowserFormatters
+	Actions BrowserActions
+	Color   bool
+}
+
+func NewDetailBrowserModel(options DetailBrowserOptions) DetailBrowserModel {
+	state := options.State
 	if state.Expanded == nil {
 		state.Expanded = map[int]bool{}
 	}
 	state.Action = ""
-	if len(rows) == 0 {
+	if len(options.Rows) == 0 {
 		state.Selected = 0
 	} else if state.Selected < 0 {
 		state.Selected = 0
-	} else if state.Selected >= len(rows) {
-		state.Selected = len(rows) - 1
+	} else if state.Selected >= len(options.Rows) {
+		state.Selected = len(options.Rows) - 1
 	}
 	model := DetailBrowserModel{
-		Title:               title,
-		Rows:                rows,
+		Title:               options.Title,
+		Rows:                options.Rows,
 		State:               state,
-		Color:               color,
+		Color:               options.Color,
 		FilterInput:         state.Query,
 		MouseMode:           browserMouseOff,
 		pendingMouseRelease: -1,
 		actionFocus:         -1,
-		actions:             fillActions(actions),
-		labels:              fillDetailBrowserLabels(labels),
-		format:              fillDetailBrowserFormatters(format),
+		actions:             fillActions(options.Actions),
+		labels:              fillDetailBrowserLabels(options.Labels),
+		format:              fillDetailBrowserFormatters(options.Format),
 	}
 	model.refreshFilteredRows()
 	model.clampSelection()
@@ -688,7 +702,8 @@ func (m DetailBrowserModel) helpLines() []string {
 	out := make([]string, 0, len(lines)+1)
 	for _, line := range lines {
 		if strings.Contains(line, "Enter or Space:") || strings.Contains(line, "Enter / Space:") {
-			out = append(out,
+			out = append(
+				out,
 				m.labels.PrimaryEnterHelp,
 				m.labels.PrimarySpaceHelp,
 			)

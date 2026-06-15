@@ -1,0 +1,32 @@
+name: Audit
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "37 19 * * 1"
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    name: audit
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Govulncheck
+        run: scripts/check-govulncheck.sh
+
+      - name: GitHub Actions security posture
+        run: scripts/check-github-actions-security.sh
+
+      - name: Agent code quality audit
+        run: scripts/check-agent-quality.sh

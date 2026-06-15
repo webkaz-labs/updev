@@ -31,16 +31,26 @@ type TextInputModel struct {
 	labels      TextInputLabels
 }
 
-func NewTextInputModel(title string, description string, placeholder string, defaultValue string, actions TextInputActions, labels TextInputLabels, color bool) TextInputModel {
-	filledLabels := fillTextInputLabels(labels)
+type TextInputOptions struct {
+	Title       string
+	Description string
+	Placeholder string
+	Default     string
+	Actions     TextInputActions
+	Labels      TextInputLabels
+	Color       bool
+}
+
+func NewTextInputModel(options TextInputOptions) TextInputModel {
+	filledLabels := fillTextInputLabels(options.Labels)
 	return TextInputModel{
-		Title:       title,
-		Description: description,
-		Placeholder: placeholder,
+		Title:       options.Title,
+		Description: options.Description,
+		Placeholder: options.Placeholder,
 		Label:       filledLabels.Input,
-		Value:       defaultValue,
-		Color:       color,
-		actions:     fillTextInputActions(actions),
+		Value:       options.Default,
+		Color:       options.Color,
+		actions:     fillTextInputActions(options.Actions),
 		labels:      filledLabels,
 	}
 }

@@ -5,13 +5,16 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/webkaz-labs/updev/internal/plan"
 	"io"
 	"net/http"
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/webkaz-labs/updev/internal/plan"
 )
+
+const osvVulnerabilityPageURLBase = "https://osv.dev/vulnerability/"
 
 func QueryOSVBatch(ctx context.Context, client *http.Client, apiURL string, packages []Package) ([]Finding, error) {
 	requestBody := OSVBatchRequest{Queries: make([]OSVQuery, 0, len(packages))}
@@ -58,7 +61,10 @@ func QueryOSVBatch(ctx context.Context, client *http.Client, apiURL string, pack
 	for i, result := range batch.Results {
 		pkg := packages[i]
 		for _, vuln := range result.Vulns {
-			detail, _ := getOSVVulnDetail(ctx, client, apiURL, vuln.ID)
+			detail, err := getOSVVulnDetail(ctx, client, apiURL, vuln.ID)
+			if err != nil {
+				detail = OSVVulnDetail{}
+			}
 			finding := Finding{
 				Provider:      pkg.Provider,
 				Name:          pkg.Name,
@@ -77,13 +83,17 @@ func QueryOSVBatch(ctx context.Context, client *http.Client, apiURL string, pack
 				Decision:      "hold",
 				Confidence:    pkg.Confidence,
 				Status:        plan.StatusHeld,
-				URL:           "https://osv.dev/vulnerability/" + vuln.ID,
+				URL:           OSVVulnerabilityPageURL(vuln.ID),
 			}
 			finding.Remediation = Remediation(finding)
 			findings = append(findings, finding)
 		}
 	}
 	return findings, nil
+}
+
+func OSVVulnerabilityPageURL(id string) string {
+	return osvVulnerabilityPageURLBase + id
 }
 
 func FixedVersionsFromOSVDetail(detail OSVVulnDetail, pkg Package) []string {

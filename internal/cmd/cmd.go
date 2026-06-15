@@ -40,18 +40,23 @@ type options struct {
 const (
 	usageExitCode = 64
 	toolName      = "updev"
-	toolVersion   = "v0.7.8"
+	toolVersion   = "v0.7.9"
 )
 
-const inventoryCacheVersion = inventoryrun.CacheVersion
-const supportReportSchemaVersion = support.ReportSchemaVersion
+const (
+	inventoryCacheVersion      = inventoryrun.CacheVersion
+	supportReportSchemaVersion = support.ReportSchemaVersion
+)
 
 var filterSummaryKeys = []string{"provider", "kind", "category", "status", "query", "limit", "include_vscode"}
 
-var embeddedAgentSkillDoc = fallbackAgentSkillDoc
-var embeddedAgentUsageDoc = fallbackAgentUsageDoc
-var defaultLanguageValue string
-var defaultLanguageOnce sync.Once
+var (
+	embeddedAgentSkillDoc = fallbackAgentSkillDoc
+	embeddedAgentUsageDoc = fallbackAgentUsageDoc
+	defaultLanguageValue  string
+	defaultLanguageOnce   sync.Once
+	configLoadErrorOnce   sync.Once
+)
 
 type versionReport struct {
 	SchemaVersion int    `json:"schema_version"`
@@ -65,25 +70,33 @@ type versionReport struct {
 
 type startupProgress = reviewui.StartupProgress
 
-type updevConfig = updevconfig.Config
-type updevSecurityConfig = updevconfig.SecurityConfig
-type updevHomebrewSecurityConfig = updevconfig.HomebrewSecurityConfig
-type updevMiseSecurityConfig = updevconfig.MiseSecurityConfig
-type updevVSCodeSecurityConfig = updevconfig.VSCodeSecurityConfig
-type updevProvidersConfig = updevconfig.ProvidersConfig
-type updevUpdateConfig = updevconfig.UpdateConfig
-type updevMiseBumpUpdateConfig = updevconfig.MiseBumpUpdateConfig
-type updevUIConfig = updevconfig.UIConfig
-type updevSourcesConfig = updevconfig.SourcesConfig
-type updevBrewfileConfig = updevconfig.BrewfileConfig
-type updevInventoryConfig = updevconfig.InventoryConfig
-type updevInventoryManualConfig = updevconfig.InventoryManualConfig
-type updevInventoryAgentConfig = updevconfig.InventoryAgentConfig
-type updevInventoryReportConfig = updevconfig.InventoryReportConfig
-type updevBackendsConfig = updevconfig.BackendsConfig
+type (
+	updevConfig                 = updevconfig.Config
+	updevSecurityConfig         = updevconfig.SecurityConfig
+	updevHomebrewSecurityConfig = updevconfig.HomebrewSecurityConfig
+	updevMiseSecurityConfig     = updevconfig.MiseSecurityConfig
+	updevVSCodeSecurityConfig   = updevconfig.VSCodeSecurityConfig
+	updevProvidersConfig        = updevconfig.ProvidersConfig
+	updevUpdateConfig           = updevconfig.UpdateConfig
+	updevMiseBumpUpdateConfig   = updevconfig.MiseBumpUpdateConfig
+	updevUIConfig               = updevconfig.UIConfig
+	updevSourcesConfig          = updevconfig.SourcesConfig
+	updevBrewfileConfig         = updevconfig.BrewfileConfig
+	updevInventoryConfig        = updevconfig.InventoryConfig
+	updevInventoryManualConfig  = updevconfig.InventoryManualConfig
+	updevInventoryAgentConfig   = updevconfig.InventoryAgentConfig
+	updevInventoryReportConfig  = updevconfig.InventoryReportConfig
+	updevBackendsConfig         = updevconfig.BackendsConfig
+)
 
 func loadUpdevConfig() updevConfig {
-	return updevconfig.Load()
+	config, err := updevconfig.LoadWithError()
+	if err != nil {
+		configLoadErrorOnce.Do(func() {
+			fmt.Fprintf(os.Stderr, "updev: warning: could not load config %s: %v\n", updevConfigPath(), err)
+		})
+	}
+	return config
 }
 
 func updevConfigPath() string {
@@ -199,10 +212,12 @@ type inventoryOptions struct {
 	IncludeVSCode bool
 }
 
-type inventoryCacheEntry = inventoryrun.CacheEntry
-type inventoryResult = inventoryrun.Result
-type supportOptions = support.Options
-type supportReport = support.Report
+type (
+	inventoryCacheEntry = inventoryrun.CacheEntry
+	inventoryResult     = inventoryrun.Result
+	supportOptions      = support.Options
+	supportReport       = support.Report
+)
 
 func collectInventory(ctx context.Context, root string, local runner.Local) plan.Report {
 	return collectInventoryWithOptions(ctx, root, local, inventoryOptions{IncludeVSCode: includeVSCodeExtensionsByDefault()})
@@ -992,7 +1007,7 @@ func runLegacy(args []string) int {
 		fmt.Fprintf(os.Stderr, "updev: legacy command is not available for %q\n", strings.Join(args, " "))
 		return 1
 	}
-	command := exec.Command(legacy, args...)
+	command := exec.CommandContext(context.Background(), legacy, args...)
 	command.Stdin = os.Stdin
 	command.Stdout = os.Stdout
 	command.Stderr = os.Stderr
@@ -1033,9 +1048,11 @@ type syncOptions struct {
 	refresh bool
 }
 
-type syncReport = syncreport.Report
-type syncEntry = syncreport.Entry
-type syncGuidance = syncreport.Guidance
+type (
+	syncReport   = syncreport.Report
+	syncEntry    = syncreport.Entry
+	syncGuidance = syncreport.Guidance
+)
 
 func parseSyncOptions(args []string) (syncOptions, error) {
 	opts := syncOptions{format: "text", root: defaultRoot()}

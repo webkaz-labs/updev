@@ -411,9 +411,23 @@ func runUpdateStepWithHold(ctx context.Context, commandRunner commandRunner, ste
 
 func runUpdateStepWithOutput(ctx context.Context, commandRunner commandRunner, step updateStep, dryRun bool, holdReason string, stream bool) updateStep {
 	if stream {
-		return runUpdateStepWithWriters(ctx, commandRunner, step, dryRun, holdReason, updateProviderStdoutWriter(), os.Stderr)
+		return runUpdateStepWithWriters(updateStepRunOptions{
+			Context:    ctx,
+			Runner:     commandRunner,
+			Step:       step,
+			DryRun:     dryRun,
+			HoldReason: holdReason,
+			Stdout:     updateProviderStdoutWriter(),
+			Stderr:     os.Stderr,
+		})
 	}
-	return runUpdateStepWithWriters(ctx, commandRunner, step, dryRun, holdReason, nil, nil)
+	return runUpdateStepWithWriters(updateStepRunOptions{
+		Context:    ctx,
+		Runner:     commandRunner,
+		Step:       step,
+		DryRun:     dryRun,
+		HoldReason: holdReason,
+	})
 }
 
 func shouldStreamUpdateProviderLogs(opts updateOptions) bool {
@@ -435,17 +449,28 @@ func updateProviderStdoutWriterForTerminal(stdinTTY bool, stdoutTTY bool) io.Wri
 	return os.Stdout
 }
 
-func runUpdateStepWithWriters(ctx context.Context, commandRunner commandRunner, step updateStep, dryRun bool, holdReason string, stdout io.Writer, stderr io.Writer) updateStep {
-	if holdReason != "" {
+type updateStepRunOptions struct {
+	Context    context.Context
+	Runner     commandRunner
+	Step       updateStep
+	DryRun     bool
+	HoldReason string
+	Stdout     io.Writer
+	Stderr     io.Writer
+}
+
+func runUpdateStepWithWriters(options updateStepRunOptions) updateStep {
+	step := options.Step
+	if options.HoldReason != "" {
 		step.Status = plan.StatusHeld
-		setUpdateStepReasonText(&step, holdReason)
+		setUpdateStepReasonText(&step, options.HoldReason)
 		step.Skipped = true
-		step.SkippedItems = append(step.SkippedItems, holdReason)
+		step.SkippedItems = append(step.SkippedItems, options.HoldReason)
 		return step
 	}
 	preSkipped := append([]string(nil), step.SkippedItems...)
 	preReason := step.Reason
-	if dryRun {
+	if options.DryRun {
 		step.Status = plan.StatusOK
 		if len(preSkipped) > 0 {
 			step.Status = plan.StatusHeld
@@ -456,7 +481,7 @@ func runUpdateStepWithWriters(ctx context.Context, commandRunner commandRunner, 
 		}
 		return step
 	}
-	result := runUpdateStepCommands(ctx, commandRunner, step, stdout, stderr)
+	result := runUpdateStepCommands(options.Context, options.Runner, step, options.Stdout, options.Stderr)
 	step.Stdout = result.Stdout
 	step.Stderr = result.Stderr
 	summary := updatelog.Summarize(step.Stdout, step.Stderr)
@@ -852,7 +877,13 @@ func runMiseBumpUpdateStep(ctx context.Context, commandRunner commandRunner, opt
 	reviewCount := len(unsafe)
 	step.Command = miseBumpCommandForFindings(opts.root, true, false, safe)
 	step.Commands = append(step.Commands, updateCommand{Command: step.Command})
-	preflight := runMiseBumpCommand(ctx, commandRunner, opts.root, true, false, safe, nil, nil)
+	preflight := runMiseBumpCommand(miseBumpRunOptions{
+		Context:  ctx,
+		Runner:   commandRunner,
+		Root:     opts.root,
+		DryRun:   true,
+		Findings: safe,
+	})
 	step.Stdout = preflight.Stdout
 	step.Stderr = preflight.Stderr
 	blocked, remaining := splitMiseBumpDependencyBlockedFindings(safe, preflight.Stdout+"\n"+preflight.Stderr)
@@ -870,7 +901,13 @@ func runMiseBumpUpdateStep(ctx context.Context, commandRunner commandRunner, opt
 			return step, true
 		}
 		step.Commands = append(step.Commands, updateCommand{Command: step.Command})
-		preflight = runMiseBumpCommand(ctx, commandRunner, opts.root, true, false, safe, nil, nil)
+		preflight = runMiseBumpCommand(miseBumpRunOptions{
+			Context:  ctx,
+			Runner:   commandRunner,
+			Root:     opts.root,
+			DryRun:   true,
+			Findings: safe,
+		})
 		step.Stdout = strings.TrimSpace(strings.Join(nonEmptyStrings(step.Stdout, preflight.Stdout), "\n"))
 		step.Stderr = strings.TrimSpace(strings.Join(nonEmptyStrings(step.Stderr, preflight.Stderr), "\n"))
 	}
@@ -887,7 +924,15 @@ func runMiseBumpUpdateStep(ctx context.Context, commandRunner commandRunner, opt
 		stderr = os.Stderr
 		fmt.Fprintf(updateProviderProgressWriter(), tr("running %s update...\n", "%s update を実行中...\n"), step.Name)
 	}
-	result := runMiseBumpCommand(ctx, commandRunner, opts.root, false, true, safe, stdout, stderr)
+	result := runMiseBumpCommand(miseBumpRunOptions{
+		Context:  ctx,
+		Runner:   commandRunner,
+		Root:     opts.root,
+		Yes:      true,
+		Findings: safe,
+		Stdout:   stdout,
+		Stderr:   stderr,
+	})
 	step.Stdout = strings.TrimSpace(strings.Join(nonEmptyStrings(preflight.Stdout, result.Stdout), "\n"))
 	step.Stderr = strings.TrimSpace(strings.Join(nonEmptyStrings(preflight.Stderr, result.Stderr), "\n"))
 	step.Command = miseBumpCommandForFindings(opts.root, false, true, safe)
@@ -912,13 +957,24 @@ func runMiseBumpUpdateStep(ctx context.Context, commandRunner commandRunner, opt
 	return step, true
 }
 
-func runMiseBumpCommand(ctx context.Context, commandRunner commandRunner, root string, dryRun bool, yes bool, findings []safetyFinding, stdout io.Writer, stderr io.Writer) runner.Result {
-	command := miseBumpCommandForFindings(root, dryRun, yes, findings)
+type miseBumpRunOptions struct {
+	Context  context.Context
+	Runner   commandRunner
+	Root     string
+	DryRun   bool
+	Yes      bool
+	Findings []safetyFinding
+	Stdout   io.Writer
+	Stderr   io.Writer
+}
+
+func runMiseBumpCommand(options miseBumpRunOptions) runner.Result {
+	command := miseBumpCommandForFindings(options.Root, options.DryRun, options.Yes, options.Findings)
 	if len(command) == 0 {
 		return runner.Result{}
 	}
 	cleanup := func() {}
-	if miseBumpNeedsSanitizedNPMUserConfig(findings) {
+	if miseBumpNeedsSanitizedNPMUserConfig(options.Findings) {
 		wrapped, wrappedCleanup, err := miseBumpCommandWithSanitizedNPMUserConfig(command)
 		if err != nil {
 			return runner.Result{Stderr: err.Error(), Err: err, Code: 1}
@@ -927,7 +983,7 @@ func runMiseBumpCommand(ctx context.Context, commandRunner commandRunner, root s
 		cleanup = wrappedCleanup
 	}
 	defer cleanup()
-	return runMiseCommand(ctx, commandRunner, stdout, stderr, command[0], command[1:]...)
+	return runMiseCommand(options.Context, options.Runner, options.Stdout, options.Stderr, command[0], command[1:]...)
 }
 
 func miseBumpCommandForFindings(root string, dryRun bool, yes bool, findings []safetyFinding) []string {
@@ -2299,8 +2355,10 @@ const (
 	updateHubActionJSON               = "json"
 )
 
-const securityDetailActionPrefix = "security-policy"
-const miseBumpDetailActionPrefix = "mise-bump"
+const (
+	securityDetailActionPrefix = "security-policy"
+	miseBumpDetailActionPrefix = "mise-bump"
+)
 
 const (
 	securityActionBrewTrustFormula = "brew-trust-formula"
@@ -2750,7 +2808,15 @@ func handleMiseBumpDetailAction(report *updateReport, value string) bool {
 		fmt.Fprintf(os.Stderr, "mise bump candidate set changed before apply: %s\n", err)
 		return true
 	}
-	result := runMiseBumpCommand(context.Background(), runner.Local{}, report.Root, false, true, findings, os.Stdout, os.Stderr)
+	result := runMiseBumpCommand(miseBumpRunOptions{
+		Context:  context.Background(),
+		Runner:   runner.Local{},
+		Root:     report.Root,
+		Yes:      true,
+		Findings: findings,
+		Stdout:   os.Stdout,
+		Stderr:   os.Stderr,
+	})
 	step := updateStep{
 		Name:     miseBumpProvider,
 		Command:  miseBumpCommandForFindings(report.Root, false, true, findings),
@@ -2823,7 +2889,15 @@ func confirmMiseBumpWriteAction(root string, findings []safetyFinding) bool {
 		fmt.Fprintf(os.Stderr, "mise bump candidate set changed before preview: %s\n", err)
 		return false
 	}
-	preflight := runMiseBumpCommand(context.Background(), runner.Local{}, root, true, false, findings, os.Stdout, os.Stderr)
+	preflight := runMiseBumpCommand(miseBumpRunOptions{
+		Context:  context.Background(),
+		Runner:   runner.Local{},
+		Root:     root,
+		DryRun:   true,
+		Findings: findings,
+		Stdout:   os.Stdout,
+		Stderr:   os.Stderr,
+	})
 	if preflight.Code != 0 || preflight.Err != nil {
 		fmt.Fprintf(os.Stderr, "mise bump dry-run failed: %s\n", miseOutdatedResultDetail(preflight, "preflight failed"))
 		return false
@@ -2893,6 +2967,8 @@ func defaultSecurityDetailActionInputs(action string) (string, string, string, b
 	switch action {
 	case "allow-7d", "allow-7d-rerun":
 		return "allow", "accepted from updev detail browser after local review", time.Now().AddDate(0, 0, 7).Format("2006-01-02"), true
+	case "allow-custom", "allow-custom-rerun":
+		return "allow", "", "", true
 	case "hold":
 		return "hold", "held from updev detail browser after local review", "", true
 	default:
@@ -3188,7 +3264,8 @@ func securityDetailActions(gate safetyGate, finding safetyFinding) []detailBrows
 			Description: tr("enter a reason and expiry, add an allow rule, then rerun only this item", "理由と期限を入力して allow rule を追加し、この item だけを再実行します"),
 		})
 	}
-	actions = append(actions,
+	actions = append(
+		actions,
 		detailBrowserAction{
 			Value:       securityDetailActionValue("allow-custom", provider, kind, finding.Name),
 			Label:       tr("custom allow", "理由/期限を指定して許可"),
@@ -3251,7 +3328,8 @@ func updateHubChoices(report updateReport, manualPlan inventoryPlanReport, backe
 		choices = append(choices, updevChoice{Value: updateHubActionSecurity, Label: tr("Security", "security"), Description: tr("Show held/review security evidence and remediation.", "held/review の security evidence と remediation を表示します。")})
 		choices = append(choices, updevChoice{Value: updateHubActionSecurityFilter, Label: tr("Security filter", "security filter"), Description: tr("Filter security evidence by provider, decision, or query.", "security evidence を provider / decision / query で絞り込みます。")})
 	}
-	choices = append(choices,
+	choices = append(
+		choices,
 		updevChoice{Value: updateHubActionLogs, Label: tr("Update logs", "update logs"), Description: tr("Show captured stdout, stderr, and skipped reasons.", "stdout / stderr / skipped reason を表示します。")},
 		updevChoice{Value: updateHubActionDashboard, Label: tr("Dashboard", "dashboard"), Description: tr("Reprint the compact update dashboard.", "compact update dashboard を再表示します。")},
 		updevChoice{Value: updateHubActionFull, Label: tr("Full text report", "full text report"), Description: tr("Print the full cached report in text form.", "cached report 全体を text で表示します。")},
@@ -4498,8 +4576,10 @@ func joinCommand(command []string) string {
 	return strings.Join(parts, " ")
 }
 
-type updateSummaryLine = reviewui.ActionSummaryLine
-type updateSummaryLineKind = reviewui.ActionSummaryLineKind
+type (
+	updateSummaryLine     = reviewui.ActionSummaryLine
+	updateSummaryLineKind = reviewui.ActionSummaryLineKind
+)
 
 const (
 	updateSummaryLineNormal      = reviewui.ActionSummaryLineNormal
@@ -4518,17 +4598,33 @@ const updateSummaryRoutePrefix = "summary-route"
 
 type updateSummaryBrowserModel = reviewui.ActionSummaryModel
 
-func runUpdateSummaryBrowser(title string, report updateReport, manualPlan inventoryPlanReport, backendPlan backendPlanReport, state reviewui.State, focusAction string, color bool) (reviewui.State, error) {
-	model := newUpdateSummaryBrowserModel(title, report, manualPlan, backendPlan, state, focusAction, color)
-	return reviewui.RunActionSummaryModel(model)
+type updateSummaryBrowserOptions struct {
+	Title          string
+	Report         updateReport
+	ManualPlan     inventoryPlanReport
+	ManualLoading  bool
+	BackendPlan    backendPlanReport
+	BackendLoading bool
+	State          reviewui.State
+	FocusAction    string
+	Color          bool
 }
 
-func newUpdateSummaryBrowserModel(title string, report updateReport, manualPlan inventoryPlanReport, backendPlan backendPlanReport, state reviewui.State, focusAction string, color bool) updateSummaryBrowserModel {
-	return newUpdateSummaryBrowserModelWithLoading(title, report, manualPlan, false, backendPlan, false, state, focusAction, color)
-}
-
-func newUpdateSummaryBrowserModelWithLoading(title string, report updateReport, manualPlan inventoryPlanReport, manualLoading bool, backendPlan backendPlanReport, backendLoading bool, state reviewui.State, focusAction string, color bool) updateSummaryBrowserModel {
-	return newActionSummaryBrowserModel(title, updateSummaryBrowserLinesWithLoading(report, manualPlan, manualLoading, backendPlan, backendLoading, color), state, focusAction, color)
+func newUpdateSummaryBrowserModel(options updateSummaryBrowserOptions) updateSummaryBrowserModel {
+	return newActionSummaryBrowserModel(
+		options.Title,
+		updateSummaryBrowserLinesWithLoading(
+			options.Report,
+			options.ManualPlan,
+			options.ManualLoading,
+			options.BackendPlan,
+			options.BackendLoading,
+			options.Color,
+		),
+		options.State,
+		options.FocusAction,
+		options.Color,
+	)
 }
 
 func newActionSummaryBrowserModel(title string, lines []updateSummaryLine, state reviewui.State, focusAction string, color bool) updateSummaryBrowserModel {
@@ -4545,7 +4641,16 @@ func newActionSummaryBrowserModel(title string, lines []updateSummaryLine, state
 		route, ok := parseUpdateSummaryRoute(lineAction)
 		return ok && route.Base == focusAction
 	}
-	return reviewui.NewActionSummaryModel(title, lines, state, focusAction, labels, actions, focusMatcher, color)
+	return reviewui.NewActionSummaryModel(reviewui.ActionSummaryOptions{
+		Title:        title,
+		Lines:        lines,
+		State:        state,
+		FocusAction:  focusAction,
+		Labels:       labels,
+		Actions:      actions,
+		FocusMatcher: focusMatcher,
+		Color:        color,
+	})
 }
 
 func updateSummaryBrowserLines(report updateReport, manualPlan inventoryPlanReport, backendPlan backendPlanReport, color bool) []updateSummaryLine {
@@ -5226,8 +5331,10 @@ func (m *updateHubRouterModel) showAction(action string, returnAction string) {
 	}
 }
 
-const updateHubFilterActionPrefix = "update-filter"
-const updateHubQueryActionPrefix = "update-query"
+const (
+	updateHubFilterActionPrefix = "update-filter"
+	updateHubQueryActionPrefix  = "update-query"
+)
 
 func updateHubFilterActionValue(section string, facet string, value string) string {
 	return strings.Join([]string{updateHubFilterActionPrefix, section, facet, value}, "\t")
@@ -5500,7 +5607,17 @@ func (m *updateHubRouterModel) showDashboard(focusAction string) {
 		state.Action = ""
 		focusAction = m.initialDashboardFocusAction()
 	}
-	model := newUpdateSummaryBrowserModelWithLoading(updateHubTitle(m.report), m.report, m.manualPlan, m.manualLoading, m.backendPlan, m.backendLoading, state, focusAction, m.color)
+	model := newUpdateSummaryBrowserModel(updateSummaryBrowserOptions{
+		Title:          updateHubTitle(m.report),
+		Report:         m.report,
+		ManualPlan:     m.manualPlan,
+		ManualLoading:  m.manualLoading,
+		BackendPlan:    m.backendPlan,
+		BackendLoading: m.backendLoading,
+		State:          state,
+		FocusAction:    focusAction,
+		Color:          m.color,
+	})
 	m.applyDashboardSize(&model)
 	m.screen = updateHubRouterDashboard
 	m.stateKey = stateKey
@@ -5722,7 +5839,11 @@ func handleUpdateHubExternalAction(report *updateReport, manualPlan *inventoryPl
 			return updateHubActionDashboard, false
 		}
 		filtered := filterUpdateReport(*report, opts)
-		state, _ := runDetailBrowserWithState("updev update steps", updateLogDetailRows(filtered), detailBrowserState{}, textui.ColorEnabled())
+		state, err := runDetailBrowserWithState("updev update steps", updateLogDetailRows(filtered), detailBrowserState{}, textui.ColorEnabled())
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "updev update steps: %v\n", err)
+			return updateHubActionDashboard, false
+		}
 		if state.Action == updevActionExit {
 			return "", true
 		}
@@ -5733,7 +5854,11 @@ func handleUpdateHubExternalAction(report *updateReport, manualPlan *inventoryPl
 			return updateHubActionDashboard, false
 		}
 		filtered := filterUpdateReport(*report, opts)
-		state, _ := runDetailBrowserWithState("updev security filter", updateSecurityDetailRowsForFilter(filtered, opts), detailBrowserState{}, textui.ColorEnabled())
+		state, err := runDetailBrowserWithState("updev security filter", updateSecurityDetailRowsForFilter(filtered, opts), detailBrowserState{}, textui.ColorEnabled())
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "updev security filter: %v\n", err)
+			return updateHubActionDashboard, false
+		}
 		if state.Action == updevActionExit {
 			return "", true
 		}

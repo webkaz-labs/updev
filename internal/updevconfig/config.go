@@ -104,15 +104,23 @@ type BackendsConfig struct {
 }
 
 func Load() Config {
+	config, _ := LoadWithError()
+	return config
+}
+
+func LoadWithError() (Config, error) {
 	path := ConfigPath()
 	if path == "" {
-		return Config{}
+		return Config{}, nil
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return Config{}
+		if os.IsNotExist(err) {
+			return Config{}, nil
+		}
+		return Config{}, err
 	}
-	return ParseTOML(string(data))
+	return ParseTOMLWithError(string(data))
 }
 
 func ConfigPath() string {
@@ -120,8 +128,8 @@ func ConfigPath() string {
 }
 
 func TruthyEnv(name string) bool {
-	value, _ := BoolEnv(name)
-	return value
+	value, ok := BoolEnv(name)
+	return ok && value
 }
 
 func BoolEnv(name string) (bool, bool) {
@@ -129,6 +137,11 @@ func BoolEnv(name string) (bool, bool) {
 }
 
 func ParseTOML(data string) Config {
+	config, _ := ParseTOMLWithError(data)
+	return config
+}
+
+func ParseTOMLWithError(data string) (Config, error) {
 	config := Config{}
 	section := ""
 	scanner := bufio.NewScanner(strings.NewReader(collapseTOMLMultilineArrays(data)))
@@ -277,7 +290,10 @@ func ParseTOML(data string) Config {
 			}
 		}
 	}
-	return config
+	if err := scanner.Err(); err != nil {
+		return Config{}, err
+	}
+	return config, nil
 }
 
 func ValidBrewfileDesiredMode(value string) bool {

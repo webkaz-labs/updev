@@ -9,8 +9,10 @@ import (
 	"github.com/webkaz-labs/updev/internal/updevpath"
 )
 
-const MetadataCacheVersion = 1
-const RegistryMetadataCacheMaxAge = 6 * time.Hour
+const (
+	MetadataCacheVersion        = 1
+	RegistryMetadataCacheMaxAge = 6 * time.Hour
+)
 
 type MetadataCacheEntry struct {
 	Version   int             `json:"version"`
