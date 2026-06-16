@@ -8,6 +8,7 @@ import (
 
 	"github.com/webkaz-labs/updev/internal/nativeaudit"
 	"github.com/webkaz-labs/updev/internal/plan"
+	"github.com/webkaz-labs/updev/internal/runner"
 )
 
 type nativeAudit = nativeaudit.Evidence
@@ -165,11 +166,15 @@ func runNPMNativeAudit(ctx context.Context, commandRunner commandRunner) nativeA
 		return nativeaudit.FromNPMReport(audit, parsed, "npm native audit unavailable", "npm native audit reported vulnerabilities")
 	}
 	if result.Code != 0 || result.Err != nil {
-		audit.Status = plan.StatusError
+		audit.Status = nativeaudit.PackageManagerErrorStatus(result)
+		setNativeAuditFailureKind(&audit, nativeAuditPackageManagerErrorKind(result))
 		audit.Decision = "review"
 		audit.Reason = "npm native audit failed"
 		audit.Error = firstNonEmpty(result.Stderr, result.Stdout, nativeaudit.ErrorText(result))
 		return audit
+	}
+	if strings.TrimSpace(result.Stdout) != "" {
+		return nativeAuditParseFailure(audit, "npm native audit report parse failed")
 	}
 	return audit
 }
@@ -193,10 +198,14 @@ func runNPMLockfileNativeAudit(ctx context.Context, commandRunner commandRunner,
 	}
 	if result.Code != 0 || result.Err != nil {
 		audit.Status = nativeaudit.PackageManagerErrorStatus(result)
+		setNativeAuditFailureKind(&audit, nativeAuditPackageManagerErrorKind(result))
 		audit.Decision = "review"
 		audit.Reason = "npm lockfile audit unavailable"
 		audit.Error = firstNonEmpty(result.Stderr, result.Stdout, nativeaudit.ErrorText(result))
 		return audit
+	}
+	if strings.TrimSpace(result.Stdout) != "" {
+		return nativeAuditParseFailure(audit, "npm lockfile audit report parse failed")
 	}
 	return audit
 }
@@ -220,10 +229,14 @@ func runPNPMLockfileNativeAudit(ctx context.Context, commandRunner commandRunner
 	}
 	if result.Code != 0 || result.Err != nil {
 		audit.Status = nativeaudit.PackageManagerErrorStatus(result)
+		setNativeAuditFailureKind(&audit, nativeAuditPackageManagerErrorKind(result))
 		audit.Decision = "review"
 		audit.Reason = "pnpm lockfile audit unavailable"
 		audit.Error = firstNonEmpty(result.Stderr, result.Stdout, nativeaudit.ErrorText(result))
 		return audit
+	}
+	if strings.TrimSpace(result.Stdout) != "" {
+		return nativeAuditParseFailure(audit, "pnpm lockfile audit report parse failed")
 	}
 	return audit
 }
@@ -247,10 +260,14 @@ func runBunLockfileNativeAudit(ctx context.Context, commandRunner commandRunner,
 	}
 	if result.Code != 0 || result.Err != nil {
 		audit.Status = nativeaudit.PackageManagerErrorStatus(result)
+		setNativeAuditFailureKind(&audit, nativeAuditPackageManagerErrorKind(result))
 		audit.Decision = "review"
 		audit.Reason = "bun lockfile audit unavailable"
 		audit.Error = firstNonEmpty(result.Stderr, result.Stdout, nativeaudit.ErrorText(result))
 		return audit
+	}
+	if strings.TrimSpace(result.Stdout) != "" {
+		return nativeAuditParseFailure(audit, "bun lockfile audit report parse failed")
 	}
 	return audit
 }
@@ -271,6 +288,7 @@ func runCargoNativeAudit(ctx context.Context, commandRunner commandRunner, packa
 		audit.Status = plan.StatusUnavailable
 		audit.Decision = "review"
 		audit.Reason = "cargo audit unavailable"
+		audit.UnavailableReason = nativeaudit.FailureSkippedByScope
 		audit.Error = "no cargo-installed binaries found for binary audit"
 		return audit
 	}
@@ -283,10 +301,14 @@ func runCargoNativeAudit(ctx context.Context, commandRunner commandRunner, packa
 	}
 	if result.Code != 0 || result.Err != nil {
 		audit.Status = nativeaudit.CargoErrorStatus(result)
+		setNativeAuditFailureKind(&audit, nativeAuditCargoErrorKind(result))
 		audit.Decision = "review"
 		audit.Reason = "cargo audit unavailable"
 		audit.Error = firstNonEmpty(result.Stderr, result.Stdout, nativeaudit.ErrorText(result))
 		return audit
+	}
+	if strings.TrimSpace(result.Stdout) != "" {
+		return nativeAuditParseFailure(audit, "cargo audit report parse failed")
 	}
 	return audit
 }
@@ -313,10 +335,14 @@ func runCargoProjectNativeAudit(ctx context.Context, commandRunner commandRunner
 	}
 	if result.Code != 0 || result.Err != nil {
 		audit.Status = nativeaudit.CargoErrorStatus(result)
+		setNativeAuditFailureKind(&audit, nativeAuditCargoErrorKind(result))
 		audit.Decision = "review"
 		audit.Reason = "Cargo project audit unavailable"
 		audit.Error = firstNonEmpty(result.Stderr, result.Stdout, nativeaudit.ErrorText(result))
 		return audit
+	}
+	if strings.TrimSpace(result.Stdout) != "" {
+		return nativeAuditParseFailure(audit, "Cargo project audit report parse failed")
 	}
 	return audit
 }
@@ -326,14 +352,15 @@ func runPyPINativeAudit(ctx context.Context, commandRunner commandRunner, packag
 	paths := nativeaudit.PipxAuditPaths(packages)
 	if len(paths) == 0 {
 		return nativeAudit{
-			Provider:  "mise",
-			Ecosystem: "PyPI",
-			Tool:      "pip-audit",
-			Command:   append([]string{"pip-audit"}, args...),
-			Status:    plan.StatusUnavailable,
-			Decision:  "review",
-			Reason:    "pip-audit unavailable",
-			Error:     "no mise pipx site-packages paths found for audit",
+			Provider:          "mise",
+			Ecosystem:         "PyPI",
+			Tool:              "pip-audit",
+			Command:           append([]string{"pip-audit"}, args...),
+			Status:            plan.StatusUnavailable,
+			Decision:          "review",
+			Reason:            "pip-audit unavailable",
+			UnavailableReason: nativeaudit.FailureSkippedByScope,
+			Error:             "no mise pipx site-packages paths found for audit",
 		}
 	}
 	for _, path := range paths {
@@ -375,10 +402,14 @@ func runPipAuditNative(ctx context.Context, commandRunner commandRunner, provide
 	}
 	if result.Code != 0 || result.Err != nil {
 		audit.Status = nativeaudit.PipErrorStatus(result)
+		setNativeAuditFailureKind(&audit, nativeAuditPipErrorKind(result))
 		audit.Decision = "review"
 		audit.Reason = unavailableReason
 		audit.Error = firstNonEmpty(result.Stderr, result.Stdout, nativeaudit.ErrorText(result))
 		return audit
+	}
+	if strings.TrimSpace(result.Stdout) != "" {
+		return nativeAuditParseFailure(audit, completedReason+" report parse failed")
 	}
 	return audit
 }
@@ -406,10 +437,14 @@ func runGoProjectNativeAudit(ctx context.Context, commandRunner commandRunner, r
 	}
 	if result.Code != 0 || result.Err != nil {
 		audit.Status = nativeaudit.GovulncheckErrorStatus(result)
+		setNativeAuditFailureKind(&audit, nativeAuditGovulncheckErrorKind(result))
 		audit.Decision = "review"
 		audit.Reason = "Go project vulnerability audit unavailable"
 		audit.Error = firstNonEmpty(result.Stderr, result.Stdout, nativeaudit.ErrorText(result))
 		return audit
+	}
+	if strings.TrimSpace(result.Stdout) != "" {
+		return nativeAuditParseFailure(audit, "Go project vulnerability audit report parse failed")
 	}
 	return audit
 }
@@ -436,10 +471,14 @@ func runComposerProjectNativeAudit(ctx context.Context, commandRunner commandRun
 	}
 	if result.Code != 0 || result.Err != nil {
 		audit.Status = nativeaudit.PackageManagerErrorStatus(result)
+		setNativeAuditFailureKind(&audit, nativeAuditPackageManagerErrorKind(result))
 		audit.Decision = "review"
 		audit.Reason = "Composer project audit unavailable"
 		audit.Error = firstNonEmpty(result.Stderr, result.Stdout, nativeaudit.ErrorText(result))
 		return audit
+	}
+	if strings.TrimSpace(result.Stdout) != "" {
+		return nativeAuditParseFailure(audit, "Composer project audit report parse failed")
 	}
 	return audit
 }
@@ -466,10 +505,14 @@ func runBundlerProjectNativeAudit(ctx context.Context, commandRunner commandRunn
 	}
 	if result.Code != 0 || result.Err != nil {
 		audit.Status = nativeaudit.PackageManagerErrorStatus(result)
+		setNativeAuditFailureKind(&audit, nativeAuditPackageManagerErrorKind(result))
 		audit.Decision = "review"
 		audit.Reason = "Bundler project audit unavailable"
 		audit.Error = firstNonEmpty(result.Stderr, result.Stdout, nativeaudit.ErrorText(result))
 		return audit
+	}
+	if strings.TrimSpace(result.Stdout) != "" {
+		return nativeAuditParseFailure(audit, "Bundler project audit report parse failed")
 	}
 	return audit
 }
@@ -496,24 +539,29 @@ func runDotnetProjectNativeAudit(ctx context.Context, commandRunner commandRunne
 	}
 	if result.Code != 0 || result.Err != nil {
 		audit.Status = nativeaudit.PackageManagerErrorStatus(result)
+		setNativeAuditFailureKind(&audit, nativeAuditPackageManagerErrorKind(result))
 		audit.Decision = "review"
 		audit.Reason = ".NET project audit unavailable"
 		audit.Error = firstNonEmpty(result.Stderr, result.Stdout, nativeaudit.ErrorText(result))
 		return audit
+	}
+	if strings.TrimSpace(result.Stdout) != "" {
+		return nativeAuditParseFailure(audit, ".NET project audit report parse failed")
 	}
 	return audit
 }
 
 func mavenProjectNativeAuditUnavailable(target string) nativeAudit {
 	return nativeAudit{
-		Provider:  "project",
-		Ecosystem: "Maven",
-		Tool:      "maven-native-audit",
-		Target:    target,
-		Status:    plan.StatusUnavailable,
-		Decision:  "review",
-		Reason:    "Maven project audit unavailable",
-		Error:     "no configured provider-native Maven vulnerability audit; use OSV-Scanner, Trivy, Grype, or a reviewed Maven/Gradle audit tool for this project",
+		Provider:          "project",
+		Ecosystem:         "Maven",
+		Tool:              "maven-native-audit",
+		Target:            target,
+		Status:            plan.StatusUnavailable,
+		Decision:          "review",
+		Reason:            "Maven project audit unavailable",
+		UnavailableReason: nativeaudit.FailureUnsupportedTarget,
+		Error:             "no configured provider-native Maven vulnerability audit; use OSV-Scanner, Trivy, Grype, or a reviewed Maven/Gradle audit tool for this project",
 	}
 }
 
@@ -555,4 +603,44 @@ func nativeAuditSummary(audits []nativeAudit) (held int, unavailable int, errors
 
 func hasNativeAuditAttention(audits []nativeAudit) bool {
 	return nativeaudit.HasAttention(audits)
+}
+
+func nativeAuditParseFailure(audit nativeAudit, reason string) nativeAudit {
+	audit.Status = plan.StatusError
+	audit.Decision = "review"
+	audit.Reason = reason
+	audit.ErrorKind = nativeaudit.FailureParseFailure
+	audit.Error = "native audit output could not be parsed"
+	return audit
+}
+
+func nativeAuditPackageManagerErrorKind(result runner.Result) string {
+	_, kind := nativeaudit.PackageManagerFailureStatusAndKind(result)
+	return kind
+}
+
+func nativeAuditCargoErrorKind(result runner.Result) string {
+	_, kind := nativeaudit.CargoFailureStatusAndKind(result)
+	return kind
+}
+
+func nativeAuditPipErrorKind(result runner.Result) string {
+	_, kind := nativeaudit.PipFailureStatusAndKind(result)
+	return kind
+}
+
+func nativeAuditGovulncheckErrorKind(result runner.Result) string {
+	_, kind := nativeaudit.GovulncheckFailureStatusAndKind(result)
+	return kind
+}
+
+func setNativeAuditFailureKind(audit *nativeAudit, kind string) {
+	if audit == nil || strings.TrimSpace(kind) == "" {
+		return
+	}
+	if audit.Status == plan.StatusUnavailable {
+		audit.UnavailableReason = kind
+		return
+	}
+	audit.ErrorKind = kind
 }

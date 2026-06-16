@@ -471,12 +471,13 @@ func TestSecurityReviewCandidatesFromReportBuildsPrompts(t *testing.T) {
 			}},
 		}},
 		Audits: []nativeAudit{{
-			Provider: "project",
-			Tool:     "maven-native-audit",
-			Target:   "pom.xml",
-			Decision: "review",
-			Reason:   "Maven project audit unavailable",
-			Error:    "no configured provider-native Maven vulnerability audit",
+			Provider:          "project",
+			Tool:              "maven-native-audit",
+			Target:            "pom.xml",
+			Decision:          "review",
+			Reason:            "Maven project audit unavailable",
+			UnavailableReason: "unsupported-target",
+			Error:             "no configured provider-native Maven vulnerability audit",
 		}},
 		NPM: []npmPosture{{
 			Provider: "mise",
@@ -508,7 +509,7 @@ func TestSecurityReviewCandidatesFromReportBuildsPrompts(t *testing.T) {
 			vscodeCandidate = candidate
 		}
 	}
-	if nativeCandidate.Name != "maven-native-audit" || !strings.Contains(nativeCandidate.Prompt, "pom.xml") || !strings.Contains(nativeCandidate.Prompt, "no configured provider-native") {
+	if nativeCandidate.Name != "maven-native-audit" || !strings.Contains(nativeCandidate.Prompt, "pom.xml") || !strings.Contains(nativeCandidate.Prompt, "no configured provider-native") || !strings.Contains(nativeCandidate.Prompt, "issue:unsupported-target") {
 		t.Fatalf("expected native audit review prompt with source and remediation, got %#v", nativeCandidate)
 	}
 	if nativeCandidate.PolicyCommand != "" {

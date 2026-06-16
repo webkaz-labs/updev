@@ -11,14 +11,14 @@ stays an integer schema contract. `v0.x` releases are public preview releases;
 
 ## Current Release
 
-The current implemented release is `updev v0.7.10`. `updev version`,
+The current implemented release is `updev v0.7.11`. `updev version`,
 `updev --version`, and `updev -v` report this command contract.
 
-`updev v0.7.10` is the provider evidence quality patch after the v0.7.9
-quality-tooling release. It preserves the same supported
+`updev v0.7.11` is the scanner hardening patch after the v0.7.10 provider
+evidence detail release. It preserves the same supported
 macOS/Homebrew/mise preview scope, keeps provider log streaming outside the
-alternate-screen TUI, and makes held/review provider decisions easier to trust
-from text output, cached reports, and TUI detail rows.
+alternate-screen TUI, and makes explicit scanner/native-audit evidence easier
+to trust from text output, JSON, security review prompts, and tests.
 
 Current support promise:
 
@@ -38,30 +38,44 @@ Current release validation:
 - [x] `mise -C tools/updev run docs-check`
 - [x] `git diff --check`
 - [x] `chezmoi apply --dry-run`
-- [x] Unit coverage proves Homebrew/mise evidence rows include source or cache
-  context where available.
-- [x] TUI/text detail coverage proves held/review rows expose release age,
-  source, cache, and next-action context without duplicating compact-list
-  metadata.
-- [x] Real-machine plain checks covered cached `last`, `list --details`, and
-  `updev --dry-run --plain --no-interactive`.
+- [x] Scanner/native-audit tests cover structured evidence and unavailable
+  semantics for OSV-Scanner, gitleaks, zizmor, Grype, npm audit, cargo audit,
+  and Go native audit paths.
+- [x] Text and JSON dogfood proves scanner/native-audit unavailable evidence
+  carries the same `issue`, `unavailable_reason`, and `error_kind` semantics.
+- [x] Security review candidates carry native-audit issue evidence without
+  generating unsafe policy commands.
 
-## Next Release Target: v0.7.11
+## Next Release Target: v0.7.12
 
-`updev v0.7.11` is not scoped yet. Pick the next small patch from
-[ROADMAP.md](ROADMAP.md#near-term-order) after dogfooding v0.7.10.
+`updev v0.7.12` is planned as the policy ergonomics patch after the v0.7.11
+scanner hardening release. It should make existing allow/review/hold/block
+rules easier to understand and maintain without broad permanent allows or
+public issue automation.
 
 Scope:
 
-- Choose one cohesive patch-sized slice from provider evidence quality,
-  scanner hardening, policy ergonomics, or support-label dogfood.
-- Preserve the v0.7.10 evidence/detail parity and provider log streaming
-  invariants.
+1. **Policy diagnostics**
+   - Surface expired, duplicate, shadowed, broad, and missing-reason rules in a
+     compact CLI/TUI review path.
+   - Keep JSON output agent-friendly and deterministic.
+
+2. **Guided maintenance**
+   - Add safe edit/renew/narrow guidance where users already review policy
+     rules.
+   - Keep native-audit and scanner unavailable evidence review-only unless a
+     concrete policy target is safe.
+
+3. **Report parity**
+   - Preserve `security scan`, `security review`, text/JSON, and TUI detail
+     agreement for policy decisions and reason codes.
 
 Non-goals:
 
 - stable `v1.0.0` promises;
 - broad scanner default expansion;
+- public issue posting or automatic remote remediation;
+- broad permanent allow rules without explicit user intent;
 - large architecture refactors without a focused release plan.
 
 Release-ready criteria:
@@ -70,10 +84,14 @@ Release-ready criteria:
 - [ ] `mise -C tools/updev run docs-check`
 - [ ] `git diff --check`
 - [ ] `chezmoi apply --dry-run`
-- [ ] Scope-specific tests and release notes exist.
+- [ ] Policy diagnostic and guided-maintenance tests exist.
+- [ ] Text/JSON/TUI coverage proves policy decisions and reason codes agree.
+- [ ] Release notes exist.
 
 Released patch notes:
 
+- [v0.7.11](release-notes/v0.7.11.md): scanner hardening patch with structured
+  scanner/native-audit unavailable and error evidence.
 - [v0.7.10](release-notes/v0.7.10.md): provider evidence quality patch with
   richer Homebrew/mise release age, source, cache, and localized detail
   evidence.
