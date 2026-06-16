@@ -141,6 +141,43 @@ Every review row should expose these fields where evidence exists:
 Rows without write actions must not feel like dead ends. They should explain why
 the action is unavailable and how to continue review.
 
+## Route-to-Intent Contract
+
+TUI actions should minimize follow-up selection. When a user chooses an action
+from a focused row, updev treats that choice as an intent for that item, not as
+a request to open a generic domain list.
+
+Each routing action should carry:
+
+- `domain`: security, backend, manual, update, policy, or another review
+  domain.
+- `target`: provider, kind, name, candidate version, and any stable item key
+  already known by the current row.
+- `intent`: review, allow, hold, apply, edit, trust, open, or another concrete
+  next step.
+- `origin`: the source screen, filter, cursor, expanded row, and scroll state.
+
+The routed view should open the matching detail row first, expanded, with the
+relevant action sheet visible when a safe action exists. It should not show a
+full list and force the user to select the same item again. A domain list is a
+fallback only when the source row cannot identify one stable target; fallback
+rows must explain why the action could not be item-scoped.
+
+Examples:
+
+- Inventory `sec` on `go` opens `go` security evidence directly, not the full
+  security list.
+- Inventory `bak` on `ripgrep` opens matching backend convergence findings for
+  `ripgrep` directly, not the full backend list.
+- Update summary rows for a held package open that package's update/security
+  evidence directly.
+- Policy actions from security detail open a focused policy action sheet for
+  the matching rule or finding.
+
+Write actions still require confirmation. The improvement is that the
+confirmation is reached from the focused item detail without an unrelated
+intermediate selector.
+
 ## Action Domains
 
 Manual app review actions:

@@ -272,14 +272,14 @@ func TestListDetailRowsIncludeItemsAndToolSections(t *testing.T) {
 	if !strings.Contains(strings.Join(rows[1].Metadata, " "), "wanted: lts") {
 		t.Fatalf("expected mise wanted version metadata, got %#v", rows[1])
 	}
-	if !strings.Contains(rows[0].Detail, "description: JSON processor") || !strings.Contains(rows[0].Detail, "identity: brew / brew / jq") || !strings.Contains(rows[0].Detail, "status: ok - desired and installed") {
+	if !strings.Contains(rows[0].Detail, "description: JSON processor") || !strings.Contains(rows[0].Detail, "managed by: brew / brew / jq") || !strings.Contains(rows[0].Detail, "status: ok - desired and installed") {
 		t.Fatalf("expected inventory item detail to explain status and management state, got %#v", rows[0])
 	}
 	if !strings.Contains(strings.Join(rows[0].Metadata, " "), "name: jq") {
 		t.Fatalf("expected inventory item metadata to include item identity, got %#v", rows[0])
 	}
 	renderedInventoryDetail := strings.Join(detailBrowserExpandedLinesStyled(rows[0], 80, true), "\n")
-	for _, want := range []string{"\033[1m\033[35mdetails", "\033[36mdescription:", "\033[36midentity:", "\033[36mstatus:", "\033[1m\033[35mevidence", "\033[36mprovider:"} {
+	for _, want := range []string{"\033[1m\033[35mdetails", "\033[36mdescription:", "\033[36mmanaged by:", "\033[36mstatus:", "\033[1m\033[35mevidence", "\033[36mprovider:"} {
 		if !strings.Contains(renderedInventoryDetail, want) {
 			t.Fatalf("expected rendered inventory detail to contain %q:\n%q", want, renderedInventoryDetail)
 		}
@@ -300,7 +300,7 @@ func TestListTableSectionsConvertBrewItemsToExpandableRows(t *testing.T) {
 	if len(sections) != 2 || sections[0].Title != "brew / brew / work" || sections[1].Title != "brew / cask / personal" {
 		t.Fatalf("expected brew item sections, got %#v", sections)
 	}
-	if sections[0].Rows[0].Name != "jq" || sections[0].Rows[0].State != "ok" || !strings.Contains(sections[0].Rows[0].Detail, "description: JSON processor") || !strings.Contains(sections[0].Rows[0].Detail, "identity: brew / brew / jq") {
+	if sections[0].Rows[0].Name != "jq" || sections[0].Rows[0].State != "ok" || !strings.Contains(sections[0].Rows[0].Detail, "description: JSON processor") || !strings.Contains(sections[0].Rows[0].Detail, "managed by: brew / brew / jq") {
 		t.Fatalf("expected brew item detail to include rich inventory context, got %#v", sections[0].Rows[0])
 	}
 	if len(sections[0].Rows[0].Actions) != 0 {
@@ -315,7 +315,7 @@ func TestListTableSectionsConvertBrewItemsToExpandableRows(t *testing.T) {
 	}
 	model.ToggleSelected()
 	view = model.View().Content
-	for _, want := range []string{"detail", "description: JSON processor", "identity: brew / brew / jq", "status: ok - desired and installed"} {
+	for _, want := range []string{"detail", "description: JSON processor", "managed by: brew / brew / jq", "status: ok - desired and installed"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("expected expanded installed inventory row to include %q:\n%s", want, view)
 		}
@@ -1021,12 +1021,18 @@ func TestInventoryItemDetailLocalizesJapaneseEvidenceAndActions(t *testing.T) {
 	row := sections[0].Rows[0]
 	for _, want := range []string{
 		"説明: macOS/system git を使える状態に保つ",
-		"関連 evidence: 1 件の backend evidence",
-		"backend 根拠: github:git/git は候補としてのみ確認します",
-		"次の操作: backend 整理を開く",
+		"管理: brew / brew / git",
+		"確認: bak 1",
+		"backend: github:git/git は候補としてのみ確認します",
+		"操作: 下の actions から 1 件選択できます",
 	} {
 		if !strings.Contains(row.Detail, want) {
 			t.Fatalf("expected localized detail to contain %q:\n%s", want, row.Detail)
+		}
+	}
+	for _, unwanted := range []string{"関連 evidence:", "次の操作:"} {
+		if strings.Contains(row.Detail, unwanted) {
+			t.Fatalf("expected compact detail to avoid %q:\n%s", unwanted, row.Detail)
 		}
 	}
 	expanded := strings.Join(reviewui.ExpandedLines(row, reviewLabels()), "\n")

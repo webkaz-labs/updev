@@ -255,7 +255,7 @@ Completed P1 foundation slices:
   root `docs/agent/` files through `main.go`; `cmd` only renders the injected
   docs and keeps fallback text for tests.
 
-Current v0.7.0 guardrails:
+Current v0.7.x guardrails:
 
 - Keep contract drift checks wired into local/CI validation while provider
   packages own their command contracts.

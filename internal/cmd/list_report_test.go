@@ -518,6 +518,42 @@ func TestListEvidenceMetadataLocalizesMiseMessages(t *testing.T) {
 	}
 }
 
+func TestInventoryItemDetailCompactsEvidenceForExpandedRows(t *testing.T) {
+	withDefaultLanguageForTest(t, "ja")
+	item := plan.Item{
+		Provider: "brew",
+		Kind:     "brew",
+		Name:     "mise",
+		Category: "work",
+		Detail:   "複数言語対応ランタイムマネージャー",
+		Status:   plan.StatusOK,
+		Desired:  true,
+		Live:     true,
+	}
+	evidence := plan.ItemEvidence{
+		Updates:  []string{"brew held: strict safety will apply 2 safe Homebrew candidates and hold 2 unsafe candidates; Homebrew cannot generally install an older intermediate release"},
+		Security: []string{"brew/brew mise: held (decision: hold): 候補リリースが新しすぎます: 経過 1日、最小 3日。リリース日: 2026-06-15。解除目安は 2026-06-18（あと約2日）です; リリース経過: 経過 1日 / 最小 3日; キャッシュ: brew 3h 経過; リリース日: 2026-06-14T23:41:17Z; source: /Users/example/Brewfile; tap: homebrew/core; homepage: https://mise.jdx.dev/; download: https://github.com/jdx/mise/archive/refs/tags/v2026.6.10.tar.gz"},
+		Backends: []string{"github:jdx/mise は候補としてのみ確認します。Homebrew 管理を変える前に release asset、version 対応、配布元の正当性を確認してください"},
+	}
+	detail := inventoryItemDetail(item, evidence, []detailBrowserAction{{Label: "backend 整理を開く", Description: evidence.Backends[0]}})
+	for _, want := range []string{
+		"確認: upd 1 / sec 1 / bak 1",
+		"更新: brew 保留: strict safety は安全な Homebrew 候補 2 件を適用し、2 件を保留します",
+		"セキュリティ: brew/brew mise: 保留（判定: 保留）: 候補リリースが新しすぎます",
+		"backend: github:jdx/mise は候補としてのみ確認します",
+		"操作: 下の actions から 1 件選択できます",
+	} {
+		if !strings.Contains(detail, want) {
+			t.Fatalf("expected compact detail to contain %q:\n%s", want, detail)
+		}
+	}
+	for _, unwanted := range []string{"source:", "download:", "homepage host:", "次の操作:", "関連 evidence:"} {
+		if strings.Contains(detail, unwanted) {
+			t.Fatalf("expected compact detail to avoid %q:\n%s", unwanted, detail)
+		}
+	}
+}
+
 func TestListSecurityEvidenceShowsReleaseAgeAvailability(t *testing.T) {
 	withDefaultLanguageForTest(t, "ja")
 	releasedAt := time.Now().Add(-24 * time.Hour).UTC().Format(time.RFC3339)
@@ -1007,6 +1043,51 @@ func TestListHubRouterRouteBackReturnsToOriginView(t *testing.T) {
 	}
 }
 
+func TestListHubRouterUpdateEvidenceItemActionOpensSecurityDetail(t *testing.T) {
+	lastUpdate := updateReport{
+		Status: plan.StatusHeld,
+		Steps: []updateStep{{
+			Name:         "brew",
+			Status:       plan.StatusHeld,
+			Reason:       "security review required",
+			SkippedItems: []string{"mole -> 1.43.0 hold: release age"},
+		}},
+		Safety: []safetyGate{{
+			Provider: "brew",
+			Status:   plan.StatusHeld,
+			Findings: []safetyFinding{{
+				Provider: "brew",
+				Kind:     "brew",
+				Name:     "mole",
+				Decision: "hold",
+				Reason:   "release age",
+			}},
+		}},
+	}
+	model := newListHubRouterModel(listHubRouterOptions{
+		Report:        listReport{Status: plan.StatusOK, Root: "/repo"},
+		LastUpdate:    lastUpdate,
+		HasLastUpdate: true,
+		InitialAction: listHubActionUpdates,
+	})
+	if model.screen != listHubRouterDetail || model.stateKey != listHubActionUpdates {
+		t.Fatalf("expected update evidence detail, screen=%q state=%q", model.screen, model.stateKey)
+	}
+	if len(model.detail.Rows) == 0 || len(model.detail.Rows[0].Actions) == 0 {
+		t.Fatalf("expected update item row with action, got %#v", model.detail.Rows)
+	}
+
+	updated, _ := model.handleAction(model.detail.Rows[0].Actions[0].Value)
+	model = updated.(listHubRouterModel)
+
+	if model.screen != listHubRouterDetail || model.returnAction != listHubActionUpdates {
+		t.Fatalf("expected item action to open security detail and return to updates, screen=%q return=%q", model.screen, model.returnAction)
+	}
+	if len(model.detail.Rows) != 1 || !strings.Contains(model.detail.Rows[0].Title, "mole") {
+		t.Fatalf("expected focused mole security row, got %#v", model.detail.Rows)
+	}
+}
+
 func TestListHubRouterClearsRowActionAfterReturningToInventory(t *testing.T) {
 	backendPlan := backendPlanReport{Status: plan.StatusDrift, Findings: []backendFinding{{
 		Type:                "homebrew-to-mise",
@@ -1163,10 +1244,10 @@ func TestListRowsRouteToCachedUpdateAndSecurityEvidence(t *testing.T) {
 			rowsByName[section.Name+"/"+row.Name] = row
 		}
 	}
-	if !toolRowHasRouteAction(rowsByName["brew/brew/jq"], listHubActionUpdates) || strings.Contains(rowsByName["brew/brew/jq"].Detail, "security evidence:") {
+	if !toolRowHasRouteAction(rowsByName["brew/brew/jq"], listHubActionUpdates) || strings.Contains(rowsByName["brew/brew/jq"].Detail, "security:") {
 		t.Fatalf("expected jq row to route only to update evidence, got %#v", rowsByName["brew/brew/jq"])
 	}
-	if !toolRowHasRouteAction(rowsByName["brew/brew/ripgrep"], listHubActionUpdates) || !toolRowHasRouteAction(rowsByName["brew/brew/ripgrep"], listHubActionSecurity) || !strings.Contains(rowsByName["brew/brew/ripgrep"].Detail, "security evidence:") {
+	if !toolRowHasRouteAction(rowsByName["brew/brew/ripgrep"], listHubActionUpdates) || !toolRowHasRouteAction(rowsByName["brew/brew/ripgrep"], listHubActionSecurity) || !strings.Contains(rowsByName["brew/brew/ripgrep"].Detail, "security:") {
 		t.Fatalf("expected ripgrep row to route to update and security evidence, got %#v", rowsByName["brew/brew/ripgrep"])
 	}
 	if toolRowHasRouteAction(rowsByName["mise/tool/ripgrep"], listHubActionUpdates) || toolRowHasRouteAction(rowsByName["mise/tool/ripgrep"], listHubActionSecurity) {
@@ -1178,7 +1259,7 @@ func TestListRowsRouteToCachedUpdateAndSecurityEvidence(t *testing.T) {
 		byTitle[row.Title] = row
 	}
 	rg := byTitle["brew/brew ripgrep"]
-	if !detailRowHasRouteAction(rg, listHubActionSecurity) || !strings.Contains(strings.Join(rg.Metadata, " "), "security evidence:") {
+	if !detailRowHasRouteAction(rg, listHubActionSecurity) || !strings.Contains(rg.Detail, "security:") {
 		t.Fatalf("expected ripgrep detail row to expose security route evidence, got %#v", rg)
 	}
 }
@@ -1229,7 +1310,7 @@ func TestListRowsRouteMiseBumpEvidenceToMiseTool(t *testing.T) {
 	if !toolRowHasRouteAction(row, listHubActionUpdates) || !toolRowHasRouteAction(row, listHubActionSecurity) {
 		t.Fatalf("expected mise bump row to route to update and security evidence, got %#v", row.Actions)
 	}
-	if !strings.Contains(row.Detail, "update evidence:") || !strings.Contains(row.Detail, "security evidence:") {
+	if !strings.Contains(row.Detail, "updates:") || !strings.Contains(row.Detail, "security:") {
 		t.Fatalf("expected mise bump evidence in row detail, got %q", row.Detail)
 	}
 	detailRows := updateSecurityDetailRowsForFilter(lastReport, lastReportOptions{section: "security", query: "github:openai/codex"})
@@ -1287,7 +1368,7 @@ func TestListRowsShowHoldBadgeForStrictSecurityReviewEvidence(t *testing.T) {
 	if len(rendered) != 5 || rendered[3] != "▶sec" {
 		t.Fatalf("expected strict review evidence to render as held, got %#v", rendered)
 	}
-	if !strings.Contains(row.Detail, "security evidence:") || !strings.Contains(row.Detail, "held (decision: review)") {
+	if !strings.Contains(row.Detail, "security:") || !strings.Contains(row.Detail, "held (decision: review)") {
 		t.Fatalf("expected detail to preserve strict-held review decision, got %q", row.Detail)
 	}
 }
@@ -1319,10 +1400,10 @@ func TestListRowsExposeBackendRouteOnlyWithMatchingEvidence(t *testing.T) {
 	if toolRowHasRouteAction(rowsByName["brew/brew/jq"], listHubActionBackends) {
 		t.Fatalf("did not expect unrelated jq row to expose backend route: %#v", rowsByName["brew/brew/jq"])
 	}
-	if !toolRowHasRouteAction(rowsByName["brew/brew/ripgrep"], listHubActionBackends) || !strings.Contains(rowsByName["brew/brew/ripgrep"].Detail, "backend evidence:") {
+	if !toolRowHasRouteAction(rowsByName["brew/brew/ripgrep"], listHubActionBackends) || !strings.Contains(rowsByName["brew/brew/ripgrep"].Detail, "backend:") {
 		t.Fatalf("expected ripgrep row to expose focused backend route and evidence: %#v", rowsByName["brew/brew/ripgrep"])
 	}
-	if !toolRowHasRouteAction(rowsByName["mise/tool/ripgrep"], listHubActionBackends) || !strings.Contains(rowsByName["mise/tool/ripgrep"].Detail, "backend evidence:") {
+	if !toolRowHasRouteAction(rowsByName["mise/tool/ripgrep"], listHubActionBackends) || !strings.Contains(rowsByName["mise/tool/ripgrep"].Detail, "backend:") {
 		t.Fatalf("expected recommended mise row to expose backend route and evidence: %#v", rowsByName["mise/tool/ripgrep"])
 	}
 }
