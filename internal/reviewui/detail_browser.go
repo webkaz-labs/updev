@@ -987,7 +987,7 @@ func isDetailBrowserKeyValueLine(line string) bool {
 		return true
 	}
 	switch strings.ToLower(key) {
-	case "linked evidence", "update evidence", "security evidence", "backend evidence", "next action":
+	case "linked evidence", "update evidence", "security evidence", "backend evidence", "next action", "managed by":
 		return true
 	case "関連 evidence", "次の操作":
 		return true
@@ -1015,9 +1015,19 @@ func detailBrowserActionLineWithFormat(index int, action detailBrowserAction, co
 	}
 	line := prefix + textui.StyleKey(key, color) + " " + label
 	if strings.TrimSpace(action.Description) != "" {
-		line += textui.StyleDim(" - "+format.LocalizeEvidence(action.Description), color)
+		line += textui.StyleDim(" - "+compactDetailBrowserActionDescription(format.LocalizeEvidence(action.Description)), color)
 	}
 	return line
+}
+
+func compactDetailBrowserActionDescription(value string) string {
+	value = strings.Join(strings.Fields(strings.TrimSpace(value)), " ")
+	for _, delimiter := range []string{"; source:", "; tap:", "; homepage:", "; download:", "; homepage host:", "; download host:", "; キャッシュ:", "; リリース経過:"} {
+		if before, _, ok := strings.Cut(value, delimiter); ok {
+			value = strings.TrimSpace(before)
+		}
+	}
+	return textui.Truncate(value, 72)
 }
 
 func DetailBrowserCollapsedSummary(row detailBrowserRow) string {

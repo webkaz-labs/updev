@@ -954,6 +954,12 @@ func runListHub(report listReport, selectorHub bool) {
 				defaultAction = listHubActionFull
 				continue
 			}
+			if route, ok := parseUpdateSummaryRoute(state.Action); ok {
+				if runUpdateSummaryRouteDetail(lastUpdate.Report, route, backendPlan, detailStates, textui.ColorEnabled()) {
+					return
+				}
+				continue
+			}
 			if state.Action == listHubActionSecurity || state.Action == updateHubActionSecurity {
 				pendingAction = listHubActionSecurity
 				defaultAction = listHubActionSecurity
@@ -1619,7 +1625,7 @@ func runListRouteDetail(options listRouteDetailOptions) listRouteDetailOutcome {
 	if len(rows) == 0 {
 		rows = []detailBrowserRow{emptyRouteDetailRow(route)}
 	}
-	state, err := runDetailBrowserWithState(title, rows, initialRouteDetailState(detailStates[stateKey]), options.Color)
+	state, err := runDetailBrowserWithState(title, rows, focusedRouteDetailState(), options.Color)
 	if err != nil {
 		return listRouteDetailBack
 	}
@@ -1631,6 +1637,12 @@ func runListRouteDetail(options listRouteDetailOptions) listRouteDetailOutcome {
 		return listRouteDetailHome
 	}
 	if state.Action == updevActionBack {
+		return listRouteDetailBack
+	}
+	if summaryRoute, ok := parseUpdateSummaryRoute(state.Action); ok && options.HasLastUpdate {
+		if runUpdateSummaryRouteDetail(options.LastUpdate, summaryRoute, options.BackendPlan, detailStates, options.Color) {
+			return listRouteDetailExit
+		}
 		return listRouteDetailBack
 	}
 	switch route.Domain {
@@ -1647,14 +1659,12 @@ func runListRouteDetail(options listRouteDetailOptions) listRouteDetailOutcome {
 	return listRouteDetailBack
 }
 
-func initialRouteDetailState(state detailBrowserState) detailBrowserState {
-	if state.Expanded == nil {
-		state.Expanded = map[int]bool{}
+func focusedRouteDetailState() detailBrowserState {
+	return detailBrowserState{
+		Selected: 0,
+		Offset:   0,
+		Expanded: map[int]bool{0: true},
 	}
-	if len(state.Expanded) == 0 && state.Query == "" && state.Selected == 0 && state.Offset == 0 {
-		state.Expanded[0] = true
-	}
-	return state
 }
 
 func routeDetailTitle(route listRouteAction) string {
@@ -2012,6 +2022,42 @@ func listItemEvidenceMetadata(e plan.ItemEvidence) []string {
 	return metadata
 }
 
+func listItemEvidenceCompactMetadata(e plan.ItemEvidence) []string {
+	metadata := []string{}
+	if text := compactListEvidenceGroup(e.Updates); text != "" {
+		metadata = append(metadata, tr("updates: ", "更新: ")+text)
+	}
+	if text := compactListEvidenceGroup(e.Security); text != "" {
+		metadata = append(metadata, tr("security: ", "セキュリティ: ")+text)
+	}
+	if text := compactListEvidenceGroup(e.Backends); text != "" {
+		metadata = append(metadata, tr("backend: ", "backend: ")+text)
+	}
+	return metadata
+}
+
+func compactListEvidenceGroup(values []string) string {
+	if len(values) == 0 {
+		return ""
+	}
+	parts := []string{compactListEvidenceText(values[0])}
+	if len(values) > 1 {
+		parts = append(parts, fmt.Sprintf(tr("+%d more", "+%d 件"), len(values)-1))
+	}
+	return strings.Join(parts, ", ")
+}
+
+func compactListEvidenceText(value string) string {
+	text := localizedListEvidenceText(value)
+	text = strings.Join(strings.Fields(text), " ")
+	for _, delimiter := range []string{"; source:", "; tap:", "; homepage:", "; download:", "; homepage host:", "; download host:", "; キャッシュ:", "; リリース経過:"} {
+		if before, _, ok := strings.Cut(text, delimiter); ok {
+			text = strings.TrimSpace(before)
+		}
+	}
+	return truncate(text, 96)
+}
+
 func listItemEvidenceSummary(e plan.ItemEvidence) string {
 	parts := []string{}
 	if len(e.Updates) > 0 {
@@ -2042,19 +2088,33 @@ func inventoryItemDetail(item plan.Item, evidence plan.ItemEvidence, actions []d
 	} else {
 		parts = append(parts, tr("summary: ", "概要: ")+inventoryItemStatusSummary(item))
 	}
-	parts = append(parts, tr("identity: ", "識別子: ")+inventoryItemIdentity(item))
 	parts = append(parts, tr("status: ", "状態: ")+inventoryItemStatusSummary(item))
+	parts = append(parts, tr("managed by: ", "管理: ")+inventoryItemIdentity(item))
 	if strings.TrimSpace(item.Category) != "" {
-		parts = append(parts, tr("category: ", "カテゴリ: ")+item.Category+" - "+categoryDescription(item.Category))
+		parts = append(parts, tr("category: ", "カテゴリ: ")+item.Category)
 	}
-	if summary := listItemEvidenceSummary(evidence); summary != "" {
-		parts = append(parts, tr("linked evidence: ", "関連 evidence: ")+summary)
+	if summary := compactEvidenceBadgeSummary(evidence); summary != "" {
+		parts = append(parts, tr("evidence: ", "確認: ")+summary)
 	}
-	parts = append(parts, listItemEvidenceMetadata(evidence)...)
-	for _, action := range actions {
-		parts = append(parts, tr("next action: ", "次の操作: ")+detailActionSummary(action))
+	parts = append(parts, listItemEvidenceCompactMetadata(evidence)...)
+	if len(actions) > 0 {
+		parts = append(parts, fmt.Sprintf(tr("actions: %d available below", "操作: 下の actions から %d 件選択できます"), len(actions)))
 	}
 	return strings.Join(parts, "\n")
+}
+
+func compactEvidenceBadgeSummary(e plan.ItemEvidence) string {
+	parts := []string{}
+	if len(e.Updates) > 0 {
+		parts = append(parts, fmt.Sprintf("upd %d", len(e.Updates)))
+	}
+	if len(e.Security) > 0 {
+		parts = append(parts, fmt.Sprintf("sec %d", len(e.Security)))
+	}
+	if len(e.Backends) > 0 {
+		parts = append(parts, fmt.Sprintf("bak %d", len(e.Backends)))
+	}
+	return strings.Join(parts, " / ")
 }
 
 func localizedBuiltInNoteText(value string) string {
@@ -2117,6 +2177,7 @@ func localizedListEvidencePrefixes(value string) string {
 
 func localizedListEvidenceDynamicText(value string) string {
 	value = localizedMiseBumpAppliedEvidenceText(value)
+	value = localizedHomebrewStrictSafetyEvidenceText(value)
 	replacements := []struct {
 		old string
 		new string
@@ -2138,6 +2199,26 @@ func localizedListEvidenceDynamicText(value string) string {
 		value = strings.ReplaceAll(value, replacement.old, replacement.new)
 	}
 	return value
+}
+
+func localizedHomebrewStrictSafetyEvidenceText(value string) string {
+	const prefix = "strict safety will apply "
+	start := strings.Index(value, prefix)
+	if start < 0 {
+		return value
+	}
+	after := value[start+len(prefix):]
+	safeCount, rest, ok := strings.Cut(after, " safe Homebrew candidates and hold ")
+	if !ok {
+		return value
+	}
+	holdCount, suffix, ok := strings.Cut(rest, " unsafe candidates")
+	if !ok {
+		return value
+	}
+	japanese := fmt.Sprintf("strict safety は安全な Homebrew 候補 %s 件を適用し、%s 件を保留します", strings.TrimSpace(safeCount), strings.TrimSpace(holdCount))
+	suffix = strings.ReplaceAll(suffix, "; Homebrew cannot generally install an older intermediate release", "。Homebrew は通常、古い中間リリースだけを個別に入れられません")
+	return value[:start] + japanese + suffix
 }
 
 func localizedMiseBumpAppliedEvidenceText(value string) string {
@@ -3012,6 +3093,10 @@ func (m listHubRouterModel) handleAction(action string) (tea.Model, tea.Cmd) {
 		m.showRouteDetail(route)
 		return m, nil
 	}
+	if route, ok := parseUpdateSummaryRoute(action); ok {
+		m.showUpdateSummaryRoute(route, m.currentAction())
+		return m, nil
+	}
 	if _, ok := routedDetailWriteActionSpec(action); ok {
 		m.showWriteAction(action)
 		return m, nil
@@ -3377,8 +3462,27 @@ func (m *listHubRouterModel) showRouteDetail(route listRouteAction) {
 	if len(rows) == 0 {
 		rows = []detailBrowserRow{emptyRouteDetailRow(route)}
 	}
-	m.detailStates[stateKey] = initialRouteDetailState(m.detailStates[stateKey])
+	m.detailStates[stateKey] = focusedRouteDetailState()
 	m.showDetail(routeDetailTitle(route), rows, stateKey, m.currentAction())
+}
+
+func (m *listHubRouterModel) showUpdateSummaryRoute(route updateSummaryRoute, returnAction string) {
+	if !m.hasLastUpdate {
+		m.showEmptyDetail("updev update evidence", m.currentAction(), returnAction)
+		return
+	}
+	opts := lastReportOptions{provider: route.Provider, query: route.Query}
+	filtered := filterUpdateReport(m.lastUpdate, opts)
+	suffix := updateSummaryRouteTitleSuffix(route)
+	stateKey := updateSummaryRouteStateKey(route)
+	switch route.Base {
+	case updateHubActionLogs:
+		m.showFocusedDetail("updev update evidence"+suffix, updateLogDetailRows(filtered), stateKey, returnAction)
+	case updateHubActionSecurity:
+		m.showFocusedDetail("updev security review"+suffix, updateSecurityDetailRowsForFilter(filtered, opts), stateKey, returnAction)
+	default:
+		m.showAction(returnAction, listHubActionFull)
+	}
 }
 
 func (m listHubRouterModel) routeRows(route listRouteAction) []detailBrowserRow {
@@ -3558,6 +3662,11 @@ func (m *listHubRouterModel) showDetail(title string, rows []detailBrowserRow, s
 	m.stateKey = stateKey
 	m.returnAction = returnAction
 	m.detail = model
+}
+
+func (m *listHubRouterModel) showFocusedDetail(title string, rows []detailBrowserRow, stateKey string, returnAction string) {
+	m.detailStates[stateKey] = focusedRouteDetailState()
+	m.showDetail(title, rows, stateKey, returnAction)
 }
 
 func (m *listHubRouterModel) showTable(title string, sections []toolSection, stateKey string, returnAction string, actions reviewui.BrowserActions, labels reviewui.TableBrowserLabels) {

@@ -388,7 +388,7 @@ func isExpandedKeyValueLine(line string) bool {
 		return true
 	}
 	switch strings.ToLower(key) {
-	case "linked evidence", "update evidence", "security evidence", "backend evidence", "next action":
+	case "linked evidence", "update evidence", "security evidence", "backend evidence", "next action", "managed by":
 		return true
 	case "関連 evidence", "更新根拠", "セキュリティ根拠", "backend 根拠", "次の操作":
 		return true
