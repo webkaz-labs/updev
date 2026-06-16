@@ -1849,6 +1849,7 @@ func printSecurityText(w io.Writer, report securityReport, color bool) {
 				audit.Target,
 				string(audit.Status),
 				audit.Decision,
+				nativeAuditIssue(audit),
 				localizedNativeAuditReason(audit),
 				audit.Error,
 			})
@@ -1859,6 +1860,7 @@ func printSecurityText(w io.Writer, report securityReport, color bool) {
 			{Header: "target", Min: 0, Max: 24},
 			{Header: "status", Min: 8, Max: 12},
 			{Header: "decision", Min: 8, Max: 10},
+			{Header: "issue", Min: 0, Max: 18},
 			{Header: "reason", Min: 16, Max: 48},
 			{Header: "detail", Min: 0, Max: 56},
 		}, rows, color)
@@ -1897,6 +1899,7 @@ func printSecurityText(w io.Writer, report securityReport, color bool) {
 				string(scanner.Status),
 				scanner.Decision,
 				strconv.Itoa(scanner.FindingCount),
+				scannerEvidenceIssue(scanner),
 				localizedSecurityReason(scanner.Reason),
 			})
 		}
@@ -1905,6 +1908,7 @@ func printSecurityText(w io.Writer, report securityReport, color bool) {
 			{Header: "status", Min: 8, Max: 12},
 			{Header: "decision", Min: 8, Max: 10},
 			{Header: "finds", Min: 5, Max: 8},
+			{Header: "issue", Min: 0, Max: 18},
 			{Header: "reason", Min: 16, Max: 48},
 		}, rows, color)
 	}
@@ -2208,6 +2212,14 @@ func securityPathSummary(binary string, state string) string {
 	default:
 		return ""
 	}
+}
+
+func nativeAuditIssue(audit nativeAudit) string {
+	return firstNonEmpty(audit.UnavailableReason, audit.ErrorKind)
+}
+
+func scannerEvidenceIssue(scanner scannerEvidence) string {
+	return firstNonEmpty(scanner.UnavailableReason, scanner.ErrorKind)
 }
 
 func securityDecisionPriority(decision string) int {

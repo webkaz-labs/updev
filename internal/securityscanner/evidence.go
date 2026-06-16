@@ -7,7 +7,19 @@ import (
 	"strings"
 
 	"github.com/webkaz-labs/updev/internal/plan"
+	"github.com/webkaz-labs/updev/internal/runner"
 	"github.com/webkaz-labs/updev/internal/securitygate"
+)
+
+const (
+	FailureMissingBinary     = "missing-binary"
+	FailureUnsupportedTarget = "unsupported-target"
+	FailureSkippedByScope    = "skipped-by-scope"
+	FailureTimeout           = "timeout"
+	FailureRateLimit         = "rate-limit"
+	FailureParseFailure      = "parse-failure"
+	FailureReportUnavailable = "report-unavailable"
+	FailureCommandError      = "command-error"
 )
 
 type Evidence struct {
@@ -17,6 +29,8 @@ type Evidence struct {
 	Status             plan.Status `json:"status"`
 	Decision           string      `json:"decision"`
 	Reason             string      `json:"reason,omitempty"`
+	UnavailableReason  string      `json:"unavailable_reason,omitempty"`
+	ErrorKind          string      `json:"error_kind,omitempty"`
 	SourceCount        int         `json:"source_count,omitempty"`
 	PackageCount       int         `json:"package_count,omitempty"`
 	FindingCount       int         `json:"finding_count,omitempty"`
@@ -152,6 +166,40 @@ func Summary(scanners []Evidence) (held int, unavailable int, errors int) {
 		}
 	}
 	return held, unavailable, errors
+}
+
+func FailureStatusAndKind(result runner.Result) (plan.Status, string) {
+	detail := strings.ToLower(strings.TrimSpace(runner.ResultDetail(result, ErrorText(result), runner.ResultDetailOption{})))
+	switch {
+	case result.Code == 127 ||
+		strings.Contains(detail, "executable file not found") ||
+		strings.Contains(detail, "command not found"):
+		return plan.StatusUnavailable, FailureMissingBinary
+	case strings.Contains(detail, "deadline exceeded") ||
+		strings.Contains(detail, "timed out") ||
+		strings.Contains(detail, "timeout"):
+		return plan.StatusUnavailable, FailureTimeout
+	case strings.Contains(detail, "rate limit") ||
+		strings.Contains(detail, "too many requests"):
+		return plan.StatusUnavailable, FailureRateLimit
+	case strings.Contains(detail, "no such file") ||
+		strings.Contains(detail, "file does not exist") ||
+		strings.Contains(detail, "no supported files") ||
+		strings.Contains(detail, "no vulnerabilities found in supported files"):
+		return plan.StatusUnavailable, FailureUnsupportedTarget
+	default:
+		return plan.StatusError, FailureCommandError
+	}
+}
+
+func ErrorText(result runner.Result) string {
+	if result.Err != nil {
+		return result.Err.Error()
+	}
+	if result.Code != 0 {
+		return fmt.Sprintf("exit status %d", result.Code)
+	}
+	return "unknown error"
 }
 
 func HasAttention(scanners []Evidence) bool {

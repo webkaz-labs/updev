@@ -14,6 +14,7 @@ import (
 	"github.com/webkaz-labs/updev/internal/plan"
 	"github.com/webkaz-labs/updev/internal/runner"
 	"github.com/webkaz-labs/updev/internal/securityreason"
+	"github.com/webkaz-labs/updev/internal/securityscanner"
 )
 
 func TestCollectUpdateSafetyCachesBrewAdvisoryError(t *testing.T) {
@@ -985,11 +986,37 @@ func TestRunOSVScannerSourceScanUnavailableDoesNotHoldReport(t *testing.T) {
 		Code:   127,
 		Stderr: "osv-scanner: command not found",
 	}}, "/repo", nil)
-	if evidence.Status != plan.StatusUnavailable || evidence.Decision != "review" {
+	if evidence.Status != plan.StatusUnavailable || evidence.Decision != "review" || evidence.UnavailableReason != securityscanner.FailureMissingBinary {
 		t.Fatalf("expected unavailable scanner evidence, got %#v", evidence)
 	}
 	status := scannerEvidenceReportStatus(plan.StatusOK, []scannerEvidence{evidence})
 	if status != plan.StatusOK {
 		t.Fatalf("expected unavailable scanner evidence not to change report status, got %s", status)
+	}
+}
+
+func TestScannerEvidenceClassifiesUnavailableAndParseFailures(t *testing.T) {
+	root := t.TempDir()
+	gitleaks := runGitleaksDirScan(context.Background(), &fakeCommandRunner{result: runner.Result{
+		Code:   127,
+		Stderr: "gitleaks: command not found",
+	}}, root)
+	if gitleaks.Status != plan.StatusUnavailable || gitleaks.UnavailableReason != securityscanner.FailureMissingBinary {
+		t.Fatalf("expected gitleaks missing-binary evidence, got %#v", gitleaks)
+	}
+
+	zizmor := runZizmorWorkflowScan(context.Background(), &fakeCommandRunner{result: runner.Result{
+		Code:   1,
+		Stderr: "GitHub API rate limit exceeded",
+	}}, root)
+	if zizmor.Status != plan.StatusUnavailable || zizmor.UnavailableReason != securityscanner.FailureRateLimit {
+		t.Fatalf("expected zizmor rate-limit evidence, got %#v", zizmor)
+	}
+
+	grype := runGrypeDirectoryScan(context.Background(), &fakeCommandRunner{result: runner.Result{
+		Stdout: `{not-json`,
+	}}, root, nil)
+	if grype.Status != plan.StatusError || grype.ErrorKind != securityscanner.FailureParseFailure {
+		t.Fatalf("expected grype parse-failure evidence, got %#v", grype)
 	}
 }

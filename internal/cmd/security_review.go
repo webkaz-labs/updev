@@ -138,6 +138,7 @@ func securityReviewCandidatesFromReport(report securityReport) []securityReviewC
 			Decision:    audit.Decision,
 			Reason:      audit.Reason,
 			Remediation: audit.Error,
+			Evidence:    nativeAuditReviewEvidence(audit),
 			Source:      audit.Target,
 		})
 	}
@@ -170,6 +171,20 @@ func securityReviewCandidatesFromReport(report securityReport) []securityReviewC
 	}
 	sortSecurityReviewCandidates(candidates)
 	return candidates
+}
+
+func nativeAuditReviewEvidence(audit nativeAudit) []string {
+	evidence := []string{}
+	if issue := nativeAuditIssue(audit); issue != "" {
+		evidence = append(evidence, "issue:"+issue)
+	}
+	if audit.Ecosystem != "" {
+		evidence = append(evidence, "ecosystem:"+audit.Ecosystem)
+	}
+	if audit.Target != "" {
+		evidence = append(evidence, "target:"+audit.Target)
+	}
+	return evidence
 }
 
 func packagePostureReviewCandidate(provider string, kind string, name string, version string, decision string, reason string, remediation string, evidence []string, url string) securityReviewCandidate {

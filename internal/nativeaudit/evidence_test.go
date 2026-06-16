@@ -1,9 +1,11 @@
 package nativeaudit
 
 import (
+	"errors"
 	"testing"
 
 	"github.com/webkaz-labs/updev/internal/plan"
+	"github.com/webkaz-labs/updev/internal/runner"
 )
 
 func TestReportStatusPrioritizesBlockingStatuses(t *testing.T) {
@@ -68,5 +70,27 @@ func TestHasAttentionChecksStatusAndDecision(t *testing.T) {
 				t.Fatalf("HasAttention() = %v, want %v", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestFailureStatusAndKindHelpers(t *testing.T) {
+	status, kind := PackageManagerFailureStatusAndKind(runner.Result{Code: 127, Stderr: "npm: command not found"})
+	if status != plan.StatusUnavailable || kind != FailureMissingBinary {
+		t.Fatalf("expected missing-binary package manager failure, got %s/%s", status, kind)
+	}
+	status, kind = PackageManagerFailureStatusAndKind(runner.Result{Stderr: "lockfile not found"})
+	if status != plan.StatusUnavailable || kind != FailureUnsupportedTarget {
+		t.Fatalf("expected unsupported-target package manager failure, got %s/%s", status, kind)
+	}
+	status, kind = PipFailureStatusAndKind(runner.Result{Err: errors.New("context deadline exceeded")})
+	if status != plan.StatusUnavailable || kind != FailureTimeout {
+		t.Fatalf("expected timeout pip failure, got %s/%s", status, kind)
+	}
+	status, kind = CargoFailureStatusAndKind(runner.Result{Stderr: "install cargo-audit to use this command"})
+	if status != plan.StatusUnavailable || kind != FailureMissingBinary {
+		t.Fatalf("expected missing cargo-audit failure, got %s/%s", status, kind)
+	}
+	if got := NPMErrorKind("ENOLOCK"); got != FailureUnsupportedTarget {
+		t.Fatalf("expected ENOLOCK unsupported-target, got %s", got)
 	}
 }

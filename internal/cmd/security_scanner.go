@@ -122,6 +122,7 @@ func runOSVScannerSourceScan(ctx context.Context, commandRunner commandRunner, r
 		}
 		if result.Code != 0 || result.Err != nil {
 			evidence.Status = scannerCommandErrorStatus(result)
+			setScannerEvidenceFailureKind(&evidence, scannerCommandErrorKind(result))
 			evidence.Decision = "review"
 			evidence.Reason = "osv-scanner completed with no parsed vulnerabilities but returned an error"
 			evidence.Error = firstNonEmpty(result.Stderr, scannerErrorText(result))
@@ -130,9 +131,18 @@ func runOSVScannerSourceScan(ctx context.Context, commandRunner commandRunner, r
 	}
 	if result.Code != 0 || result.Err != nil {
 		evidence.Status = scannerCommandErrorStatus(result)
+		setScannerEvidenceFailureKind(&evidence, scannerCommandErrorKind(result))
 		evidence.Decision = "review"
 		evidence.Reason = "osv-scanner unavailable"
 		evidence.Error = firstNonEmpty(result.Stderr, result.Stdout, scannerErrorText(result))
+		return evidence
+	}
+	if strings.TrimSpace(result.Stdout) != "" {
+		evidence.Status = plan.StatusError
+		evidence.Decision = "review"
+		evidence.Reason = "osv-scanner report parse failed"
+		evidence.ErrorKind = securityscanner.FailureParseFailure
+		evidence.Error = "scanner output was not valid osv-scanner JSON"
 		return evidence
 	}
 	return evidence
@@ -383,12 +393,13 @@ func runGitleaksDirScan(ctx context.Context, commandRunner commandRunner, root s
 	reportFile, err := os.CreateTemp("", "updev-gitleaks-*.json")
 	if err != nil {
 		return scannerEvidence{
-			Tool:     "gitleaks",
-			Target:   root,
-			Status:   plan.StatusUnavailable,
-			Decision: "review",
-			Reason:   "gitleaks report file unavailable",
-			Error:    err.Error(),
+			Tool:              "gitleaks",
+			Target:            root,
+			Status:            plan.StatusUnavailable,
+			Decision:          "review",
+			Reason:            "gitleaks report file unavailable",
+			UnavailableReason: securityscanner.FailureReportUnavailable,
+			Error:             err.Error(),
 		}
 	}
 	reportPath := reportFile.Name()
@@ -419,6 +430,7 @@ func runGitleaksDirScan(ctx context.Context, commandRunner commandRunner, root s
 		}
 		if result.Code != 0 || result.Err != nil {
 			evidence.Status = scannerCommandErrorStatus(result)
+			setScannerEvidenceFailureKind(&evidence, scannerCommandErrorKind(result))
 			evidence.Decision = "review"
 			evidence.Reason = "gitleaks completed with no parsed findings but returned an error"
 			evidence.Error = firstNonEmpty(result.Stderr, scannerErrorText(result))
@@ -427,9 +439,18 @@ func runGitleaksDirScan(ctx context.Context, commandRunner commandRunner, root s
 	}
 	if result.Code != 0 || result.Err != nil {
 		evidence.Status = scannerCommandErrorStatus(result)
+		setScannerEvidenceFailureKind(&evidence, scannerCommandErrorKind(result))
 		evidence.Decision = "review"
 		evidence.Reason = "gitleaks unavailable"
 		evidence.Error = firstNonEmpty(result.Stderr, result.Stdout, scannerErrorText(result))
+		return evidence
+	}
+	if strings.TrimSpace(raw) != "" {
+		evidence.Status = plan.StatusError
+		evidence.Decision = "review"
+		evidence.Reason = "gitleaks report parse failed"
+		evidence.ErrorKind = securityscanner.FailureParseFailure
+		evidence.Error = "scanner output was not valid gitleaks JSON"
 		return evidence
 	}
 	return evidence
@@ -489,6 +510,7 @@ func runZizmorWorkflowScan(ctx context.Context, commandRunner commandRunner, roo
 		}
 		if result.Code != 0 || result.Err != nil {
 			evidence.Status = scannerCommandErrorStatus(result)
+			setScannerEvidenceFailureKind(&evidence, scannerCommandErrorKind(result))
 			evidence.Decision = "review"
 			evidence.Reason = "zizmor completed with no parsed findings but returned an error"
 			evidence.Error = firstNonEmpty(result.Stderr, scannerErrorText(result))
@@ -497,9 +519,18 @@ func runZizmorWorkflowScan(ctx context.Context, commandRunner commandRunner, roo
 	}
 	if result.Code != 0 || result.Err != nil {
 		evidence.Status = scannerCommandErrorStatus(result)
+		setScannerEvidenceFailureKind(&evidence, scannerCommandErrorKind(result))
 		evidence.Decision = "review"
 		evidence.Reason = "zizmor unavailable"
 		evidence.Error = firstNonEmpty(result.Stderr, result.Stdout, scannerErrorText(result))
+		return evidence
+	}
+	if strings.TrimSpace(result.Stdout) != "" {
+		evidence.Status = plan.StatusError
+		evidence.Decision = "review"
+		evidence.Reason = "zizmor report parse failed"
+		evidence.ErrorKind = securityscanner.FailureParseFailure
+		evidence.Error = "scanner output was not valid zizmor JSON"
 		return evidence
 	}
 	return evidence
@@ -574,6 +605,7 @@ func runTrivyFilesystemScan(ctx context.Context, commandRunner commandRunner, ro
 		}
 		if result.Code != 0 || result.Err != nil {
 			evidence.Status = scannerCommandErrorStatus(result)
+			setScannerEvidenceFailureKind(&evidence, scannerCommandErrorKind(result))
 			evidence.Decision = "review"
 			evidence.Reason = "trivy completed with no parsed findings but returned an error"
 			evidence.Error = firstNonEmpty(result.Stderr, scannerErrorText(result))
@@ -582,9 +614,18 @@ func runTrivyFilesystemScan(ctx context.Context, commandRunner commandRunner, ro
 	}
 	if result.Code != 0 || result.Err != nil {
 		evidence.Status = scannerCommandErrorStatus(result)
+		setScannerEvidenceFailureKind(&evidence, scannerCommandErrorKind(result))
 		evidence.Decision = "review"
 		evidence.Reason = "trivy unavailable"
 		evidence.Error = firstNonEmpty(result.Stderr, result.Stdout, scannerErrorText(result))
+		return evidence
+	}
+	if strings.TrimSpace(result.Stdout) != "" {
+		evidence.Status = plan.StatusError
+		evidence.Decision = "review"
+		evidence.Reason = "trivy report parse failed"
+		evidence.ErrorKind = securityscanner.FailureParseFailure
+		evidence.Error = "scanner output was not valid trivy JSON"
 		return evidence
 	}
 	return evidence
@@ -731,6 +772,7 @@ func runGrypeDirectoryScan(ctx context.Context, commandRunner commandRunner, roo
 		}
 		if result.Code != 0 || result.Err != nil {
 			evidence.Status = scannerCommandErrorStatus(result)
+			setScannerEvidenceFailureKind(&evidence, scannerCommandErrorKind(result))
 			evidence.Decision = "review"
 			evidence.Reason = "grype completed with no parsed findings but returned an error"
 			evidence.Error = firstNonEmpty(result.Stderr, scannerErrorText(result))
@@ -739,9 +781,18 @@ func runGrypeDirectoryScan(ctx context.Context, commandRunner commandRunner, roo
 	}
 	if result.Code != 0 || result.Err != nil {
 		evidence.Status = scannerCommandErrorStatus(result)
+		setScannerEvidenceFailureKind(&evidence, scannerCommandErrorKind(result))
 		evidence.Decision = "review"
 		evidence.Reason = "grype unavailable"
 		evidence.Error = firstNonEmpty(result.Stderr, result.Stdout, scannerErrorText(result))
+		return evidence
+	}
+	if strings.TrimSpace(result.Stdout) != "" {
+		evidence.Status = plan.StatusError
+		evidence.Decision = "review"
+		evidence.Reason = "grype report parse failed"
+		evidence.ErrorKind = securityscanner.FailureParseFailure
+		evidence.Error = "scanner output was not valid grype JSON"
 		return evidence
 	}
 	return evidence
@@ -921,11 +972,24 @@ func hasGitHubWorkflowFiles(root string) bool {
 }
 
 func scannerCommandErrorStatus(result runner.Result) plan.Status {
-	detail := strings.ToLower(firstNonEmpty(result.Stderr, result.Stdout, scannerErrorText(result)))
-	if result.Code == 127 || strings.Contains(detail, "executable file not found") || strings.Contains(detail, "command not found") {
-		return plan.StatusUnavailable
+	status, _ := securityscanner.FailureStatusAndKind(result)
+	return status
+}
+
+func scannerCommandErrorKind(result runner.Result) string {
+	_, kind := securityscanner.FailureStatusAndKind(result)
+	return kind
+}
+
+func setScannerEvidenceFailureKind(evidence *scannerEvidence, kind string) {
+	if evidence == nil || strings.TrimSpace(kind) == "" {
+		return
 	}
-	return plan.StatusError
+	if evidence.Status == plan.StatusUnavailable {
+		evidence.UnavailableReason = kind
+		return
+	}
+	evidence.ErrorKind = kind
 }
 
 func scannerEvidenceReportStatus(current plan.Status, scanners []scannerEvidence) plan.Status {

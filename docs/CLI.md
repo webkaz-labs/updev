@@ -129,7 +129,7 @@ Global flags:
   and `--format json`; add global verbosity only when a concrete cross-command
   diagnostic need appears.
 - `updev version`, `updev --version`, and `updev -v` report the current
-  implemented release contract, currently `updev v0.7.10`. JSON output from
+  implemented release contract, currently `updev v0.7.11`. JSON output from
   `updev version --format json` includes SemVer parts and the stable/pre-stable
   contract label.
 - `updev support` and `updev doctor support` print the current support-level
@@ -465,6 +465,13 @@ fail; changed required JSON contracts return drift. JSON output includes a
 status, support label, and remediation. `updev doctor dependencies --ledger
 <file>` writes the ledger as a local JSON artifact for CI or release review
 without posting public issues by default.
+
+`updev security scan` and `updev security review` use the same scanner/native
+audit evidence vocabulary. JSON includes `unavailable_reason` for unavailable
+checks and `error_kind` for failed checks; text output shows the same value in
+the compact `issue` column. This distinguishes missing binaries, unsupported
+targets, skipped-by-scope audits, timeouts, rate limits, parse failures, and
+command errors without turning optional missing scanners into update failures.
 
 On Homebrew 6, doctor also reads `brew trust --json=v1` with
 `HOMEBREW_NO_INSTALL_FROM_API=1` and compares it with non-official tap, formula,

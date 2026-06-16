@@ -22,16 +22,17 @@ func TestPrintSecurityTextIncludesNativeAuditAttention(t *testing.T) {
 		Root:    "/repo",
 		Sources: []string{"provider-native-audit"},
 		Audits: []nativeAudit{{
-			Ecosystem: "npm",
-			Tool:      "npm",
-			Status:    plan.StatusUnavailable,
-			Decision:  "review",
-			Reason:    "npm audit does not support globals",
-			Error:     "EAUDITGLOBAL",
+			Ecosystem:         "npm",
+			Tool:              "npm",
+			Status:            plan.StatusUnavailable,
+			Decision:          "review",
+			Reason:            "npm audit does not support globals",
+			UnavailableReason: nativeaudit.FailureUnsupportedTarget,
+			Error:             "EAUDITGLOBAL",
 		}},
 	}, false)
 	got := buffer.String()
-	if !strings.Contains(got, "native audits") || !strings.Contains(got, "unavailable") || !strings.Contains(got, "globals") || !strings.Contains(got, "EAUDITGLOBAL") {
+	if !strings.Contains(got, "native audits") || !strings.Contains(got, "unavailable") || !strings.Contains(got, "unsupported-target") || !strings.Contains(got, "globals") || !strings.Contains(got, "EAUDITGLOBAL") {
 		t.Fatalf("expected native audit attention in text output, got %q", got)
 	}
 }
@@ -42,8 +43,18 @@ func TestRunNPMNativeAuditReportsGlobalUnsupported(t *testing.T) {
 		Stdout: `{"error":{"code":"EAUDITGLOBAL","summary":"npm audit does not support globals"}}`,
 	}}
 	audit := runNPMNativeAudit(context.Background(), fake)
-	if audit.Status != plan.StatusUnavailable || audit.Decision != "review" || !strings.Contains(audit.Reason, "globals") {
+	if audit.Status != plan.StatusUnavailable || audit.Decision != "review" || audit.UnavailableReason != nativeaudit.FailureUnsupportedTarget || !strings.Contains(audit.Reason, "globals") {
 		t.Fatalf("expected unsupported npm global audit, got %#v", audit)
+	}
+}
+
+func TestRunNPMNativeAuditReportsParseFailure(t *testing.T) {
+	fake := &fakeCommandRunner{result: runner.Result{
+		Stdout: `{not-json`,
+	}}
+	audit := runNPMNativeAudit(context.Background(), fake)
+	if audit.Status != plan.StatusError || audit.Decision != "review" || audit.ErrorKind != nativeaudit.FailureParseFailure {
+		t.Fatalf("expected npm parse failure evidence, got %#v", audit)
 	}
 }
 
@@ -193,7 +204,7 @@ func TestRunCargoNativeAuditReportsMissingCommand(t *testing.T) {
 		Stderr: "error: no such command: `audit`",
 	}}
 	audit := runCargoNativeAudit(context.Background(), fake, []securityPackage{{Ecosystem: "crates.io", BinaryPath: "/tmp/fd", PathState: "on-path"}})
-	if audit.Status != plan.StatusUnavailable || audit.Decision != "review" || !strings.Contains(audit.Error, "no such command") {
+	if audit.Status != plan.StatusUnavailable || audit.Decision != "review" || audit.UnavailableReason != nativeaudit.FailureMissingBinary || !strings.Contains(audit.Error, "no such command") {
 		t.Fatalf("expected unavailable cargo audit, got %#v", audit)
 	}
 }
@@ -216,7 +227,7 @@ func TestRunCargoNativeAuditReportsMissingBinaryContext(t *testing.T) {
 	t.Setenv("CARGO_HOME", filepath.Join(home, ".cargo"))
 	fake := &fakeCommandRunner{result: runner.Result{Stdout: `{}`}}
 	audit := runCargoNativeAudit(context.Background(), fake, []securityPackage{{Ecosystem: "crates.io", Package: "fd-find"}})
-	if audit.Status != plan.StatusUnavailable || audit.Decision != "review" || len(fake.calls) != 0 {
+	if audit.Status != plan.StatusUnavailable || audit.Decision != "review" || audit.UnavailableReason != nativeaudit.FailureSkippedByScope || len(fake.calls) != 0 {
 		t.Fatalf("expected unavailable cargo audit without running command, got %#v calls=%#v", audit, fake.calls)
 	}
 }
