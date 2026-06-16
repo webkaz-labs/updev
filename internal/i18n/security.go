@@ -84,6 +84,8 @@ var securityFloatReasonPatternsJA = []struct {
 
 var securityReasonPrefixesJA = []prefixTranslation{
 	{"GitHub release date unavailable before update:", "更新前に GitHub リリース日時を確認できません:"},
+	{"GitHub release/tag date unavailable before mise core update", "mise core 更新前に GitHub release/tag 日時を確認できません"},
+	{"GitHub release/tag date unavailable before mise update", "mise 更新前に GitHub release/tag 日時を確認できません"},
 	{"Homebrew metadata unavailable:", "Homebrew metadata を確認できません:"},
 	{"VS Code Marketplace metadata unavailable:", "VS Code Marketplace metadata を確認できません:"},
 	{"repository metadata unavailable:", "repository metadata を確認できません:"},
@@ -175,6 +177,7 @@ var securityReasonJA = map[string]string{
 	"OSV vulnerability match":                                                              "OSV vulnerability が一致しました",
 	"missing version for high-confidence ecosystem":                                        "高信頼 ecosystem 判定に必要な version がありません",
 	"unsupported mise backend ecosystem":                                                   "この mise backend ecosystem は自動照合に未対応です",
+	"mise pinned-version bump candidate passed release-age and provenance checks":          "mise の固定バージョン更新候補はリリース経過日数と配布元確認を通過しました",
 	"mise minimum_release_age held candidate before it appeared in normal outdated output": "mise minimum_release_age により、この候補は通常の更新候補に出る前に保留されています",
 	"no direct OSV ecosystem mapping":                                                      "OSV ecosystem への直接 mapping がありません",
 	"vscode extensions require marketplace advisory mapping":                               "VS Code extension は Marketplace advisory mapping が必要です",
@@ -190,6 +193,9 @@ var securityRemediationPrefixesJA = []prefixTranslation{
 
 var securityRemediationJA = map[string]string{
 	"wait until the release reaches the minimum age or allow temporarily by policy after review":                                               "リリースが最小経過日数に達するまで待つか、確認後に policy で一時的に許可してください",
+	"wait until mise minimum_release_age allows this candidate, or add a temporary policy allow after review":                                  "mise minimum_release_age がこの候補を許可するまで待つか、確認後に policy で一時的に許可してください",
+	"retry when GitHub metadata is reachable or review the upstream release manually before allowing":                                          "GitHub metadata に到達できるようになったら再試行するか、許可前に上流リリースを手動確認してください",
+	"retry when GitHub metadata is reachable or review the core runtime release manually before allowing":                                      "GitHub metadata に到達できるようになったら再試行するか、許可前に core runtime release を手動確認してください",
 	"review the upstream release manually; retry when GitHub release metadata is available or allow by policy":                                 "上流リリースを手動確認してください。GitHub metadata が取得できるようになったら再試行するか、policy で許可してください",
 	"review the cask source URL and add a temporary allow policy with reason and expiry if accepted":                                           "cask の source URL を確認し、許容する場合は理由と期限付きの一時 allow policy を追加してください",
 	"review the tap repository and add a temporary allow policy with reason and expiry if accepted":                                            "tap repository を確認し、許容する場合は理由と期限付きの一時 allow policy を追加してください",

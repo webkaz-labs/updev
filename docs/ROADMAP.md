@@ -31,22 +31,22 @@ history in git log, and keep the current/next release target in
 - Documentation source-of-truth guidance, canonical `docs/agent/` usage/skill
   files, tag-specific release notes, and focused `docs-check` drift coverage are
   implemented.
-- `updev v0.7.9` is the current preview contract: it keeps the `v0.6.x`
+- `updev v0.7.10` is the current preview contract: it keeps the `v0.6.x`
   Homebrew/mise provider gate and the `v0.7.3` support-label catalog, includes
   the `v0.7.5` P1 scalability refactor, the `v0.7.8` large command-package
-  reset, and the `v0.7.9` agent-friendly quality tooling patch. It keeps
-  `check` fast, adds slower `audit` evidence for release/scheduled reviews,
-  and tracks non-blocking `aislop` findings in `SOURCE-STRUCTURE.md`.
+  reset, the `v0.7.9` agent-friendly quality tooling patch, and the `v0.7.10`
+  provider evidence detail patch. It keeps `check` fast, adds slower `audit`
+  evidence for release/scheduled reviews, tracks non-blocking `aislop` findings
+  in `SOURCE-STRUCTURE.md`, and shows richer Homebrew/mise source, release-age,
+  and cache context in detail views.
 - `updev brewfile ...` and `brewfile` remain compatibility or low-level
   surfaces, not the primary human workflow.
 
 ## Near-Term Order
 
 1. Continue the broader `v0.7.x` workstream plan in
-   [RELEASE.md](RELEASE.md#next-v07x-workstream-plan) after `v0.7.9`. The order
-   is provider evidence quality, scanner hardening, then policy ergonomics.
-   Keep each slice small enough to validate and release as a patch if dogfood
-   risk is high.
+   [RELEASE.md](RELEASE.md#next-release-target-v0711). Pick the next patch
+   after dogfooding the v0.7.10 provider evidence detail improvements.
 2. Preserve TTY/report regression guardrails for the accepted `updev`,
    `updev last`, and `updev list` flows before making additional UX changes.
 3. Continue `v0.7.x` support-label dogfood without turning the catalog into list
@@ -110,7 +110,7 @@ patches:
 | 1 | Scalability refactor | `v0.7.5`: finish P1 by reducing `internal/cmd` below 50, splitting `manualinventory`, moving shared route state into `reviewui`, and auditing external CLI parser ownership. | Broad framework extraction, nested command subpackages that still own business logic, or provider evidence expansion before structure is unblocked. |
 | 2 | Architecture guardrail | `v0.7.7`: enforce `internal/cmd` production/test budgets separately so command sprawl cannot silently return. | Treat this as the full refactor or start provider feature growth immediately after a guardrail-only release. |
 | 3 | Required large refactor | `v0.7.8`: move report assembly, list/manual/backend view models, common routed TUI mechanics, and owner-specific tests out of `internal/cmd`; reduce production files to `<= 20` and tests to `<= 14`. | Docs-only, guardrail-only, cosmetic renames, broad framework extraction, or provider evidence expansion before the structure is actually thinner. |
-| 4 | Provider evidence quality | Improve Homebrew/mise held/review explanations with source URLs, release dates, cache age, and item-scoped commands. | Promote Linux/Windows or opaque mise/vfox paths based on weak evidence. |
+| 4 | Provider evidence quality | `v0.7.10`: improve Homebrew/mise held/review explanations with source URLs, release dates, cache age, and item-scoped commands. | Promote Linux/Windows or opaque mise/vfox paths based on weak evidence. |
 | 5 | Agent-friendly quality tooling | `v0.7.9`: keep the promoted Go CLI standard healthy by proving fast `check`, slower `audit`, and non-blocking agent-quality evidence stay low-noise in updev. | Make noisy SAST/style checks blocking before dogfood, or make every local `check` run slow vulnerability/AI-quality audits. |
 | 6 | Scanner hardening | Make explicit scanner/native-audit evidence more structured and bounded, with clear unavailable semantics. | Make slow or broad scanners part of the default update gate. |
 | 7 | Policy ergonomics | Add policy diagnostics and guided edit/renew/narrow flows where users already review security details. | Auto-post public issues or create broad permanent allow rules without explicit user intent. |

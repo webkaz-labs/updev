@@ -11,15 +11,14 @@ stays an integer schema contract. `v0.x` releases are public preview releases;
 
 ## Current Release
 
-The current implemented release is `updev v0.7.9`. `updev version`,
+The current implemented release is `updev v0.7.10`. `updev version`,
 `updev --version`, and `updev -v` report this command contract.
 
-`updev v0.7.9` is the agent-friendly quality tooling patch after the v0.7.8
-large refactor. It preserves the same supported macOS/Homebrew/mise preview
-scope, keeps provider log streaming outside the alternate-screen TUI, promotes
-the proven Go CLI quality-tooling subset into the shared standard, and keeps
-slower vulnerability, supply-chain, and agent-quality checks in the release or
-scheduled `audit` path.
+`updev v0.7.10` is the provider evidence quality patch after the v0.7.9
+quality-tooling release. It preserves the same supported
+macOS/Homebrew/mise preview scope, keeps provider log streaming outside the
+alternate-screen TUI, and makes held/review provider decisions easier to trust
+from text output, cached reports, and TUI detail rows.
 
 Current support promise:
 
@@ -36,48 +35,48 @@ Current support promise:
 Current release validation:
 
 - [x] `mise -C tools/updev run check`
-- [x] `mise -C tools/updev run audit`
 - [x] `mise -C tools/updev run docs-check`
 - [x] `git diff --check`
 - [x] `chezmoi apply --dry-run`
-- [x] `agent-quality` reports active error count `0` and records the known
-  `scanner_secret` false positive in `SOURCE-STRUCTURE.md`.
-- [x] `SOURCE-STRUCTURE.md` explains the remaining complexity findings and
-  promotion policy.
-- [x] `AGENTS.md` and `VALIDATION.md` explain the `check` vs `audit` split.
+- [x] Unit coverage proves Homebrew/mise evidence rows include source or cache
+  context where available.
+- [x] TUI/text detail coverage proves held/review rows expose release age,
+  source, cache, and next-action context without duplicating compact-list
+  metadata.
+- [x] Real-machine plain checks covered cached `last`, `list --details`, and
+  `updev --dry-run --plain --no-interactive`.
 
-## Next Release Planning
+## Next Release Target: v0.7.11
 
-The next `v0.7.x` patches should continue the roadmap after `v0.7.9` without
-making stable `v1.0.0` promises. Keep each slice small enough to validate and
-release independently.
+`updev v0.7.11` is not scoped yet. Pick the next small patch from
+[ROADMAP.md](ROADMAP.md#near-term-order) after dogfooding v0.7.10.
 
 Scope:
 
-1. **Provider evidence quality**
-   - Improve Homebrew/mise held/review explanations with source URLs, release
-     dates, cache age, and item-scoped commands.
-   - Keep opaque mise/vfox paths review-held unless the evidence resolver can
-     prove exact candidate release age and source identity.
-
-2. **Scanner hardening**
-   - Make explicit scanner/native-audit evidence more structured and bounded.
-   - Keep slow or broad scanners out of the default update gate.
-
-3. **Policy ergonomics**
-   - Add diagnostics and guided edit/renew/narrow flows where users already
-     review security details.
-   - Keep broad permanent allow rules behind explicit user intent.
+- Choose one cohesive patch-sized slice from provider evidence quality,
+  scanner hardening, policy ergonomics, or support-label dogfood.
+- Preserve the v0.7.10 evidence/detail parity and provider log streaming
+  invariants.
 
 Non-goals:
 
-- support-label promotion;
-- making broad complexity or agent-quality findings release-blocking;
-- replacing provider log streaming with Bubble Tea foreground process
-  execution.
+- stable `v1.0.0` promises;
+- broad scanner default expansion;
+- large architecture refactors without a focused release plan.
+
+Release-ready criteria:
+
+- [ ] `mise -C tools/updev run check`
+- [ ] `mise -C tools/updev run docs-check`
+- [ ] `git diff --check`
+- [ ] `chezmoi apply --dry-run`
+- [ ] Scope-specific tests and release notes exist.
 
 Released patch notes:
 
+- [v0.7.10](release-notes/v0.7.10.md): provider evidence quality patch with
+  richer Homebrew/mise release age, source, cache, and localized detail
+  evidence.
 - [v0.7.9](release-notes/v0.7.9.md): agent-friendly quality tooling patch with
   promoted Go CLI standard gates, slower audit checks, and non-blocking
   agent-quality evidence.

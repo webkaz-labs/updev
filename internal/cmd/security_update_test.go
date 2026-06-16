@@ -352,6 +352,57 @@ func TestSafetyHumanTextLocalizesReleaseAgeWarnings(t *testing.T) {
 	}
 }
 
+func TestSafetyFindingDetailsIncludeProviderEvidenceContext(t *testing.T) {
+	withDefaultLanguageForTest(t, "ja")
+	releasedAt := time.Now().Add(-24 * time.Hour).UTC().Format(time.RFC3339)
+	finding := safetyFinding{
+		Provider:          "brew",
+		Kind:              "cask",
+		Name:              "demo",
+		CurrentVersion:    "2.0.0",
+		Decision:          "hold",
+		Reason:            "candidate release is too new: age 1 days, minimum 3 days",
+		Remediation:       "wait until the release reaches the minimum age or allow temporarily by policy after review",
+		Source:            "homebrew cask api",
+		Tap:               "homebrew/cask",
+		Publisher:         "Example Inc.",
+		RepositoryURL:     "https://github.com/example/demo",
+		SupportURL:        "https://example.test/support",
+		Homepage:          "https://example.test",
+		URL:               "https://downloads.example-cdn.test/demo.zip",
+		HomepageHost:      "example.test",
+		URLHost:           "downloads.example-cdn.test",
+		ReleaseDate:       releasedAt,
+		ReleaseAgeDays:    1,
+		MinReleaseAgeDays: 3,
+		PublishedDate:     "2026-06-15T00:00:00Z",
+		LastUpdated:       "2026-06-15T01:00:00Z",
+		Evidence:          []string{"updev update safety cache: brew 12m old"},
+	}
+	report := updateReport{
+		Safety: []safetyGate{{
+			Provider: "brew",
+			Status:   plan.StatusHeld,
+			Findings: []safetyFinding{finding},
+		}},
+	}
+	row := safetyFindingDetailRow(report.Safety[0], finding)
+	metadata := strings.Join(row.Metadata, "\n")
+	for _, want := range []string{"source: homebrew cask api", "tap: homebrew/cask", "publisher: Example Inc.", "homepage host: example.test", "download host: downloads.example-cdn.test", "release age: 経過 1日 / 最小 3日", "cache: brew 12m 経過", "published: 2026-06-15T00:00:00Z", "last updated: 2026-06-15T01:00:00Z", "repository: https://github.com/example/demo", "support: https://example.test/support"} {
+		if !strings.Contains(metadata, want) {
+			t.Fatalf("expected detail metadata to include %q:\n%s", want, metadata)
+		}
+	}
+	var details bytes.Buffer
+	printSafetyFindingDetails(&details, report.Safety, false)
+	got := details.String()
+	for _, want := range []string{"source: homebrew cask api", "tap: homebrew/cask", "publisher: Example Inc.", "homepage host: example.test", "download host: downloads.example-cdn.test", "release age: 経過 1日 / 最小 3日", "cache: brew 12m 経過", "published: 2026-06-15T00:00:00Z", "last updated: 2026-06-15T01:00:00Z"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("expected plain details to include %q:\n%s", want, got)
+		}
+	}
+}
+
 func TestSecurityReviewTextLocalizesCandidateReasons(t *testing.T) {
 	withDefaultLanguageForTest(t, "ja")
 	report := securityReviewReport{

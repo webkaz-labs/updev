@@ -540,6 +540,37 @@ func TestListSecurityEvidenceShowsReleaseAgeAvailability(t *testing.T) {
 	}
 }
 
+func TestListSecurityEvidenceIncludesProviderContext(t *testing.T) {
+	withDefaultLanguageForTest(t, "ja")
+	detail := listSecurityEvidenceDetail(updateReport{Security: "strict"}, safetyGate{Provider: "brew", Status: plan.StatusHeld}, safetyFinding{
+		Provider:          "brew",
+		Kind:              "cask",
+		Name:              "demo",
+		Decision:          "review",
+		Reason:            "Homebrew cask download host differs from homepage host before update",
+		Source:            "homebrew cask api",
+		Tap:               "homebrew/cask",
+		Publisher:         "Example Inc.",
+		RepositoryURL:     "https://github.com/example/demo",
+		SupportURL:        "https://example.test/support",
+		Homepage:          "https://example.test",
+		URL:               "https://downloads.example-cdn.test/demo.zip",
+		HomepageHost:      "example.test",
+		URLHost:           "downloads.example-cdn.test",
+		ReleaseDate:       "2026-06-15T00:00:00Z",
+		ReleaseAgeDays:    1,
+		MinReleaseAgeDays: 3,
+		PublishedDate:     "2026-06-15T00:00:00Z",
+		LastUpdated:       "2026-06-15T01:00:00Z",
+		Evidence:          []string{"updev update safety cache: brew 12m old"},
+	})
+	for _, want := range []string{"リリース経過: 経過 1日 / 最小 3日", "キャッシュ: brew 12m 経過", "リリース日: 2026-06-15T00:00:00Z", "公開日: 2026-06-15T00:00:00Z", "最終更新: 2026-06-15T01:00:00Z", "source: homebrew cask api", "tap: homebrew/cask", "publisher: Example Inc.", "repository: https://github.com/example/demo", "support: https://example.test/support", "homepage host: example.test", "download host: downloads.example-cdn.test"} {
+		if !strings.Contains(detail, want) {
+			t.Fatalf("expected list security evidence detail to include %q:\n%s", want, detail)
+		}
+	}
+}
+
 func TestListHubRouterTogglesInstalledAndManualWithoutSubprogram(t *testing.T) {
 	report := listReport{
 		Status: plan.StatusOK,

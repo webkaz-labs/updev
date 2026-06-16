@@ -3934,11 +3934,17 @@ func safetyFindingDetailRow(gate safetyGate, finding safetyFinding) detailBrowse
 	metadata = appendDetailMeta(metadata, "support", finding.SupportURL)
 	metadata = appendDetailMeta(metadata, "homepage", finding.Homepage)
 	metadata = appendDetailMeta(metadata, "url", finding.URL)
+	metadata = appendDetailMeta(metadata, "homepage host", finding.HomepageHost)
+	metadata = appendDetailMeta(metadata, "download host", finding.URLHost)
 	metadata = appendDetailMeta(metadata, "trust", finding.TrustStatus)
 	metadata = appendDetailMeta(metadata, "trust target", finding.TrustTarget)
 	metadata = appendDetailMeta(metadata, "trust command", finding.TrustCommand)
 	metadata = appendDetailMeta(metadata, "trust command argv", joinCommand(finding.TrustCommandArgv))
 	metadata = appendDetailMeta(metadata, "release", finding.ReleaseDate)
+	metadata = appendDetailMeta(metadata, "release age", safetyFindingReleaseAgeSummary(finding))
+	metadata = appendDetailMeta(metadata, "published", finding.PublishedDate)
+	metadata = appendDetailMeta(metadata, "last updated", finding.LastUpdated)
+	metadata = appendDetailMeta(metadata, "cache", safetyFindingCacheEvidenceSummary(finding))
 	if versions := versionText(finding); versions != "" {
 		metadata = appendDetailMeta(metadata, "version", versions)
 	}
@@ -4154,7 +4160,13 @@ func printSafetyFindingDetails(w io.Writer, gates []safetyGate, color bool) {
 			printDetailLine(w, "support", finding.SupportURL, color)
 			printDetailLine(w, "homepage", finding.Homepage, color)
 			printDetailLine(w, "url", finding.URL, color)
+			printDetailLine(w, "homepage host", finding.HomepageHost, color)
+			printDetailLine(w, "download host", finding.URLHost, color)
 			printDetailLine(w, "release", finding.ReleaseDate, color)
+			printDetailLine(w, "release age", safetyFindingReleaseAgeSummary(finding), color)
+			printDetailLine(w, "published", finding.PublishedDate, color)
+			printDetailLine(w, "last updated", finding.LastUpdated, color)
+			printDetailLine(w, "cache", safetyFindingCacheEvidenceSummary(finding), color)
 			if len(finding.AdvisoryIDs) > 0 {
 				printDetailLine(w, "advisories", strings.Join(finding.AdvisoryIDs, ", "), color)
 			}
@@ -4183,6 +4195,42 @@ func versionText(finding safetyFinding) string {
 		parts = append(parts, finding.Version)
 	}
 	return strings.Join(parts, " ")
+}
+
+func safetyFindingReleaseAgeSummary(finding safetyFinding) string {
+	if finding.ReleaseAgeDays == 0 && finding.MinReleaseAgeDays == 0 {
+		return ""
+	}
+	if defaultLanguage() == "ja" {
+		if finding.MinReleaseAgeDays > 0 {
+			return fmt.Sprintf("経過 %d日 / 最小 %d日", finding.ReleaseAgeDays, finding.MinReleaseAgeDays)
+		}
+		return fmt.Sprintf("経過 %d日", finding.ReleaseAgeDays)
+	}
+	if finding.MinReleaseAgeDays > 0 {
+		return fmt.Sprintf("%d days old / minimum %d days", finding.ReleaseAgeDays, finding.MinReleaseAgeDays)
+	}
+	return fmt.Sprintf("%d days old", finding.ReleaseAgeDays)
+}
+
+func safetyFindingCacheEvidenceSummary(finding safetyFinding) string {
+	const prefix = "updev update safety cache:"
+	values := []string{}
+	for _, evidence := range finding.Evidence {
+		evidence = strings.TrimSpace(evidence)
+		if !strings.HasPrefix(strings.ToLower(evidence), prefix) {
+			continue
+		}
+		value := strings.TrimSpace(evidence[len(prefix):])
+		if value == "" {
+			continue
+		}
+		if defaultLanguage() == "ja" {
+			value = strings.TrimSuffix(value, " old") + " 経過"
+		}
+		values = append(values, value)
+	}
+	return strings.Join(values, "; ")
 }
 
 func printLastInventorySection(w io.Writer, report updateReport, opts lastReportOptions, color bool) {
