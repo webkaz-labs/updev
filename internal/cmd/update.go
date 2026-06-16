@@ -2433,7 +2433,7 @@ func runUpdateSummaryRouteDetail(report updateReport, route updateSummaryRoute, 
 	switch route.Base {
 	case updateHubActionLogs:
 		stateKey := "summary:logs:" + textui.FilterSummary(lastReportFilterMap(opts), filterSummaryKeys...)
-		state, err := runDetailBrowserWithState("updev update logs"+suffix, updateLogDetailRows(filtered), detailStates[stateKey], color)
+		state, err := runDetailBrowserWithState("updev update logs"+suffix, updateLogDetailRows(filtered), focusedRouteDetailState(), color)
 		if err != nil {
 			printLastUpdateLogs(os.Stdout, filtered, color)
 			return false
@@ -2442,7 +2442,7 @@ func runUpdateSummaryRouteDetail(report updateReport, route updateSummaryRoute, 
 		return state.Action == updevActionExit
 	case updateHubActionSecurity:
 		stateKey := "summary:security:" + textui.FilterSummary(lastReportFilterMap(opts), filterSummaryKeys...)
-		state, err := runDetailBrowserWithState("updev security details"+suffix, updateSecurityDetailRows(filtered), detailStates[stateKey], color)
+		state, err := runDetailBrowserWithState("updev security details"+suffix, updateSecurityDetailRowsForFilter(filtered, opts), focusedRouteDetailState(), color)
 		if err != nil {
 			printLastSecuritySection(os.Stdout, filtered, true, color)
 			return false
@@ -2460,7 +2460,7 @@ func runUpdateSummaryRouteDetail(report updateReport, route updateSummaryRoute, 
 		return action == updevActionExit
 	case updateHubActionInventoryDetails:
 		stateKey := "summary:inventory-details:" + textui.FilterSummary(lastReportFilterMap(opts), filterSummaryKeys...)
-		state, err := runDetailBrowserWithState("updev inventory details"+suffix, updateInventoryDetailRowsWithBackend(filtered, backendPlan), detailStates[stateKey], color)
+		state, err := runDetailBrowserWithState("updev inventory details"+suffix, updateInventoryDetailRowsWithBackend(filtered, backendPlan), focusedRouteDetailState(), color)
 		if err != nil {
 			printLastInventorySection(os.Stdout, filtered, lastReportOptions{section: "inventory", provider: route.Provider, query: route.Query, details: true}, color)
 			return false
@@ -4085,10 +4085,43 @@ func updateStepItemDetailRows(step updateStep) []detailBrowserRow {
 				"item: " + item,
 				"command: " + updateStepCommandText(step),
 			},
-			Actions: updateStepDetailActions(step),
+			Actions: updateStepItemDetailActions(step, item),
 		})
 	}
 	return rows
+}
+
+func updateStepItemDetailActions(step updateStep, item string) []detailBrowserAction {
+	actions := []detailBrowserAction{}
+	query := updateStepItemRouteQuery(item)
+	if query == "" {
+		return updateStepDetailActions(step)
+	}
+	if step.Name == miseBumpProvider {
+		actions = append(actions, detailBrowserAction{
+			Value:       updateSummaryRoute{Base: updateHubActionSecurity, Provider: step.Name, Query: query}.Encode(),
+			Label:       tr("open this bump candidate", "この bump 候補を開く"),
+			Description: tr("open security evidence for this mise bump item", "この mise bump item のセキュリティ根拠を開きます"),
+		})
+	} else if step.Status == plan.StatusHeld || strings.Contains(strings.ToLower(step.Reason), "security") {
+		actions = append(actions, detailBrowserAction{
+			Value:       updateSummaryRoute{Base: updateHubActionSecurity, Provider: step.Name, Query: query}.Encode(),
+			Label:       tr("open this security review", "このセキュリティ確認を開く"),
+			Description: tr("inspect held security evidence for this item", "この item の保留セキュリティ根拠を確認します"),
+		})
+	}
+	if len(actions) == 0 {
+		return updateStepDetailActions(step)
+	}
+	return actions
+}
+
+func updateStepItemRouteQuery(item string) string {
+	fields := strings.Fields(strings.TrimSpace(item))
+	if len(fields) == 0 {
+		return ""
+	}
+	return fields[0]
 }
 
 func updateStepDetailActions(step updateStep) []detailBrowserAction {
@@ -5295,7 +5328,11 @@ func (m updateHubRouterModel) handleAction(action string) (tea.Model, tea.Cmd) {
 	}
 	if route, ok := parseUpdateSummaryRoute(action); ok {
 		m.defaultAction = route.Base
-		m.showUpdateSummaryRoute(route)
+		returnAction := updateHubActionDashboard
+		if m.screen != updateHubRouterDashboard {
+			returnAction = m.currentAction()
+		}
+		m.showUpdateSummaryRouteWithReturn(route, returnAction)
 		return m, nil
 	}
 	if filter, ok := parseUpdateHubFilterAction(action); ok {
@@ -5678,21 +5715,25 @@ func (m updateHubRouterModel) initialDashboardFocusAction() string {
 }
 
 func (m *updateHubRouterModel) showUpdateSummaryRoute(route updateSummaryRoute) {
+	m.showUpdateSummaryRouteWithReturn(route, updateHubActionDashboard)
+}
+
+func (m *updateHubRouterModel) showUpdateSummaryRouteWithReturn(route updateSummaryRoute, returnAction string) {
 	opts := lastReportOptions{provider: route.Provider, query: route.Query}
 	filtered := filterUpdateReport(m.report, opts)
 	suffix := updateSummaryRouteTitleSuffix(route)
 	stateKey := updateSummaryRouteStateKey(route)
 	switch route.Base {
 	case updateHubActionLogs:
-		m.showDetail("updev update logs"+suffix, updateLogDetailRows(filtered), stateKey, updateHubActionDashboard)
+		m.showFocusedDetail("updev update logs"+suffix, updateLogDetailRows(filtered), stateKey, returnAction)
 	case updateHubActionSecurity:
-		m.showDetail("updev security details"+suffix, updateSecurityDetailRowsForFilter(filtered, opts), stateKey, updateHubActionDashboard)
+		m.showFocusedDetail("updev security details"+suffix, updateSecurityDetailRowsForFilter(filtered, opts), stateKey, returnAction)
 	case updateHubActionInventoryAll:
 		inventory := buildListReport(inventoryResult{Report: filtered.Inventory}, listOptions{provider: route.Provider, query: route.Query})
 		inventory.Evidence = addBackendListEvidence(inventory.Evidence, m.backendPlan)
-		m.showListFiltered("updev installed inventory"+suffix, inventory, stateKey, updateHubActionDashboard, listHubActionManual, listHubActionManual)
+		m.showListFiltered("updev installed inventory"+suffix, inventory, stateKey, returnAction, listHubActionManual, listHubActionManual)
 	case updateHubActionInventoryDetails:
-		m.showDetail("updev inventory details"+suffix, updateInventoryDetailRowsWithBackend(filtered, m.backendPlan), stateKey, updateHubActionDashboard)
+		m.showFocusedDetail("updev inventory details"+suffix, updateInventoryDetailRowsWithBackend(filtered, m.backendPlan), stateKey, returnAction)
 	default:
 		m.showDashboard(route.Base)
 	}
@@ -5724,8 +5765,7 @@ func (m *updateHubRouterModel) showListRouteDetail(route listRouteAction) {
 	if len(rows) == 0 {
 		rows = []detailBrowserRow{emptyRouteDetailRow(route)}
 	}
-	m.detailStates[stateKey] = initialRouteDetailState(m.detailStates[stateKey])
-	m.showDetail(routeDetailTitle(route), rows, stateKey, m.currentAction())
+	m.showFocusedDetail(routeDetailTitle(route), rows, stateKey, m.currentAction())
 }
 
 func (m updateHubRouterModel) listRouteRows(route listRouteAction) []detailBrowserRow {
@@ -5779,6 +5819,11 @@ func (m *updateHubRouterModel) showDetail(title string, rows []detailBrowserRow,
 	m.stateKey = stateKey
 	m.returnAction = returnAction
 	m.detail = model
+}
+
+func (m *updateHubRouterModel) showFocusedDetail(title string, rows []detailBrowserRow, stateKey string, returnAction string) {
+	m.detailStates[stateKey] = focusedRouteDetailState()
+	m.showDetail(title, rows, stateKey, returnAction)
 }
 
 func (m *updateHubRouterModel) showTable(title string, sections []toolSection, stateKey string, returnAction string) {

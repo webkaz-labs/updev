@@ -832,6 +832,9 @@ func TestUpdateDetailRowsExposeInventorySecurityAndLogs(t *testing.T) {
 	if logRows[1].Status != "held" || logRows[1].Summary != "demo held by policy" || len(logRows[1].Actions) != 1 {
 		t.Fatalf("expected second update detail row to be held item row with security action, got %#v", logRows[1])
 	}
+	if route, ok := parseUpdateSummaryRoute(logRows[1].Actions[0].Value); !ok || route.Base != updateHubActionSecurity || route.Provider != "brew" || route.Query != "demo" {
+		t.Fatalf("expected held item action to route directly to item security detail, route=%+v ok=%v action=%q", route, ok, logRows[1].Actions[0].Value)
+	}
 	providerLog := logRows[2]
 	logMetadata := strings.Join(providerLog.Metadata, " ")
 	if !strings.Contains(logMetadata, "stdout: kept current version") || !strings.Contains(logMetadata, "updated: jq") || !strings.Contains(logMetadata, "deferred: demo held") {
@@ -1286,6 +1289,80 @@ func TestUpdateSummarySecurityRoutesOpenNonEmptyDetails(t *testing.T) {
 		if rows := updateSecurityDetailRowsForFilter(filtered, opts); len(rows) == 0 {
 			t.Fatalf("expected non-empty security detail rows for route %+v", route)
 		}
+	}
+}
+
+func TestUpdateHubSummaryRouteOpensFocusedDetail(t *testing.T) {
+	report := updateReport{Security: "strict", Safety: []safetyGate{{
+		Provider: "mise-bump",
+		Status:   plan.StatusHeld,
+		Findings: []safetyFinding{{
+			Provider: "mise-bump",
+			Kind:     "tool",
+			Name:     "cloudflared",
+			Decision: "hold",
+			Reason:   "release age",
+		}},
+	}}}
+	route := updateSummaryRoute{Base: updateHubActionSecurity, Provider: "mise-bump", Query: "cloudflared"}
+	model := newUpdateHubRouterModel(report, inventoryPlanReport{}, false, backendPlanReport{}, false, updateHubActionDashboard, updateHubActionDashboard, false)
+	model.detailStates[updateSummaryRouteStateKey(route)] = detailBrowserState{
+		Selected: 3,
+		Offset:   3,
+		Expanded: map[int]bool{3: true},
+	}
+
+	model.showUpdateSummaryRoute(route)
+
+	if model.screen != updateHubRouterDetail {
+		t.Fatalf("expected summary route to open detail screen, got %q", model.screen)
+	}
+	if model.detail.State.Selected != 0 || model.detail.State.Offset != 0 || !model.detail.State.Expanded[0] {
+		t.Fatalf("expected focused detail state to reset to expanded first row, got %#v", model.detail.State)
+	}
+	if len(model.detail.Rows) != 1 || !strings.Contains(model.detail.Rows[0].Title, "cloudflared") {
+		t.Fatalf("expected focused cloudflared security row, got %#v", model.detail.Rows)
+	}
+}
+
+func TestUpdateHubItemActionReturnsToOriginDetail(t *testing.T) {
+	report := updateReport{
+		Status: plan.StatusHeld,
+		Steps: []updateStep{{
+			Name:         miseBumpProvider,
+			Status:       plan.StatusHeld,
+			Reason:       "security review required",
+			SkippedItems: []string{"cloudflared 2026.5.0 -> 2026.5.2"},
+		}},
+		Safety: []safetyGate{{
+			Provider: miseBumpProvider,
+			Status:   plan.StatusHeld,
+			Findings: []safetyFinding{{
+				Provider: miseBumpProvider,
+				Kind:     "tool",
+				Name:     "cloudflared",
+				Decision: "hold",
+				Reason:   "release age",
+			}},
+		}},
+	}
+	logRoute := updateSummaryRoute{Base: updateHubActionLogs, Provider: miseBumpProvider, Query: "cloudflared"}
+	model := newUpdateHubRouterModel(report, inventoryPlanReport{}, false, backendPlanReport{}, false, updateHubActionDashboard, updateHubActionDashboard, false)
+	model.showUpdateSummaryRoute(logRoute)
+	if len(model.detail.Rows) == 0 || len(model.detail.Rows[0].Actions) == 0 {
+		t.Fatalf("expected focused log item row with action, got %#v", model.detail.Rows)
+	}
+
+	updated, _ := model.handleAction(model.detail.Rows[0].Actions[0].Value)
+	model = updated.(updateHubRouterModel)
+	if model.screen != updateHubRouterDetail || model.returnAction != updateSummaryRouteStateKey(logRoute) {
+		t.Fatalf("expected item action to open security detail with log route return, screen=%q return=%q", model.screen, model.returnAction)
+	}
+
+	updated, _ = model.handleAction(updevActionBack)
+	model = updated.(updateHubRouterModel)
+	if model.screen != updateHubRouterDetail || model.stateKey != updateSummaryRouteStateKey(logRoute) {
+		t.Fatalf("expected Back from item security detail to return to origin logs, screen=%q state=%q", model.screen, model.stateKey)
 	}
 }
 

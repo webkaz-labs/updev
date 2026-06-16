@@ -64,6 +64,24 @@ func TestDetailBrowserModelTogglesAndRendersExpandedDetail(t *testing.T) {
 	}
 }
 
+func TestDetailBrowserActionLineCompactsLongEvidenceDescriptions(t *testing.T) {
+	line := detailBrowserActionLine(0, detailBrowserAction{
+		Value:       "security",
+		Label:       "security review",
+		Description: "brew/brew mise: hold: release too new; cache: brew 3h; source: /Users/example/Brewfile; download: https://example.com/archive.tar.gz",
+	}, false, true)
+	for _, want := range []string{"> action 1 [press a or 1]: security review", "release too new"} {
+		if !strings.Contains(line, want) {
+			t.Fatalf("expected compact action line to contain %q:\n%s", want, line)
+		}
+	}
+	for _, unwanted := range []string{"source:", "download:"} {
+		if strings.Contains(line, unwanted) {
+			t.Fatalf("expected compact action line to avoid %q:\n%s", unwanted, line)
+		}
+	}
+}
+
 func TestDetailBrowserKeepsExpandedDetailVisibleNearBottom(t *testing.T) {
 	rows := []detailBrowserRow{}
 	for i := 0; i < 12; i++ {
