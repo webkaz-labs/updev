@@ -1,9 +1,11 @@
 package securityscanner
 
 import (
+	"errors"
 	"testing"
 
 	"github.com/webkaz-labs/updev/internal/plan"
+	"github.com/webkaz-labs/updev/internal/runner"
 )
 
 func TestFindingSourceIDAndDetail(t *testing.T) {
@@ -151,5 +153,53 @@ func TestHasFindingAttention(t *testing.T) {
 	}
 	if !HasFindingAttention([]Evidence{{Findings: []Finding{{Decision: "hold"}}}}) {
 		t.Fatal("hold finding should need attention")
+	}
+}
+
+func TestFailureStatusAndKind(t *testing.T) {
+	tests := []struct {
+		name       string
+		result     runner.Result
+		wantStatus plan.Status
+		wantKind   string
+	}{
+		{
+			name:       "missing binary",
+			result:     runner.Result{Code: 127, Stderr: "scanner: command not found"},
+			wantStatus: plan.StatusUnavailable,
+			wantKind:   FailureMissingBinary,
+		},
+		{
+			name:       "timeout",
+			result:     runner.Result{Err: errors.New("context deadline exceeded")},
+			wantStatus: plan.StatusUnavailable,
+			wantKind:   FailureTimeout,
+		},
+		{
+			name:       "rate limit",
+			result:     runner.Result{Code: 1, Stderr: "GitHub API rate limit exceeded"},
+			wantStatus: plan.StatusUnavailable,
+			wantKind:   FailureRateLimit,
+		},
+		{
+			name:       "unsupported target",
+			result:     runner.Result{Code: 1, Stderr: "no supported files found"},
+			wantStatus: plan.StatusUnavailable,
+			wantKind:   FailureUnsupportedTarget,
+		},
+		{
+			name:       "command error",
+			result:     runner.Result{Code: 2, Stderr: "scanner failed"},
+			wantStatus: plan.StatusError,
+			wantKind:   FailureCommandError,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gotStatus, gotKind := FailureStatusAndKind(tt.result)
+			if gotStatus != tt.wantStatus || gotKind != tt.wantKind {
+				t.Fatalf("FailureStatusAndKind() = %s/%s, want %s/%s", gotStatus, gotKind, tt.wantStatus, tt.wantKind)
+			}
+		})
 	}
 }

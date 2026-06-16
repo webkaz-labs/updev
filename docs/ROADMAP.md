@@ -31,22 +31,26 @@ history in git log, and keep the current/next release target in
 - Documentation source-of-truth guidance, canonical `docs/agent/` usage/skill
   files, tag-specific release notes, and focused `docs-check` drift coverage are
   implemented.
-- `updev v0.7.10` is the current preview contract: it keeps the `v0.6.x`
+- `updev v0.7.11` is the current preview contract: it keeps the `v0.6.x`
   Homebrew/mise provider gate and the `v0.7.3` support-label catalog, includes
   the `v0.7.5` P1 scalability refactor, the `v0.7.8` large command-package
   reset, the `v0.7.9` agent-friendly quality tooling patch, and the `v0.7.10`
-  provider evidence detail patch. It keeps `check` fast, adds slower `audit`
-  evidence for release/scheduled reviews, tracks non-blocking `aislop` findings
-  in `SOURCE-STRUCTURE.md`, and shows richer Homebrew/mise source, release-age,
-  and cache context in detail views.
+  provider evidence detail patch, and the `v0.7.11` scanner hardening patch. It
+  keeps `check` fast, adds slower `audit` evidence for release/scheduled
+  reviews, tracks non-blocking `aislop` findings in `SOURCE-STRUCTURE.md`,
+  shows richer Homebrew/mise source, release-age, and cache context in detail
+  views, and classifies scanner/native-audit unavailable/error states with
+  structured issue fields.
 - `updev brewfile ...` and `brewfile` remain compatibility or low-level
   surfaces, not the primary human workflow.
 
 ## Near-Term Order
 
 1. Continue the broader `v0.7.x` workstream plan in
-   [RELEASE.md](RELEASE.md#next-release-target-v0711). Pick the next patch
-   after dogfooding the v0.7.10 provider evidence detail improvements.
+   [RELEASE.md](RELEASE.md#next-release-target-v0712). `v0.7.12` is the policy
+   ergonomics patch: diagnostics for existing rules, guided maintenance, and
+   text/JSON/TUI parity without public issue automation or broad permanent
+   allows.
 2. Preserve TTY/report regression guardrails for the accepted `updev`,
    `updev last`, and `updev list` flows before making additional UX changes.
 3. Continue `v0.7.x` support-label dogfood without turning the catalog into list
@@ -68,9 +72,9 @@ history in git log, and keep the current/next release target in
    non-blocking audit are implemented. Use the baseline in
    [SOURCE-STRUCTURE.md](SOURCE-STRUCTURE.md#agent-quality-audit-ledger) to
    decide which finding classes are worth cleanup or eventual blocking.
-7. Continue scanner hardening after OSV-Scanner, gitleaks, zizmor, Trivy, and
-   Grype. Keep Syft and Prowler explicit future commands, not default package
-   update gates.
+7. Continue scanner hardening after `v0.7.11` only where it improves bounded,
+   explicit evidence. Keep Syft and Prowler explicit future commands, not
+   default package update gates.
 8. Extend provider contract drift checks beyond the local compatibility ledger
    only when public issue automation has explicit credentials, repository
    ownership, and posting policy.
@@ -112,8 +116,8 @@ patches:
 | 3 | Required large refactor | `v0.7.8`: move report assembly, list/manual/backend view models, common routed TUI mechanics, and owner-specific tests out of `internal/cmd`; reduce production files to `<= 20` and tests to `<= 14`. | Docs-only, guardrail-only, cosmetic renames, broad framework extraction, or provider evidence expansion before the structure is actually thinner. |
 | 4 | Provider evidence quality | `v0.7.10`: improve Homebrew/mise held/review explanations with source URLs, release dates, cache age, and item-scoped commands. | Promote Linux/Windows or opaque mise/vfox paths based on weak evidence. |
 | 5 | Agent-friendly quality tooling | `v0.7.9`: keep the promoted Go CLI standard healthy by proving fast `check`, slower `audit`, and non-blocking agent-quality evidence stay low-noise in updev. | Make noisy SAST/style checks blocking before dogfood, or make every local `check` run slow vulnerability/AI-quality audits. |
-| 6 | Scanner hardening | Make explicit scanner/native-audit evidence more structured and bounded, with clear unavailable semantics. | Make slow or broad scanners part of the default update gate. |
-| 7 | Policy ergonomics | Add policy diagnostics and guided edit/renew/narrow flows where users already review security details. | Auto-post public issues or create broad permanent allow rules without explicit user intent. |
+| 6 | Scanner hardening | `v0.7.11`: make explicit scanner/native-audit evidence more structured and bounded, with clear unavailable semantics and report/TUI parity. | Make slow or broad scanners part of the default update gate. |
+| 7 | Policy ergonomics | `v0.7.12`: add policy diagnostics and guided edit/renew/narrow flows where users already review security details. | Auto-post public issues or create broad permanent allow rules without explicit user intent. |
 
 Every workstream must preserve the same invariants:
 

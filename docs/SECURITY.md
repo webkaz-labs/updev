@@ -353,7 +353,10 @@ External advisory matching keeps confidence explicit:
   unavailable evidence until a stable native command is chosen.
 - External scanners are additive: OSV-Scanner and gitleaks run by default when
   available, zizmor runs for GitHub Actions workflows, and Trivy/Grype are
-  opt-in.
+  opt-in. Scanner/native-audit evidence classifies missing binaries,
+  unsupported targets, skipped-by-scope checks, timeouts, rate limits, parse
+  failures, and command errors with structured `unavailable_reason` or
+  `error_kind` fields.
 - Homebrew scan/gate covers formula/cask metadata, cask URL/homepage
   provenance, tap posture, URL casks, disabled/deprecated metadata,
   release-age evidence where GitHub source data is available, curated advisory
@@ -376,8 +379,8 @@ remaining buckets are:
 
 - broaden advisory coverage and curated mappings;
 - add provider-native audits where identities are reliable;
-- improve lockfile/SBOM/scanner hardening without making slow scanners default
-  update gates;
+- improve lockfile/SBOM scanner coverage after the explicit scanner evidence
+  contract is stable;
 - harden Homebrew release-age, tap/cask provenance, URL cask warnings, and
   skipped/held reporting;
 - harden VS Code extension update gates while keeping VS Code opt-in;

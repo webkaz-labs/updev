@@ -10,20 +10,32 @@ import (
 	"github.com/webkaz-labs/updev/internal/securityreason"
 )
 
+const (
+	FailureMissingBinary     = "missing-binary"
+	FailureUnsupportedTarget = "unsupported-target"
+	FailureSkippedByScope    = "skipped-by-scope"
+	FailureTimeout           = "timeout"
+	FailureRateLimit         = "rate-limit"
+	FailureParseFailure      = "parse-failure"
+	FailureCommandError      = "command-error"
+)
+
 type Evidence struct {
-	Provider        string            `json:"provider"`
-	Ecosystem       string            `json:"ecosystem"`
-	Tool            string            `json:"tool"`
-	Command         []string          `json:"command,omitempty"`
-	Target          string            `json:"target,omitempty"`
-	Status          plan.Status       `json:"status"`
-	Decision        string            `json:"decision"`
-	Reason          string            `json:"reason,omitempty"`
-	ReasonCode      string            `json:"reason_code,omitempty"`
-	ReasonArgs      map[string]string `json:"reason_args,omitempty"`
-	AdvisoryCount   int               `json:"advisory_count,omitempty"`
-	Vulnerabilities *Counts           `json:"vulnerabilities,omitempty"`
-	Error           string            `json:"error,omitempty"`
+	Provider          string            `json:"provider"`
+	Ecosystem         string            `json:"ecosystem"`
+	Tool              string            `json:"tool"`
+	Command           []string          `json:"command,omitempty"`
+	Target            string            `json:"target,omitempty"`
+	Status            plan.Status       `json:"status"`
+	Decision          string            `json:"decision"`
+	Reason            string            `json:"reason,omitempty"`
+	ReasonCode        string            `json:"reason_code,omitempty"`
+	ReasonArgs        map[string]string `json:"reason_args,omitempty"`
+	UnavailableReason string            `json:"unavailable_reason,omitempty"`
+	ErrorKind         string            `json:"error_kind,omitempty"`
+	AdvisoryCount     int               `json:"advisory_count,omitempty"`
+	Vulnerabilities   *Counts           `json:"vulnerabilities,omitempty"`
+	Error             string            `json:"error,omitempty"`
 }
 
 func ReportStatus(current plan.Status, audits []Evidence) plan.Status {
@@ -71,6 +83,7 @@ func FromNPMReport(audit Evidence, report NPMReport, unavailableReason string, v
 		audit.Decision = "review"
 		audit.Reason = firstNonEmpty(report.Error.Summary, unavailableReason)
 		audit.Error = firstNonEmpty(report.Error.Detail, report.Error.Code)
+		setAuditFailureKind(&audit, NPMErrorKind(report.Error.Code))
 		return audit
 	}
 	audit.AdvisoryCount = len(report.Vulnerabilities)
@@ -96,6 +109,7 @@ func FromGenericReport(audit Evidence, report GenericReport, unavailableReason s
 		audit.Decision = "review"
 		audit.Reason = firstNonEmpty(report.Error.Summary, unavailableReason)
 		audit.Error = firstNonEmpty(report.Error.Detail, report.Error.Code)
+		setAuditFailureKind(&audit, NPMErrorKind(report.Error.Code))
 		return audit
 	}
 	counts := report.Vulnerable
@@ -224,51 +238,119 @@ func NPMErrorStatus(code string) plan.Status {
 	return plan.StatusError
 }
 
+func NPMErrorKind(code string) string {
+	switch strings.ToUpper(strings.TrimSpace(code)) {
+	case "EAUDITGLOBAL":
+		return FailureUnsupportedTarget
+	case "ENOLOCK":
+		return FailureUnsupportedTarget
+	default:
+		return FailureCommandError
+	}
+}
+
 func PackageManagerErrorStatus(result runner.Result) plan.Status {
-	detail := strings.ToLower(runner.ResultDetail(result, ErrorText(result), runner.ResultDetailOption{}))
+	status, _ := PackageManagerFailureStatusAndKind(result)
+	return status
+}
+
+func PackageManagerFailureStatusAndKind(result runner.Result) (plan.Status, string) {
+	detail := normalizedResultDetail(result)
 	if strings.Contains(detail, "no package.json") ||
 		strings.Contains(detail, "no lockfile") ||
 		strings.Contains(detail, "lockfile not found") ||
-		strings.Contains(detail, "executable file not found") ||
-		strings.Contains(detail, "command not found") ||
 		strings.Contains(detail, "file does not exist") ||
 		strings.Contains(detail, "no such file") {
-		return plan.StatusUnavailable
+		return plan.StatusUnavailable, FailureUnsupportedTarget
 	}
-	return plan.StatusError
+	if result.Code == 127 ||
+		strings.Contains(detail, "executable file not found") ||
+		strings.Contains(detail, "command not found") {
+		return plan.StatusUnavailable, FailureMissingBinary
+	}
+	if strings.Contains(detail, "deadline exceeded") ||
+		strings.Contains(detail, "timed out") ||
+		strings.Contains(detail, "timeout") {
+		return plan.StatusUnavailable, FailureTimeout
+	}
+	if strings.Contains(detail, "rate limit") ||
+		strings.Contains(detail, "too many requests") {
+		return plan.StatusUnavailable, FailureRateLimit
+	}
+	return plan.StatusError, FailureCommandError
 }
 
 func CargoErrorStatus(result runner.Result) plan.Status {
-	detail := strings.ToLower(runner.ResultDetail(result, ErrorText(result), runner.ResultDetailOption{}))
+	status, _ := CargoFailureStatusAndKind(result)
+	return status
+}
+
+func CargoFailureStatusAndKind(result runner.Result) (plan.Status, string) {
+	detail := normalizedResultDetail(result)
 	if strings.Contains(detail, "no such command") ||
 		strings.Contains(detail, "no such subcommand") ||
-		strings.Contains(detail, "install cargo-audit") ||
-		strings.Contains(detail, "cargo.lock") {
-		return plan.StatusUnavailable
+		strings.Contains(detail, "install cargo-audit") {
+		return plan.StatusUnavailable, FailureMissingBinary
 	}
-	return plan.StatusError
+	if strings.Contains(detail, "cargo.lock") ||
+		strings.Contains(detail, "no such file") ||
+		strings.Contains(detail, "file does not exist") {
+		return plan.StatusUnavailable, FailureUnsupportedTarget
+	}
+	if strings.Contains(detail, "deadline exceeded") ||
+		strings.Contains(detail, "timed out") ||
+		strings.Contains(detail, "timeout") {
+		return plan.StatusUnavailable, FailureTimeout
+	}
+	return plan.StatusError, FailureCommandError
 }
 
 func PipErrorStatus(result runner.Result) plan.Status {
-	detail := strings.ToLower(runner.ResultDetail(result, ErrorText(result), runner.ResultDetailOption{}))
-	if strings.Contains(detail, "executable file not found") ||
-		strings.Contains(detail, "command not found") ||
-		strings.Contains(detail, "file does not exist") ||
-		strings.Contains(detail, "no such file") {
-		return plan.StatusUnavailable
+	status, _ := PipFailureStatusAndKind(result)
+	return status
+}
+
+func PipFailureStatusAndKind(result runner.Result) (plan.Status, string) {
+	detail := normalizedResultDetail(result)
+	if result.Code == 127 ||
+		strings.Contains(detail, "executable file not found") ||
+		strings.Contains(detail, "command not found") {
+		return plan.StatusUnavailable, FailureMissingBinary
 	}
-	return plan.StatusError
+	if strings.Contains(detail, "file does not exist") ||
+		strings.Contains(detail, "no such file") {
+		return plan.StatusUnavailable, FailureUnsupportedTarget
+	}
+	if strings.Contains(detail, "deadline exceeded") ||
+		strings.Contains(detail, "timed out") ||
+		strings.Contains(detail, "timeout") {
+		return plan.StatusUnavailable, FailureTimeout
+	}
+	return plan.StatusError, FailureCommandError
 }
 
 func GovulncheckErrorStatus(result runner.Result) plan.Status {
-	detail := strings.ToLower(runner.ResultDetail(result, ErrorText(result), runner.ResultDetailOption{}))
-	if strings.Contains(detail, "executable file not found") ||
-		strings.Contains(detail, "command not found") ||
-		strings.Contains(detail, "file does not exist") ||
-		strings.Contains(detail, "no such file") {
-		return plan.StatusUnavailable
+	status, _ := GovulncheckFailureStatusAndKind(result)
+	return status
+}
+
+func GovulncheckFailureStatusAndKind(result runner.Result) (plan.Status, string) {
+	detail := normalizedResultDetail(result)
+	if result.Code == 127 ||
+		strings.Contains(detail, "executable file not found") ||
+		strings.Contains(detail, "command not found") {
+		return plan.StatusUnavailable, FailureMissingBinary
 	}
-	return plan.StatusError
+	if strings.Contains(detail, "file does not exist") ||
+		strings.Contains(detail, "no such file") {
+		return plan.StatusUnavailable, FailureUnsupportedTarget
+	}
+	if strings.Contains(detail, "deadline exceeded") ||
+		strings.Contains(detail, "timed out") ||
+		strings.Contains(detail, "timeout") {
+		return plan.StatusUnavailable, FailureTimeout
+	}
+	return plan.StatusError, FailureCommandError
 }
 
 func ErrorText(result runner.Result) string {
@@ -289,6 +371,21 @@ func setVulnerabilityReason(audit *Evidence, text string) {
 	audit.Reason = reason.Text
 	audit.ReasonCode = reason.Code
 	audit.ReasonArgs = reason.Args
+}
+
+func setAuditFailureKind(audit *Evidence, kind string) {
+	if audit == nil || kind == "" {
+		return
+	}
+	if audit.Status == plan.StatusUnavailable {
+		audit.UnavailableReason = kind
+		return
+	}
+	audit.ErrorKind = kind
+}
+
+func normalizedResultDetail(result runner.Result) string {
+	return strings.ToLower(runner.ResultDetail(result, ErrorText(result), runner.ResultDetailOption{}))
 }
 
 func firstNonEmpty(values ...string) string {
