@@ -1,6 +1,9 @@
 package i18n
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestNormalizeJapaneseLocales(t *testing.T) {
 	for _, value := range []string{"ja", "ja_JP.UTF-8", "ja-JP", "Japanese", "日本語"} {
@@ -33,6 +36,14 @@ func TestLocalizedSecurityReason(t *testing.T) {
 	if got != "repository is archived" {
 		t.Fatalf("expected English reason to remain stable, got %q", got)
 	}
+	got = LocalizedSecurityReason(LangJapanese, "GitHub release/tag date unavailable before mise update")
+	if !strings.Contains(got, "mise 更新前に GitHub release/tag 日時を確認できません") {
+		t.Fatalf("expected localized mise metadata reason, got %q", got)
+	}
+	got = LocalizedSecurityReason(LangJapanese, "mise pinned-version bump candidate passed release-age and provenance checks")
+	if !strings.Contains(got, "固定バージョン更新候補") {
+		t.Fatalf("expected localized mise bump allow reason, got %q", got)
+	}
 }
 
 func TestLocalizedSecurityRemediation(t *testing.T) {
@@ -43,5 +54,9 @@ func TestLocalizedSecurityRemediation(t *testing.T) {
 	got = LocalizedSecurityRemediation(LangJapanese, "update left-pad in package-lock.json to fixed version: 1.2.3; then rerun osv-scanner")
 	if got == "" || got == "update left-pad in package-lock.json to fixed version: 1.2.3; then rerun osv-scanner" {
 		t.Fatalf("expected scanner remediation to gain Japanese guidance, got %q", got)
+	}
+	got = LocalizedSecurityRemediation(LangJapanese, "wait until mise minimum_release_age allows this candidate, or add a temporary policy allow after review")
+	if !strings.Contains(got, "mise minimum_release_age がこの候補を許可するまで") {
+		t.Fatalf("expected localized mise minimum age remediation, got %q", got)
 	}
 }
