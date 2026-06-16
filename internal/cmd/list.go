@@ -1830,13 +1830,14 @@ func listSecurityEvidenceDetail(report updateReport, gate safetyGate, finding sa
 		decision = "security review"
 	}
 	reason := strings.TrimSpace(localizedSafetyReasonWithReleaseAge(finding))
+	context := listSecurityEvidenceContext(finding)
 	if report.Security == "strict" && gate.Status == plan.StatusHeld && securityDecisionNeedsAttention(decision) {
 		if strings.EqualFold(decision, "hold") || strings.EqualFold(decision, "held") {
-			return listEvidenceDetailWithReason(decision, reason)
+			return listEvidenceDetailWithContext(listEvidenceDetailWithReason(decision, reason), context)
 		}
-		return listEvidenceDetailWithReason("held (decision: "+decision+")", reason)
+		return listEvidenceDetailWithContext(listEvidenceDetailWithReason("held (decision: "+decision+")", reason), context)
 	}
-	return listEvidenceDetailWithReason(decision, reason)
+	return listEvidenceDetailWithContext(listEvidenceDetailWithReason(decision, reason), context)
 }
 
 func listEvidenceDetailWithReason(detail string, reason string) string {
@@ -1846,6 +1847,68 @@ func listEvidenceDetailWithReason(detail string, reason string) string {
 		return detail
 	}
 	return detail + ": " + oneLine(reason)
+}
+
+func listEvidenceDetailWithContext(detail string, context []string) string {
+	detail = strings.TrimSpace(detail)
+	if len(context) == 0 {
+		return detail
+	}
+	context = nonEmptyStrings(context...)
+	if len(context) == 0 {
+		return detail
+	}
+	if detail == "" {
+		return strings.Join(context, "; ")
+	}
+	return detail + "; " + strings.Join(context, "; ")
+}
+
+func listSecurityEvidenceContext(finding safetyFinding) []string {
+	lines := []string{}
+	if releaseAge := safetyFindingReleaseAgeSummary(finding); releaseAge != "" {
+		lines = append(lines, tr("release age: ", "リリース経過: ")+releaseAge)
+	}
+	if cache := safetyFindingCacheEvidenceSummary(finding); cache != "" {
+		lines = append(lines, tr("cache: ", "キャッシュ: ")+cache)
+	}
+	if finding.ReleaseDate != "" {
+		lines = append(lines, tr("release date: ", "リリース日: ")+finding.ReleaseDate)
+	}
+	if finding.PublishedDate != "" {
+		lines = append(lines, tr("published: ", "公開日: ")+finding.PublishedDate)
+	}
+	if finding.LastUpdated != "" {
+		lines = append(lines, tr("last updated: ", "最終更新: ")+finding.LastUpdated)
+	}
+	if finding.Source != "" {
+		lines = append(lines, tr("source: ", "source: ")+finding.Source)
+	}
+	if finding.Tap != "" {
+		lines = append(lines, tr("tap: ", "tap: ")+finding.Tap)
+	}
+	if finding.Publisher != "" {
+		lines = append(lines, tr("publisher: ", "publisher: ")+finding.Publisher)
+	}
+	if finding.RepositoryURL != "" {
+		lines = append(lines, tr("repository: ", "repository: ")+finding.RepositoryURL)
+	}
+	if finding.SupportURL != "" {
+		lines = append(lines, tr("support: ", "support: ")+finding.SupportURL)
+	}
+	if finding.Homepage != "" {
+		lines = append(lines, tr("homepage: ", "homepage: ")+finding.Homepage)
+	}
+	if finding.URL != "" {
+		lines = append(lines, tr("download: ", "download: ")+finding.URL)
+	}
+	if finding.HomepageHost != "" {
+		lines = append(lines, tr("homepage host: ", "homepage host: ")+finding.HomepageHost)
+	}
+	if finding.URLHost != "" {
+		lines = append(lines, tr("download host: ", "download host: ")+finding.URLHost)
+	}
+	return lines
 }
 
 func addBackendListEvidence(index plan.EvidenceIndex, report backendPlanReport) plan.EvidenceIndex {
