@@ -538,18 +538,42 @@ func TestInventoryItemDetailCompactsEvidenceForExpandedRows(t *testing.T) {
 	detail := inventoryItemDetail(item, evidence, []detailBrowserAction{{Label: "backend 整理を開く", Description: evidence.Backends[0]}})
 	for _, want := range []string{
 		"確認: upd 1 / sec 1 / bak 1",
-		"更新: brew 保留: strict safety は安全な Homebrew 候補 2 件を適用し、2 件を保留します",
-		"セキュリティ: brew/brew mise: 保留（判定: 保留）: 候補リリースが新しすぎます",
-		"backend: github:jdx/mise は候補としてのみ確認します",
+		"更新: 安全 2 / 保留 2 (Homebrew)",
+		"セキュリティ: リリース待ち: あと約2日 (1/3日)",
+		"backend: GitHub候補 github:jdx/mise (要確認)",
 		"操作: 下の actions から 1 件選択できます",
 	} {
 		if !strings.Contains(detail, want) {
 			t.Fatalf("expected compact detail to contain %q:\n%s", want, detail)
 		}
 	}
-	for _, unwanted := range []string{"source:", "download:", "homepage host:", "次の操作:", "関連 evidence:"} {
+	for _, unwanted := range []string{"source:", "download:", "homepage host:", "次の操作:", "関連 evidence:", "Homebrew は通常", "Homebrew 管理を変える前"} {
 		if strings.Contains(detail, unwanted) {
 			t.Fatalf("expected compact detail to avoid %q:\n%s", unwanted, detail)
+		}
+	}
+	row := detailBrowserRow{
+		Title:  "brew/brew mise",
+		Detail: detail,
+		Actions: []detailBrowserAction{
+			{Label: "update evidence を開く", Description: evidence.Updates[0]},
+			{Label: "security review を開く", Description: evidence.Security[0]},
+			{Label: "backend 整理を開く", Description: evidence.Backends[0]},
+		},
+	}
+	view := newDetailBrowserModel("details", []detailBrowserRow{row}, detailBrowserState{Expanded: map[int]bool{0: true}}, false).View().Content
+	for _, want := range []string{
+		"action 1 [press a or 1]: update evidence を開く - 安全 2 / 保留 2 (Homebrew)",
+		"action 2 [press 2]: security review を開く - リリース待ち: あと約2日 (1/3日)",
+		"action 3 [press 3]: backend 整理を開く - GitHub候補 github:jdx/mise (要確認)",
+	} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("expected compact action view to contain %q:\n%s", want, view)
+		}
+	}
+	for _, unwanted := range []string{"Homebrew は通常", "Homebrew 管理を変える前", "source:", "download:"} {
+		if strings.Contains(view, unwanted) {
+			t.Fatalf("expected compact action view to avoid %q:\n%s", unwanted, view)
 		}
 	}
 }
@@ -882,6 +906,62 @@ func TestListHubRouterProviderFilterStaysInsideRouter(t *testing.T) {
 	model = updated.(listHubRouterModel)
 	if model.screen != listHubRouterDetail || model.stateKey != "filter-menu:"+listHubActionProvider {
 		t.Fatalf("expected Back from filtered rows to return to provider menu, screen=%q state=%q", model.screen, model.stateKey)
+	}
+}
+
+func TestListHubRouterUpdateSummaryInventoryRouteStaysInsideRouter(t *testing.T) {
+	report := listReport{
+		Status: plan.StatusDrift,
+		Root:   "/repo",
+	}
+	lastUpdate := updateReport{
+		Status: plan.StatusDrift,
+		Root:   "/repo",
+		Inventory: plan.Report{
+			Status: plan.StatusDrift,
+			Providers: []plan.ProviderSummary{
+				{Name: "brew", Desired: 1, Live: 2},
+				{Name: "mise", Desired: 1, Live: 2},
+			},
+			Items: []plan.Item{{
+				Provider: "brew",
+				Kind:     "brew",
+				Name:     "jq",
+				Status:   plan.StatusExtra,
+				Live:     true,
+			}, {
+				Provider: "brew",
+				Kind:     "brew",
+				Name:     "git",
+				Status:   plan.StatusOK,
+				Desired:  true,
+				Live:     true,
+			}, {
+				Provider: "mise",
+				Kind:     "tool",
+				Name:     "node",
+				Status:   plan.StatusExtra,
+				Live:     true,
+			}},
+		},
+	}
+	model := newListHubRouterModel(listHubRouterOptions{
+		Report:        report,
+		LastUpdate:    lastUpdate,
+		HasLastUpdate: true,
+		InitialAction: listHubActionFull,
+	})
+	updated, _ := model.handleAction(updateSummaryRoute{Base: updateHubActionInventoryAll, Provider: "brew", Status: "attention"}.Encode())
+	model = updated.(listHubRouterModel)
+	if model.screen != listHubRouterTable || !strings.HasPrefix(model.stateKey, "summary:") {
+		t.Fatalf("expected list router to open summary inventory table, screen=%q state=%q", model.screen, model.stateKey)
+	}
+	view := model.View().Content
+	if !strings.Contains(view, "provider=brew") || !strings.Contains(view, "status=attention") {
+		t.Fatalf("expected summary inventory filters in list router view:\n%s", view)
+	}
+	if !strings.Contains(view, "jq") || strings.Contains(view, "git") || strings.Contains(view, "node") {
+		t.Fatalf("expected list summary route to show only brew attention rows:\n%s", view)
 	}
 }
 

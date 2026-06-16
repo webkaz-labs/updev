@@ -155,7 +155,7 @@ func detailBrowserFormattersForLocale() reviewui.DetailBrowserFormatters {
 		Truncate:         textTruncate,
 		OneLine:          oneLine,
 		SectionHeading:   browserSectionHeadingText,
-		LocalizeEvidence: localizedListEvidenceText,
+		LocalizeEvidence: compactListEvidenceText,
 	}
 }
 

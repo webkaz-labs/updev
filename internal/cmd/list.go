@@ -1150,7 +1150,6 @@ func printListHubDashboard(w io.Writer, report listReport, color bool) {
 func listHubChoices(report listReport, backendPlan backendPlanReport, backendLoading bool, lastUpdate updateReport, hasLastUpdate bool) []updevChoice {
 	choices := []updevChoice{
 		{Value: listHubActionFull, Label: tr("Installed inventory", "インストール済み一覧"), Description: fmt.Sprintf(tr("Review all %d installed and desired inventory rows with grouping, filters, and expansion.", "全 %d 件の installed / desired inventory 行を grouping / filter / 展開付きで確認します。"), listInventoryReviewCount(report)), Selected: true},
-		{Value: listHubActionAttention, Label: tr("Attention items", "注意項目"), Description: tr("Show only rows needing attention.", "対応が必要な行だけを表示します。")},
 		{Value: listHubActionProvider, Label: tr("Provider filter", "provider filter"), Description: tr("Choose a provider; rich rows expand with Enter or Space.", "provider を選びます。詳細行は Enter / Space で展開できます。")},
 		{Value: listHubActionKind, Label: tr("Kind filter", "kind filter"), Description: tr("Choose brew, cask, vscode, tap, or tool rows.", "brew / cask / vscode / tap / tool で絞り込みます。")},
 		{Value: listHubActionCategory, Label: tr("Category filter", "category filter"), Description: tr("Choose work, personal, runtime, core, npm, or another group.", "work / personal / runtime / core / npm などで絞り込みます。")},
@@ -1175,8 +1174,8 @@ func listHubChoices(report listReport, backendPlan backendPlanReport, backendLoa
 	choices = append(
 		choices,
 		updevChoice{Value: listHubActionSupport, Label: tr("Support catalog", "support catalog"), Description: tr("Review support labels for providers, commands, reports, and inventory sources.", "provider / command / report / inventory source の support label を確認します。")},
-		updevChoice{Value: listHubActionLimited, Label: tr("Compact list", "compact list"), Description: tr("Show at most 10 rows per section.", "各 section 最大 10 行で表示します。")},
-		updevChoice{Value: listHubActionDetails, Label: tr("Details", "詳細"), Description: tr("Show limited rows plus expanded descriptions.", "絞り込んだ行と展開可能な説明を表示します。")},
+		updevChoice{Value: listHubActionLimited, Label: tr("Advanced: compact list", "上級: compact list"), Description: tr("Auxiliary view with at most 10 rows per section.", "補助 view として各 section 最大 10 行で表示します。")},
+		updevChoice{Value: listHubActionDetails, Label: tr("Advanced: details", "上級: 詳細"), Description: tr("Auxiliary detail view for limited rows and expanded descriptions.", "補助 detail view として絞り込んだ行と説明を表示します。")},
 		updevChoice{Value: updevActionExit, Label: tr("Exit", "終了"), Description: tr("Leave the selector.", "selector を終了します。")},
 	)
 	return choices
@@ -2048,6 +2047,9 @@ func compactListEvidenceGroup(values []string) string {
 }
 
 func compactListEvidenceText(value string) string {
+	if text := compactKnownListEvidenceText(value); text != "" {
+		return text
+	}
 	text := localizedListEvidenceText(value)
 	text = strings.Join(strings.Fields(text), " ")
 	for _, delimiter := range []string{"; source:", "; tap:", "; homepage:", "; download:", "; homepage host:", "; download host:", "; キャッシュ:", "; リリース経過:"} {
@@ -2056,6 +2058,129 @@ func compactListEvidenceText(value string) string {
 		}
 	}
 	return truncate(text, 96)
+}
+
+func compactKnownListEvidenceText(value string) string {
+	raw := strings.Join(strings.Fields(strings.TrimSpace(value)), " ")
+	if raw == "" {
+		return ""
+	}
+	if text := compactStrictSafetySummary(raw); text != "" {
+		return text
+	}
+	if text := compactStrictGateSummary(raw); text != "" {
+		return text
+	}
+	if text := compactReleaseAgeHoldSummary(raw); text != "" {
+		return text
+	}
+	if text := compactBackendCandidateSummary(raw); text != "" {
+		return text
+	}
+	return ""
+}
+
+func compactStrictSafetySummary(value string) string {
+	const marker = "strict safety will apply "
+	start := strings.Index(value, marker)
+	if start < 0 {
+		return ""
+	}
+	after := value[start+len(marker):]
+	safeCount, rest, ok := strings.Cut(after, " safe Homebrew candidates and hold ")
+	if !ok {
+		return ""
+	}
+	holdCount, _, ok := strings.Cut(rest, " unsafe candidates")
+	if !ok {
+		return ""
+	}
+	if defaultLanguage() == "ja" {
+		return fmt.Sprintf("安全 %s / 保留 %s (Homebrew)", strings.TrimSpace(safeCount), strings.TrimSpace(holdCount))
+	}
+	return fmt.Sprintf("safe %s / held %s (Homebrew)", strings.TrimSpace(safeCount), strings.TrimSpace(holdCount))
+}
+
+func compactReleaseAgeHoldSummary(value string) string {
+	if !strings.Contains(value, "候補リリースが新しすぎます") &&
+		!strings.Contains(value, "candidate release is too new") &&
+		!(strings.Contains(value, "経過 ") && strings.Contains(value, "最小 ")) {
+		return ""
+	}
+	age := compactFieldAfter(value, "経過 ", "日")
+	minimum := compactFieldAfter(value, "最小 ", "日")
+	remaining := compactFieldAfter(value, "あと約", "日")
+	if age == "" {
+		age = compactFieldAfter(value, "age ", " days")
+	}
+	if minimum == "" {
+		minimum = compactFieldAfter(value, "minimum ", " days")
+	}
+	if remaining != "" && age != "" && minimum != "" {
+		if defaultLanguage() == "ja" {
+			return fmt.Sprintf("リリース待ち: あと約%s日 (%s/%s日)", remaining, age, minimum)
+		}
+		return fmt.Sprintf("release-age hold: about %s days left (%s/%s days)", remaining, age, minimum)
+	}
+	if age != "" && minimum != "" {
+		if defaultLanguage() == "ja" {
+			return fmt.Sprintf("リリース待ち: %s/%s日", age, minimum)
+		}
+		return fmt.Sprintf("release-age hold: %s/%s days", age, minimum)
+	}
+	if defaultLanguage() == "ja" {
+		return "リリース待ち"
+	}
+	return "release-age hold"
+}
+
+func compactStrictGateSummary(value string) string {
+	if strings.Contains(value, "security=strict held update because safety gate requires review") ||
+		strings.Contains(value, "security=strict のため更新を保留しました") {
+		if defaultLanguage() == "ja" {
+			return "安全確認待ち"
+		}
+		return "waiting for safety review"
+	}
+	return ""
+}
+
+func compactBackendCandidateSummary(value string) string {
+	if before, _, ok := strings.Cut(value, " は候補としてのみ確認"); ok {
+		name := strings.TrimSpace(before)
+		if name != "" {
+			label := "backend候補"
+			if strings.HasPrefix(strings.ToLower(name), "github:") {
+				label = "GitHub候補"
+			}
+			return fmt.Sprintf("%s %s (要確認)", label, truncate(name, 42))
+		}
+	}
+	if before, _, ok := strings.Cut(value, " is reviewed as a candidate only"); ok {
+		name := strings.TrimSpace(before)
+		if name != "" {
+			return fmt.Sprintf("GitHub candidate %s (review)", truncate(name, 42))
+		}
+	}
+	if before, _, ok := strings.Cut(value, " as a candidate only"); ok && strings.Contains(before, "github:") {
+		fields := strings.Fields(before)
+		name := fields[len(fields)-1]
+		return fmt.Sprintf("GitHub candidate %s (review)", truncate(name, 42))
+	}
+	return ""
+}
+
+func compactFieldAfter(value string, prefix string, suffix string) string {
+	start := strings.Index(value, prefix)
+	if start < 0 {
+		return ""
+	}
+	after := value[start+len(prefix):]
+	end := strings.Index(after, suffix)
+	if end < 0 {
+		return ""
+	}
+	return strings.TrimSpace(after[:end])
 }
 
 func listItemEvidenceSummary(e plan.ItemEvidence) string {
@@ -3471,7 +3596,7 @@ func (m *listHubRouterModel) showUpdateSummaryRoute(route updateSummaryRoute, re
 		m.showEmptyDetail("updev update evidence", m.currentAction(), returnAction)
 		return
 	}
-	opts := lastReportOptions{provider: route.Provider, query: route.Query}
+	opts := lastReportOptions{provider: route.Provider, status: route.Status, query: route.Query}
 	filtered := filterUpdateReport(m.lastUpdate, opts)
 	suffix := updateSummaryRouteTitleSuffix(route)
 	stateKey := updateSummaryRouteStateKey(route)
@@ -3480,6 +3605,12 @@ func (m *listHubRouterModel) showUpdateSummaryRoute(route updateSummaryRoute, re
 		m.showFocusedDetail("updev update evidence"+suffix, updateLogDetailRows(filtered), stateKey, returnAction)
 	case updateHubActionSecurity:
 		m.showFocusedDetail("updev security review"+suffix, updateSecurityDetailRowsForFilter(filtered, opts), stateKey, returnAction)
+	case updateHubActionInventoryAll:
+		inventory := buildListReport(inventoryResult{Report: filtered.Inventory}, listOptions{provider: route.Provider, status: route.Status, query: route.Query})
+		inventory.Evidence = addBackendListEvidence(inventory.Evidence, m.backendPlan)
+		m.showListFiltered("updev installed inventory"+suffix, inventory, stateKey, returnAction, listHubActionManual, listHubActionManual)
+	case updateHubActionInventoryDetails:
+		m.showFocusedDetail("updev inventory details"+suffix, updateInventoryDetailRowsWithBackend(filtered, m.backendPlan), stateKey, returnAction)
 	default:
 		m.showAction(returnAction, listHubActionFull)
 	}

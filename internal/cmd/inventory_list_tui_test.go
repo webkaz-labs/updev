@@ -439,9 +439,21 @@ func TestListHubChoicesExposeFiltersAndNavigation(t *testing.T) {
 	for _, choice := range choices {
 		values[choice.Value] = true
 	}
-	for _, want := range []string{listHubActionAttention, listHubActionProvider, listHubActionKind, listHubActionCategory, listHubActionStatus, listHubActionQuery, listHubActionManual, listHubActionBackends, listHubActionSupport, listHubActionLimited, listHubActionDetails, listHubActionFull, updevActionExit} {
+	for _, want := range []string{listHubActionProvider, listHubActionKind, listHubActionCategory, listHubActionStatus, listHubActionQuery, listHubActionManual, listHubActionBackends, listHubActionSupport, listHubActionLimited, listHubActionDetails, listHubActionFull, updevActionExit} {
 		if !values[want] {
 			t.Fatalf("expected list hub choice %q in %#v", want, choices)
+		}
+	}
+	if values[listHubActionAttention] {
+		t.Fatalf("expected standalone attention choice to stay hidden in %#v", choices)
+	}
+	labels := map[string]string{}
+	for _, choice := range choices {
+		labels[choice.Value] = choice.Label
+	}
+	for _, advanced := range []string{listHubActionLimited, listHubActionDetails} {
+		if !strings.Contains(strings.ToLower(labels[advanced]), "advanced") {
+			t.Fatalf("expected auxiliary choice %q to be labeled advanced, label=%q", advanced, labels[advanced])
 		}
 	}
 }
@@ -1023,7 +1035,7 @@ func TestInventoryItemDetailLocalizesJapaneseEvidenceAndActions(t *testing.T) {
 		"説明: macOS/system git を使える状態に保つ",
 		"管理: brew / brew / git",
 		"確認: bak 1",
-		"backend: github:git/git は候補としてのみ確認します",
+		"backend: GitHub候補 github:git/git (要確認)",
 		"操作: 下の actions から 1 件選択できます",
 	} {
 		if !strings.Contains(row.Detail, want) {
