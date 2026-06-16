@@ -292,6 +292,53 @@ func TestUpdateOutcomeRowsShowsBrewHeldCandidateItem(t *testing.T) {
 	}
 }
 
+func TestUpdateSummaryTablesCompactReleaseAgeReasons(t *testing.T) {
+	withDefaultLanguageForTest(t, "ja")
+	finding := safetyFinding{
+		Provider:          "brew",
+		Kind:              "brew",
+		Name:              "mole",
+		InstalledVersions: []string{"1.42.0"},
+		CurrentVersion:    "1.43.0",
+		Decision:          "hold",
+		Reason:            "candidate release is too new",
+		MinReleaseAgeDays: 3,
+		ReleaseDate:       "2026-06-14T15:31:32Z",
+		ReleaseAgeDays:    2,
+	}
+	rows := updateOutcomeRows(updateReport{
+		Security: "strict",
+		Steps: []updateStep{{
+			Name:         "brew",
+			Status:       plan.StatusHeld,
+			Skipped:      true,
+			SkippedItems: updateSafetySkippedSummaries([]safetyFinding{finding}),
+		}},
+		Safety: []safetyGate{{Provider: "brew", Status: plan.StatusHeld, Findings: []safetyFinding{finding}}},
+	}, 10, false)
+	if len(rows) < 2 {
+		t.Fatalf("expected skipped row and safety row, got %#v", rows)
+	}
+	if rows[0][2] != "mole" || !strings.HasPrefix(rows[0][3], "リリース待ち:") || !strings.Contains(rows[0][3], "/3日)") {
+		t.Fatalf("expected compact skipped release-age detail, got %#v", rows[0])
+	}
+	if rows[1][2] != "brew/mole" || !strings.HasPrefix(rows[1][3], "リリース待ち:") || !strings.Contains(rows[1][3], "/3日)") {
+		t.Fatalf("expected compact safety release-age detail, got %#v", rows[1])
+	}
+	attention := safetyAttentionRows([]safetyGate{{Provider: "brew", Status: plan.StatusHeld, Findings: []safetyFinding{finding}}}, 10, false, "strict")
+	if len(attention) != 1 || !strings.HasPrefix(attention[0][4], "リリース待ち:") || !strings.Contains(attention[0][4], "/3日)") {
+		t.Fatalf("expected compact top security reason, got %#v", attention)
+	}
+	for _, row := range append(rows, attention...) {
+		joined := strings.Join(row, " ")
+		for _, unwanted := range []string{"候補リリースが新しすぎます", "リリース日:", "source:", "download:"} {
+			if strings.Contains(joined, unwanted) {
+				t.Fatalf("expected summary tables to avoid %q, got %#v", unwanted, row)
+			}
+		}
+	}
+}
+
 func TestPrintUpdateTextIncludesSkippedStepStatus(t *testing.T) {
 	var buffer bytes.Buffer
 	printUpdateTextTo(&buffer, updateReport{
@@ -1006,9 +1053,14 @@ func TestUpdateHubChoicesExposeNavigationTargets(t *testing.T) {
 	for _, choice := range choices {
 		values[choice.Value] = true
 	}
-	for _, want := range []string{updateHubActionInventoryAll, updateHubActionInventoryAttention, updateHubActionInventoryDetails, updateHubActionManualPlan, updateHubActionBackends, updateHubActionUpdatesFilter, updateHubActionSecurity, updateHubActionSecurityFilter, updateHubActionLogs, updateHubActionJSON, updevActionExit} {
+	for _, want := range []string{updateHubActionInventoryAll, updateHubActionManualPlan, updateHubActionBackends, updateHubActionUpdatesFilter, updateHubActionSecurity, updateHubActionSecurityFilter, updateHubActionLogs, updateHubActionJSON, updevActionExit} {
 		if !values[want] {
 			t.Fatalf("expected update hub choice %q in %#v", want, choices)
+		}
+	}
+	for _, hidden := range []string{updateHubActionInventoryAttention, updateHubActionInventoryDetails} {
+		if values[hidden] {
+			t.Fatalf("expected redundant update hub choice %q to stay hidden in %#v", hidden, choices)
 		}
 	}
 	selected := ""
@@ -1164,6 +1216,9 @@ func TestUpdateDashboardDetailRowsExposeHubActions(t *testing.T) {
 	if route, ok := firstUpdateSummaryRoute(summaryModel.Lines, "brew"); !ok || route.Base != updateHubActionLogs || route.Provider != "brew" {
 		t.Fatalf("expected brew update row to route to provider-filtered logs, route=%+v ok=%v", route, ok)
 	}
+	if route, ok := firstUpdateSummaryRoute(summaryModel.Lines, "inventory drift"); !ok || route.Base != updateHubActionInventoryAll || route.Status != "attention" {
+		t.Fatalf("expected inventory drift heading to route to attention inventory, route=%+v ok=%v", route, ok)
+	}
 	reviewFocused := newUpdateSummaryBrowserModel(updateSummaryBrowserOptions{
 		Title:       updateHubTitle(report),
 		Report:      report,
@@ -1265,6 +1320,18 @@ func firstUpdateSummaryRoute(lines []updateSummaryLine, contains string) (update
 }
 
 func TestUpdateSummarySecurityRoutesOpenNonEmptyDetails(t *testing.T) {
+	inventoryRoute, _, ok := updateSummaryRouteForTableLine("inventory", "brew 0 2 0 drift")
+	if !ok || inventoryRoute.Provider != "brew" || inventoryRoute.Status != "attention" {
+		t.Fatalf("expected provider drift inventory row to route by provider and attention status, route=%+v ok=%v", inventoryRoute, ok)
+	}
+	outcomeLogRoute, _, ok := updateSummaryRouteForTableLine("outcome", "updated brew jq 1.7 -> 1.8.1")
+	if !ok || outcomeLogRoute.Base != updateHubActionLogs || outcomeLogRoute.Provider != "brew" || outcomeLogRoute.Query != "jq" {
+		t.Fatalf("expected updated outcome row to route to provider-filtered logs, route=%+v ok=%v", outcomeLogRoute, ok)
+	}
+	outcomeSecurityRoute, _, ok := updateSummaryRouteForTableLine("outcome", "hold brew brew/mole 1.42.0 -> 1.43.0")
+	if !ok || outcomeSecurityRoute.Base != updateHubActionSecurity || outcomeSecurityRoute.Provider != "brew" || outcomeSecurityRoute.Query != "brew/mole" {
+		t.Fatalf("expected held outcome row to route to security detail, route=%+v ok=%v", outcomeSecurityRoute, ok)
+	}
 	providerRoute, _, ok := updateSummaryRouteForTableLine("security", "brew held 1 review Homebrew cask host mismatch")
 	if !ok || providerRoute.Provider != "brew" || providerRoute.Query != "" {
 		t.Fatalf("expected provider summary security row to route by provider only, route=%+v ok=%v", providerRoute, ok)
@@ -2370,6 +2437,52 @@ func TestUpdateHubRouterInventoryTabSwitchesToManualInventory(t *testing.T) {
 	model = updated.(updateHubRouterModel)
 	if model.screen != updateHubRouterTable || model.stateKey != "inventory-all" {
 		t.Fatalf("expected Shift+Tab to switch back to installed inventory, screen=%q state=%q", model.screen, model.stateKey)
+	}
+}
+
+func TestUpdateHubRouterSummaryInventoryProviderDriftOpensAttentionRows(t *testing.T) {
+	report := updateReport{
+		Status: plan.StatusDrift,
+		Root:   "/repo",
+		Inventory: plan.Report{
+			Status: plan.StatusDrift,
+			Providers: []plan.ProviderSummary{
+				{Name: "brew", Desired: 1, Live: 3},
+				{Name: "mise", Desired: 1, Live: 2},
+			},
+			Items: []plan.Item{{
+				Provider: "brew",
+				Kind:     "brew",
+				Name:     "jq",
+				Status:   plan.StatusExtra,
+				Live:     true,
+			}, {
+				Provider: "brew",
+				Kind:     "brew",
+				Name:     "git",
+				Status:   plan.StatusOK,
+				Desired:  true,
+				Live:     true,
+			}, {
+				Provider: "mise",
+				Kind:     "tool",
+				Name:     "node",
+				Status:   plan.StatusExtra,
+				Live:     true,
+			}},
+		},
+	}
+	model := newUpdateHubRouterModel(report, inventoryPlanReport{}, false, backendPlanReport{}, false, updateHubActionDashboard, updateHubActionDashboard, false)
+	model.showUpdateSummaryRoute(updateSummaryRoute{Base: updateHubActionInventoryAll, Provider: "brew", Status: "attention"})
+	if model.screen != updateHubRouterTable || !strings.HasPrefix(model.stateKey, "summary:") {
+		t.Fatalf("expected summary inventory route table, screen=%q state=%q", model.screen, model.stateKey)
+	}
+	view := model.View().Content
+	if !strings.Contains(view, "provider=brew") || !strings.Contains(view, "status=attention") {
+		t.Fatalf("expected summary inventory route filters in view:\n%s", view)
+	}
+	if !strings.Contains(view, "jq") || strings.Contains(view, "git") || strings.Contains(view, "node") {
+		t.Fatalf("expected provider drift route to show only brew attention rows:\n%s", view)
 	}
 }
 

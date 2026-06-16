@@ -11,14 +11,15 @@ stays an integer schema contract. `v0.x` releases are public preview releases;
 
 ## Current Release
 
-The current implemented release is `updev v0.7.12`. `updev version`,
+The current implemented release is `updev v0.7.13`. `updev version`,
 `updev --version`, and `updev -v` report this command contract.
 
-`updev v0.7.12` is the policy and routed-action ergonomics patch after the
-v0.7.11 scanner hardening release. It preserves the same supported
-macOS/Homebrew/mise preview scope, keeps provider log streaming outside the
-alternate-screen TUI, and makes policy rules and TUI row actions easier to
-review without losing item context.
+`updev v0.7.13` is the route-to-intent completion and navigation-surface cleanup
+patch after the v0.7.12 policy ergonomics release. It preserves the same
+supported macOS/Homebrew/mise preview scope, keeps provider log streaming
+outside the alternate-screen TUI, opens focused summary/list/last rows on the
+matching item context, and hides redundant top-level review actions that now
+duplicate focused routes.
 
 Current support promise:
 
@@ -41,19 +42,23 @@ Current release validation:
 - [x] `mise -C tools/updev run docs-check`
 - [x] `git diff --check`
 - [x] `chezmoi apply --dry-run`
-- [x] Policy diagnostic and guided-maintenance tests cover expired, invalid,
-  duplicate, shadowed, broad, missing-reason, and missing-expiry rules.
-- [x] TUI route-to-intent tests prove summary/list row actions open focused item
-  details without requiring a second item selection.
-- [x] Text/JSON/TUI coverage proves policy decisions and reason codes agree.
+- [x] TUI route-to-intent tests prove summary/list/last row actions open
+  focused item details without requiring a second item selection when a stable
+  target exists.
+- [x] TUI navigation tests prove provider/status inventory summary routes,
+  update outcome security rows, and list cached-report inventory routes stay
+  inside routed browsers.
+- [x] Redundant inventory attention/detail choices are hidden from the primary
+  update/list hubs, while compact/detail list views remain auxiliary advanced
+  paths.
 - [x] Release notes exist.
 
-## Next Release Target: v0.7.13
+## Next Release Target: v0.7.14
 
-`updev v0.7.13` is planned as a post-release dogfood and provider-evidence
-polish patch. It should use real TTY flows and cached reports to find remaining
-step-count, focus, translation, and evidence-quality gaps before the next larger
-provider/scanner work.
+`updev v0.7.14` is planned as a post-route-to-intent provider evidence and real
+TTY dogfood polish patch. It should use cached reports and real terminal review
+flows to improve evidence only where item identity, source context, release age,
+and action target can be proved without broadening provider support.
 
 Scope:
 
@@ -100,6 +105,8 @@ Release-ready criteria:
 
 ## Released patch notes
 
+- [v0.7.13](release-notes/v0.7.13.md): route-to-intent completion, focused
+  summary/list/last routes, and navigation surface cleanup.
 - [v0.7.12](release-notes/v0.7.12.md): policy diagnostics, guided
   maintenance, and route-to-intent TUI actions.
 - [v0.7.11](release-notes/v0.7.11.md): scanner hardening patch with structured
