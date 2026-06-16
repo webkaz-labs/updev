@@ -129,7 +129,7 @@ Global flags:
   and `--format json`; add global verbosity only when a concrete cross-command
   diagnostic need appears.
 - `updev version`, `updev --version`, and `updev -v` report the current
-  implemented release contract, currently `updev v0.7.12`. JSON output from
+  implemented release contract, currently `updev v0.7.13`. JSON output from
   `updev version --format json` includes SemVer parts and the stable/pre-stable
   contract label.
 - `updev support` and `updev doctor support` print the current support-level

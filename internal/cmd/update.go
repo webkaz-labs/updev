@@ -1970,7 +1970,7 @@ func updateOutcomeRows(report updateReport, limit int, color bool) [][]string {
 				textui.StyleStatus("skipped", color),
 				textui.StyleName(step.Name, color),
 				truncate(name, 38),
-				truncate(oneLine(detail), 72),
+				truncate(compactUpdateSummaryDetail(detail), 72),
 			})
 			if len(rows) >= limit {
 				return rows
@@ -1981,7 +1981,7 @@ func updateOutcomeRows(report updateReport, limit int, color bool) [][]string {
 				textui.StyleStatus("skipped", color),
 				textui.StyleName(step.Name, color),
 				truncate(firstNonEmpty(step.Name, "step"), 38),
-				truncate(oneLine(localizedUpdateStepReasonForStep(step)), 72),
+				truncate(compactUpdateSummaryDetail(localizedUpdateStepReasonForStep(step)), 72),
 			})
 			if len(rows) >= limit {
 				return rows
@@ -2006,11 +2006,15 @@ func updateOutcomeRows(report updateReport, limit int, color bool) [][]string {
 			}
 			item := strings.TrimSpace(finding.Kind + "/" + finding.Name)
 			decision := updateSafetyDisplayDecision(report, finding.Decision)
+			detail := compactUpdateOutcomeFindingDetail(finding)
+			if decision == "warning" {
+				detail = strings.ReplaceAll(detail, "hold", "warning")
+			}
 			rows = append(rows, []string{
 				textui.StyleStatus(decision, color),
 				textui.StyleName(firstNonEmpty(gate.Provider, finding.Provider), color),
 				truncate(item, 38),
-				truncate(firstNonEmpty(updateOutcomeFindingDetail(finding), localizedSafetyReasonWithReleaseAge(finding)), 72),
+				truncate(detail, 72),
 			})
 			if len(rows) >= limit {
 				return rows
@@ -2018,6 +2022,24 @@ func updateOutcomeRows(report updateReport, limit int, color bool) [][]string {
 		}
 	}
 	return rows
+}
+
+func compactUpdateSummaryDetail(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	if text := compactKnownListEvidenceText(value); text != "" {
+		return text
+	}
+	return oneLine(value)
+}
+
+func compactUpdateOutcomeFindingDetail(finding safetyFinding) string {
+	if text := compactKnownListEvidenceText(localizedSafetyReasonWithReleaseAge(finding)); text != "" {
+		return text
+	}
+	return firstNonEmpty(updateOutcomeFindingDetail(finding), localizedSafetyReasonWithReleaseAge(finding))
 }
 
 func updateOutcomeSkippedItemParts(step updateStep, item string) (string, string) {
@@ -2226,6 +2248,10 @@ func safetyAttentionRows(gates []safetyGate, limit int, color bool, securityMode
 				if report.Security != "" {
 					displayDecision = updateSafetyDisplayDecision(report, findingDecision)
 				}
+				reason := compactSecurityItemReason(finding)
+				if displayDecision == "warning" {
+					reason = strings.ReplaceAll(reason, "hold", "warning")
+				}
 				version := strings.Join(finding.InstalledVersions, ",")
 				if finding.CurrentVersion != "" {
 					version += " -> " + finding.CurrentVersion
@@ -2235,7 +2261,7 @@ func safetyAttentionRows(gates []safetyGate, limit int, color bool, securityMode
 					textui.StyleName(gate.Provider, color),
 					finding.Kind + "/" + finding.Name,
 					version,
-					truncate(oneLine(localizedSafetyReasonWithReleaseAge(finding)), 72),
+					truncate(reason, 72),
 				})
 				if len(rows) >= limit {
 					return rows
@@ -2244,6 +2270,14 @@ func safetyAttentionRows(gates []safetyGate, limit int, color bool, securityMode
 		}
 	}
 	return rows
+}
+
+func compactSecurityItemReason(finding safetyFinding) string {
+	reason := localizedSafetyReasonWithReleaseAge(finding)
+	if text := compactKnownListEvidenceText(reason); text != "" {
+		return text
+	}
+	return oneLine(reason)
 }
 
 func printUpdateInventoryDashboard(w io.Writer, inventory plan.Report, color bool) {
@@ -2427,7 +2461,7 @@ func runUpdateHubWithDefault(report updateReport, preferredAction string) {
 }
 
 func runUpdateSummaryRouteDetail(report updateReport, route updateSummaryRoute, backendPlan backendPlanReport, detailStates map[string]detailBrowserState, color bool) bool {
-	opts := lastReportOptions{provider: route.Provider, query: route.Query}
+	opts := lastReportOptions{provider: route.Provider, status: route.Status, query: route.Query}
 	filtered := filterUpdateReport(report, opts)
 	suffix := updateSummaryRouteTitleSuffix(route)
 	switch route.Base {
@@ -2476,6 +2510,9 @@ func updateSummaryRouteTitleSuffix(route updateSummaryRoute) string {
 	parts := []string{}
 	if route.Provider != "" {
 		parts = append(parts, "provider="+route.Provider)
+	}
+	if route.Status != "" {
+		parts = append(parts, "status="+route.Status)
 	}
 	if route.Query != "" {
 		parts = append(parts, "query="+route.Query)
@@ -3313,8 +3350,6 @@ func runManualPlanProviderReview(name string, args ...string) {
 func updateHubChoices(report updateReport, manualPlan inventoryPlanReport, backendPlan backendPlanReport, defaultAction string) []updevChoice {
 	choices := []updevChoice{
 		{Value: updateHubActionInventoryAll, Label: tr("Installed inventory", "インストール済み一覧"), Description: tr("Review all installed and desired inventory rows with grouping, filters, and expansion.", "すべての installed/desired inventory 行を group / filter / 展開付きで確認します。")},
-		{Value: updateHubActionInventoryAttention, Label: tr("Attention items", "注意項目"), Description: tr("Show missing, extra, drift, held, blocked, error, and unavailable inventory rows.", "missing / extra / drift / held / blocked / error / unavailable の inventory 行を表示します。")},
-		{Value: updateHubActionInventoryDetails, Label: tr("Inventory details", "inventory 詳細"), Description: tr("Expand attention inventory descriptions and versions.", "注意が必要な inventory の説明と version を展開します。")},
 		{Value: updateHubActionUpdatesFilter, Label: tr("Updates filter", "updates filter"), Description: tr("Filter update steps by provider, status, or query.", "update step を provider / status / query で絞り込みます。")},
 	}
 	if attention := manualPlan.AttentionCount; attention > 0 {
@@ -3447,8 +3482,6 @@ func updateDashboardDetailRows(report updateReport, manualPlan inventoryPlanRepo
 			},
 			Actions: []detailBrowserAction{
 				{Value: updateHubActionInventoryAll, Label: "open inventory", Description: "browse grouped installed inventory"},
-				{Value: updateHubActionInventoryAttention, Label: "attention", Description: "print inventory attention rows"},
-				{Value: updateHubActionInventoryDetails, Label: "details", Description: "open inventory attention details"},
 			},
 		},
 		{
@@ -4673,6 +4706,7 @@ type updateSummaryRoute struct {
 	Base     string
 	Provider string
 	Query    string
+	Status   string
 }
 
 const updateSummaryRoutePrefix = "summary-route"
@@ -4785,8 +4819,8 @@ func updateSummaryBrowserLinesWithLoading(report updateReport, manualPlan invent
 				section = "inventory"
 				kind = updateSummaryLineSection
 				styledLine = trimmed
-				action = updateHubActionInventoryAll
-				label = tr("open installed inventory", "インストール済み一覧を開く")
+				action = updateSummaryRoute{Base: updateHubActionInventoryAll, Status: "attention"}.Encode()
+				label = tr("open inventory attention", "inventory 注意行を開く")
 			}
 		}
 		if action == "" {
@@ -4851,6 +4885,9 @@ func updateSummaryRouteForTableLine(section string, line string) (updateSummaryR
 		}
 		provider := fields[1]
 		query := fields[2]
+		if updateOutcomeTypeRoutesToSecurity(fields[0]) {
+			return updateSummaryRoute{Base: updateHubActionSecurity, Provider: provider, Query: query}, fmt.Sprintf(tr("open %s security details", "%s の security 詳細を開く"), provider), true
+		}
 		return updateSummaryRoute{Base: updateHubActionLogs, Provider: provider, Query: query}, fmt.Sprintf(tr("open %s update details", "%s の更新詳細を開く"), provider), true
 	case "security":
 		providerIndex := 0
@@ -4870,7 +4907,7 @@ func updateSummaryRouteForTableLine(section string, line string) (updateSummaryR
 		return updateSummaryRoute{Base: updateHubActionSecurity, Provider: provider, Query: query}, fmt.Sprintf(tr("open %s security details", "%s の security 詳細を開く"), provider), true
 	case "inventory":
 		provider := fields[0]
-		return updateSummaryRoute{Base: updateHubActionInventoryAll, Provider: provider}, fmt.Sprintf(tr("open %s inventory", "%s の inventory を開く"), provider), true
+		return updateSummaryRoute{Base: updateHubActionInventoryAll, Provider: provider, Status: "attention"}, fmt.Sprintf(tr("open %s inventory attention", "%s の inventory 注意行を開く"), provider), true
 	case "inventory-items":
 		if len(fields) < 4 {
 			return updateSummaryRoute{}, "", false
@@ -4883,16 +4920,32 @@ func updateSummaryRouteForTableLine(section string, line string) (updateSummaryR
 	}
 }
 
+func updateOutcomeTypeRoutesToSecurity(value string) bool {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "attention", "block", "hold", "review", "unknown", "warning":
+		return true
+	default:
+		return false
+	}
+}
+
 func (r updateSummaryRoute) Encode() string {
-	return strings.Join([]string{updateSummaryRoutePrefix, r.Base, r.Provider, r.Query}, "\t")
+	return strings.Join([]string{updateSummaryRoutePrefix, r.Base, r.Provider, r.Query, r.Status}, "\t")
 }
 
 func parseUpdateSummaryRoute(value string) (updateSummaryRoute, bool) {
 	parts := strings.Split(value, "\t")
-	if len(parts) != 4 || parts[0] != updateSummaryRoutePrefix {
+	if len(parts) != 4 && len(parts) != 5 {
 		return updateSummaryRoute{}, false
 	}
-	return updateSummaryRoute{Base: parts[1], Provider: parts[2], Query: parts[3]}, true
+	if parts[0] != updateSummaryRoutePrefix {
+		return updateSummaryRoute{}, false
+	}
+	route := updateSummaryRoute{Base: parts[1], Provider: parts[2], Query: parts[3]}
+	if len(parts) == 5 {
+		route.Status = parts[4]
+	}
+	return route, true
 }
 
 func updateSummaryReviewHeaderLine(color bool) string {
@@ -5719,7 +5772,7 @@ func (m *updateHubRouterModel) showUpdateSummaryRoute(route updateSummaryRoute) 
 }
 
 func (m *updateHubRouterModel) showUpdateSummaryRouteWithReturn(route updateSummaryRoute, returnAction string) {
-	opts := lastReportOptions{provider: route.Provider, query: route.Query}
+	opts := lastReportOptions{provider: route.Provider, status: route.Status, query: route.Query}
 	filtered := filterUpdateReport(m.report, opts)
 	suffix := updateSummaryRouteTitleSuffix(route)
 	stateKey := updateSummaryRouteStateKey(route)
@@ -5729,7 +5782,7 @@ func (m *updateHubRouterModel) showUpdateSummaryRouteWithReturn(route updateSumm
 	case updateHubActionSecurity:
 		m.showFocusedDetail("updev security details"+suffix, updateSecurityDetailRowsForFilter(filtered, opts), stateKey, returnAction)
 	case updateHubActionInventoryAll:
-		inventory := buildListReport(inventoryResult{Report: filtered.Inventory}, listOptions{provider: route.Provider, query: route.Query})
+		inventory := buildListReport(inventoryResult{Report: filtered.Inventory}, listOptions{provider: route.Provider, status: route.Status, query: route.Query})
 		inventory.Evidence = addBackendListEvidence(inventory.Evidence, m.backendPlan)
 		m.showListFiltered("updev installed inventory"+suffix, inventory, stateKey, returnAction, listHubActionManual, listHubActionManual)
 	case updateHubActionInventoryDetails:
