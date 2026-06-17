@@ -12,8 +12,8 @@ Human-facing commands should stay small:
 updev --config file --no-color ...
 updev           # update workflow, then compact review dashboard/selector on TTY
 updev update    # explicit default update workflow
-updev list      # read-only grouped inventory browser on TTY
-updev hub       # full selector menu for every list view/filter
+updev list      # grouped inventory browser and focused review actions on TTY
+updev hub       # domain switcher for inventory/manual/backend/update/security review
 updev ls        # alias for list
 updev inventory # alias for fast/filterable inventory
 updev inventory scan # scan opt-in manual/vendor inventory evidence without writing
@@ -113,10 +113,14 @@ security allow with custom reason/expiry, temporary security allow plus provider
 rerun, safe backend rewrites, covered old mise-entry removals, and safe Brewfile
 ownership removal when mise already owns the tool. Read-only rows explain the
 missing evidence or next command instead of exposing a write action.
-`updev list --interactive` installed inventory rows do not run write actions
-directly, but row actions can route the focused item to the relevant review
-domain, starting with manual app review and backend convergence. The full target
-contract is tracked in [UX.md](UX.md).
+`updev list --interactive` installed inventory rows are the primary inventory
+browser. Row actions can route the focused item to the relevant review domain
+and can execute safe desired-state writes after confirmation, including
+category-explicit Homebrew extra adoption into Brewfile when Brewfile mutation
+is enabled. `updev hub` is a domain switcher for inventory/manual/backend/
+update/security/support views rather than a duplicate provider/kind/status
+filter menu; use the list browser search/filter controls or CLI flags for
+inventory slicing. The full target contract is tracked in [UX.md](UX.md).
 
 Global flags:
 
@@ -129,7 +133,7 @@ Global flags:
   and `--format json`; add global verbosity only when a concrete cross-command
   diagnostic need appears.
 - `updev version`, `updev --version`, and `updev -v` report the current
-  implemented release contract, currently `updev v0.7.13`. JSON output from
+  implemented release contract, currently `updev v0.7.14`. JSON output from
   `updev version --format json` includes SemVer parts and the stable/pre-stable
   contract label.
 - `updev support` and `updev doctor support` print the current support-level
@@ -309,14 +313,17 @@ mise and updev remain the release-age gate for that provider command.
 
 ## List And Inventory Flow
 
-`updev list` is read-only. The TTY default opens the full grouped installed
-inventory browser first because listing inventory is the command's primary job.
+`updev list` is primarily a review surface. The TTY default opens the full
+grouped installed inventory browser first because listing inventory is the
+command's primary job, while focused rows may expose explicit confirmed
+desired-state writes when the target and category are unambiguous.
 From that browser, `Tab` / `Shift+Tab` switches directly between installed
 inventory and manual apps while preserving each view's cursor, filter, and
-expanded rows. Back/Home returns to the full selector menu, where backend
-convergence, cached update/security evidence, compact output, and filter views
-are one selection away. `updev hub` opens that full selector menu directly for
-users who prefer the old all-menu list of views and filters.
+expanded rows. Back/Home returns to the domain switcher, where backend
+convergence, cached update/security evidence, compact output, and support
+catalog views are one selection away. `updev hub` opens that domain switcher
+directly for users who want the review domains before entering the inventory
+browser.
 
 Focused flags keep the non-TTY and agent contract deterministic:
 

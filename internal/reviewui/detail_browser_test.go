@@ -128,6 +128,33 @@ func TestDetailBrowserActionKeysReturnFocusedRowAction(t *testing.T) {
 	}
 }
 
+func TestDetailBrowserStateRestoresFocusedAction(t *testing.T) {
+	rows := []detailBrowserRow{{
+		Title:   "action row",
+		Status:  "held",
+		Summary: "needs action",
+		Actions: []detailBrowserAction{
+			{Value: "first", Label: "first action"},
+			{Value: "second", Label: "second action"},
+		},
+	}}
+	model := newDetailBrowserModel("details", rows, detailBrowserState{Expanded: map[int]bool{0: true}}, false)
+	updated, _ := model.Update(tea.KeyPressMsg(tea.Key{Text: "down", Code: tea.KeyDown}))
+	model = updated.(DetailBrowserModel)
+	updated, _ = model.Update(tea.KeyPressMsg(tea.Key{Text: "down", Code: tea.KeyDown}))
+	model = updated.(DetailBrowserModel)
+	if model.State.ActionFocus != 2 {
+		t.Fatalf("expected second focused action to be persisted as one-based state, got %#v", model.State)
+	}
+
+	restored := newDetailBrowserModel("details", rows, model.State, false)
+	updated, _ = restored.Update(tea.KeyPressMsg(tea.Key{Text: "enter", Code: tea.KeyEnter}))
+	restored = updated.(DetailBrowserModel)
+	if restored.State.Action != "second" {
+		t.Fatalf("expected restored focused action to run second action, got %#v", restored.State)
+	}
+}
+
 func TestDetailBrowserFocusedActionHintFitsTerminalWidth(t *testing.T) {
 	model := newDetailBrowserModel("details", []detailBrowserRow{{
 		Title:  "long actions",

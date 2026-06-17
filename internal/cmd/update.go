@@ -5457,7 +5457,7 @@ func (m *updateHubRouterModel) showAction(action string, returnAction string) {
 	case updateHubActionManualPlan:
 		m.showTable("updev manual review plan", manualPlanToolSections(m.manualPlan), "manual-plan", returnAction)
 	case updateHubActionBackends:
-		m.showTable("updev backend convergence", backendToolSections(m.backendPlan), "backends", returnAction)
+		m.showTable("updev backend convergence", backendToolSectionsWithLoading(m.backendPlan, m.backendLoading), "backends", returnAction)
 	case updateHubActionSecurity:
 		m.showDetail("updev security details", updateSecurityDetailRows(m.report), "security", returnAction)
 	case updateHubActionLogs:
@@ -5722,6 +5722,9 @@ func (m updateHubRouterModel) handleConfirmAction(confirm confirmBrowserModel) (
 }
 
 func (m *updateHubRouterModel) refreshPlansAfterWriteAction() {
+	if action, _, _, _, ok := parseBrewDriftAction(m.writeFlow.Action); ok && action == "adopt" {
+		m.report.Inventory = collectInventory(context.Background(), m.report.Root, runner.Local{})
+	}
 	if action, _, ok := parseManualPlanDetailAction(m.writeFlow.Action); ok && manualPlanDetailActionRequiresConfirmation(action) {
 		m.manualPlan = buildInventoryPlanForHub(m.report.Root)
 		m.manualLoading = false

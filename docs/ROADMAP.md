@@ -31,32 +31,33 @@ history in git log, and keep the current/next release target in
 - Documentation source-of-truth guidance, canonical `docs/agent/` usage/skill
   files, tag-specific release notes, and focused `docs-check` drift coverage are
   implemented.
-- `updev v0.7.13` is the current preview contract: it keeps the `v0.6.x`
+- `updev v0.7.14` is the current preview contract: it keeps the `v0.6.x`
   Homebrew/mise provider gate and the `v0.7.3` support-label catalog, includes
   the `v0.7.5` P1 scalability refactor, the `v0.7.8` large command-package
   reset, the `v0.7.9` agent-friendly quality tooling patch, and the `v0.7.10`
   provider evidence detail patch, the `v0.7.11` scanner hardening patch, and
-  the `v0.7.12` policy ergonomics patch, plus the `v0.7.13` route-to-intent
-  completion and navigation cleanup patch. It
+  the `v0.7.12` policy ergonomics patch, the `v0.7.13` route-to-intent
+  completion and navigation cleanup patch, and the `v0.7.14` post-route polish
+  patch. It
   keeps `check` fast, adds slower `audit` evidence for release/scheduled
   reviews, tracks non-blocking `aislop` findings in `SOURCE-STRUCTURE.md`,
   shows richer Homebrew/mise source, release-age, and cache context in detail
   views, and classifies scanner/native-audit unavailable/error states with
   structured issue fields. Policy diagnostics now identify expired, invalid,
   duplicate, shadowed, broad, missing-reason, and missing-expiry rules, and TUI
-  row actions route to item-scoped detail views when a stable target exists
-  while redundant inventory attention/detail choices stay out of the primary
-  hubs.
+  row actions route to item-scoped detail views when a stable target exists,
+  redundant inventory attention/detail choices stay out of the primary hubs,
+  and Homebrew extra live inventory rows explain drift causes plus offer
+  category-explicit Brewfile adoption through the mutation boundary.
 - `updev brewfile ...` and `brewfile` remain compatibility or low-level
   surfaces, not the primary human workflow.
 
 ## Near-Term Order
 
 1. Continue the broader `v0.7.x` workstream plan in
-   [RELEASE.md](RELEASE.md#next-release-target-v0714). `v0.7.14` is the
-   post-route-to-intent provider-evidence and real TTY dogfood polish patch:
-   keep action routes short, preserve Back/Home focus, and improve evidence only
-   where cached reports can prove item identity and source context.
+   [RELEASE.md](RELEASE.md#next-release-target-v0715). `v0.7.15` follows the
+   v0.7.14 polish patch with drift-prevention diagnostics, provider-evidence
+   follow-through, and low-step TUI review loops.
 2. Preserve TTY/report regression guardrails for the accepted `updev`,
    `updev last`, and `updev list` flows before making additional UX changes.
 3. Continue `v0.7.x` support-label dogfood without turning the catalog into list
@@ -125,7 +126,7 @@ patches:
 | 6 | Scanner hardening | `v0.7.11`: make explicit scanner/native-audit evidence more structured and bounded, with clear unavailable semantics and report/TUI parity. | Make slow or broad scanners part of the default update gate. |
 | 7 | Policy ergonomics | `v0.7.12`: add policy diagnostics, guided edit/renew/narrow flows, and route-to-intent TUI actions where users already review security details. | Auto-post public issues or create broad permanent allow rules without explicit user intent. |
 | 8 | Route-to-intent completion | `v0.7.13`: finish item-scoped summary/list/last routes, keep Back/Home/focus restoration covered, and hide redundant primary review actions now replaced by focused routes. | Promote Linux/Windows providers, broaden default scanners, or start large architecture work without a focused release plan. |
-| 9 | TTY dogfood polish | `v0.7.14`: use real TTY flows and cached reports to close remaining focus, translation, and provider-evidence polish gaps after route-to-intent is complete. | Expand provider support or scanner defaults based on weak evidence. |
+| 9 | TTY dogfood polish | `v0.7.14`: use real TTY flows and cached reports to close remaining second-selection, Back/Home/focus, compact-readability, translation, and provider-evidence polish gaps after route-to-intent is complete. | Expand provider support or scanner defaults based on weak evidence. |
 
 Every workstream must preserve the same invariants:
 

@@ -70,6 +70,83 @@ func TestBuildListReportUsesManualInventoryForCaskDriftGuidance(t *testing.T) {
 	}
 }
 
+func TestBrewExtraInventoryRowsExposeAdoptActions(t *testing.T) {
+	report := buildListReport(inventoryResult{Report: plan.Report{
+		Status: plan.StatusDrift,
+		Root:   "/repo",
+		Items: []plan.Item{{
+			Provider: "brew",
+			Kind:     "cask",
+			Name:     "cursor-cli",
+			Status:   plan.StatusExtra,
+			Live:     true,
+		}},
+	}}, listOptions{root: "/repo"})
+	sections := listTableSections(report)
+	var row toolRow
+	found := false
+	for _, section := range sections {
+		for _, candidate := range section.Rows {
+			if candidate.Name == "cursor-cli" {
+				row = candidate
+				found = true
+				break
+			}
+		}
+		if found {
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected cursor-cli table row, got %#v", sections)
+	}
+	if len(row.Actions) != 2 {
+		t.Fatalf("expected work/personal adopt actions, got %#v", row.Actions)
+	}
+	action, kind, name, category, ok := parseBrewDriftAction(row.Actions[0].Value)
+	if !ok || action != "adopt" || kind != "cask" || name != "cursor-cli" || category != "work" {
+		t.Fatalf("unexpected first brew drift action: action=%q kind=%q name=%q category=%q ok=%v", action, kind, name, category, ok)
+	}
+	if !strings.Contains(row.Detail, "command brew") || !strings.Contains(row.Detail, "manual/local-only") {
+		t.Fatalf("expected drift cause and alternatives in detail:\n%s", row.Detail)
+	}
+}
+
+func TestBrewDriftAdoptActionWritesBrewfileThroughMutationBoundary(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	t.Setenv("HOME", t.TempDir())
+	root := t.TempDir()
+	enableBrewfileWriteMode(t, root, "template")
+	if err := os.WriteFile(filepath.Join(root, "Brewfile.tmpl"), []byte(`{{ if has "work" .profiles }}
+{{ end }}
+{{ if has "personal" .profiles }}
+{{ end }}
+`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	miseDir := filepath.Join(root, "dot_config", "mise")
+	if err := os.MkdirAll(miseDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(miseDir, "config.toml"), []byte("[tools]\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	action := brewDriftActionValue("adopt", "cask", "cursor-cli", "work")
+	if _, ok := routedDetailWriteActionSpec(action); !ok {
+		t.Fatalf("expected brew drift action to be confirmable")
+	}
+	if !applyRoutedDetailWriteAction(root, &updateReport{}, action, "", "") {
+		t.Fatalf("expected brew drift action to write Brewfile")
+	}
+	data, err := os.ReadFile(filepath.Join(root, "Brewfile.tmpl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), `cask "cursor-cli"`) {
+		t.Fatalf("expected adopted cask in Brewfile:\n%s", data)
+	}
+}
+
 func TestPrintListTextUsesMiseSectionsInsteadOfDuplicateInventoryItems(t *testing.T) {
 	report := listReport{
 		Status: plan.StatusOK,
@@ -425,13 +502,13 @@ func TestPrintListTextHonorsSectionLimit(t *testing.T) {
 	}
 }
 
-func TestListHubChoicesExposeFiltersAndNavigation(t *testing.T) {
+func TestListHubChoicesExposeDomainNavigation(t *testing.T) {
 	backendPlan := backendPlanReport{Findings: []backendFinding{{Name: "ripgrep", RecommendedName: "ripgrep"}}}
 	choices := listHubChoices(listReport{
 		Items: []plan.Item{
 			{Provider: "brew", Kind: "brew", Name: "jq", Status: plan.StatusExtra},
 		},
-	}, backendPlan, false, updateReport{}, false)
+	}, backendPlan, false, updateReport{}, false, true)
 	if choices[0].Value != listHubActionFull || !choices[0].Selected {
 		t.Fatalf("expected installed inventory to be the default list hub choice, got %#v", choices[0])
 	}
@@ -439,9 +516,14 @@ func TestListHubChoicesExposeFiltersAndNavigation(t *testing.T) {
 	for _, choice := range choices {
 		values[choice.Value] = true
 	}
-	for _, want := range []string{listHubActionProvider, listHubActionKind, listHubActionCategory, listHubActionStatus, listHubActionQuery, listHubActionManual, listHubActionBackends, listHubActionSupport, listHubActionLimited, listHubActionDetails, listHubActionFull, updevActionExit} {
+	for _, want := range []string{listHubActionManual, listHubActionBackends, listHubActionSupport, listHubActionLimited, listHubActionDetails, listHubActionFull, updevActionExit} {
 		if !values[want] {
 			t.Fatalf("expected list hub choice %q in %#v", want, choices)
+		}
+	}
+	for _, hidden := range []string{listHubActionProvider, listHubActionKind, listHubActionCategory, listHubActionStatus, listHubActionQuery} {
+		if values[hidden] {
+			t.Fatalf("expected selector hub to hide duplicate filter choice %q in %#v", hidden, choices)
 		}
 	}
 	if values[listHubActionAttention] {
@@ -458,8 +540,21 @@ func TestListHubChoicesExposeFiltersAndNavigation(t *testing.T) {
 	}
 }
 
+func TestListHubChoicesKeepFiltersForInternalRouterMenus(t *testing.T) {
+	choices := listHubChoices(listReport{}, backendPlanReport{}, false, updateReport{}, false, false)
+	values := map[string]bool{}
+	for _, choice := range choices {
+		values[choice.Value] = true
+	}
+	for _, want := range []string{listHubActionProvider, listHubActionKind, listHubActionCategory, listHubActionStatus, listHubActionQuery} {
+		if !values[want] {
+			t.Fatalf("expected internal router choice %q in %#v", want, choices)
+		}
+	}
+}
+
 func TestListHubChoicesExposeBackendWhileEvidenceIsLoading(t *testing.T) {
-	choices := listHubChoices(listReport{}, backendPlanReport{}, true, updateReport{}, false)
+	choices := listHubChoices(listReport{}, backendPlanReport{}, true, updateReport{}, false, true)
 	values := map[string]bool{}
 	descriptions := map[string]string{}
 	for _, choice := range choices {
@@ -703,6 +798,49 @@ func TestToolTableBrowserExpandedActionsAreSelectable(t *testing.T) {
 	model = updated.(toolTableBrowserModel)
 	if model.State.Action != "open-update" {
 		t.Fatalf("expected Enter to run focused expanded action, got %#v", model.State)
+	}
+}
+
+func TestToolTableBrowserStateRestoresFocusedAction(t *testing.T) {
+	actions := []reviewui.Action{{
+		Value: "open-backend",
+		Label: "open backend review",
+	}, {
+		Value: "open-update",
+		Label: "open update evidence",
+	}}
+	model := newToolTableBrowserModel("updev list brew", []toolSection{{
+		Name:  "brew/brew",
+		Title: "brew / brew",
+		Rows: []toolRow{{
+			Name:    "ripgrep",
+			State:   "ok",
+			Detail:  "description: ripgrep",
+			Actions: actions,
+		}},
+	}}, detailBrowserState{}, false)
+	updated, _ := model.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyEnter}))
+	model = updated.(toolTableBrowserModel)
+	updated, _ = model.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyDown}))
+	model = updated.(toolTableBrowserModel)
+	if model.State.ActionFocus != 2 {
+		t.Fatalf("expected second focused table action to be persisted as one-based state, got %#v", model.State)
+	}
+
+	restored := newToolTableBrowserModel("updev list brew", []toolSection{{
+		Name:  "brew/brew",
+		Title: "brew / brew",
+		Rows: []toolRow{{
+			Name:    "ripgrep",
+			State:   "ok",
+			Detail:  "description: ripgrep",
+			Actions: actions,
+		}},
+	}}, model.State, false)
+	updated, _ = restored.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyEnter}))
+	restored = updated.(toolTableBrowserModel)
+	if restored.State.Action != "open-update" {
+		t.Fatalf("expected restored focused table action to run second action, got %#v", restored.State)
 	}
 }
 

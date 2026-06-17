@@ -1744,6 +1744,27 @@ ripgrep = "15.1.0"
 	}
 }
 
+func TestBackendToolSectionsExposeLoadingAndEmptyStates(t *testing.T) {
+	loading := backendToolSectionsWithLoading(backendPlanReport{}, true)
+	if len(loading) != 1 || loading[0].Name != "backend/loading" || len(loading[0].Rows) != 1 {
+		t.Fatalf("expected loading backend section, got %#v", loading)
+	}
+	if !strings.Contains(loading[0].Rows[0].Detail, "準備中") && !strings.Contains(loading[0].Rows[0].Detail, "prepared") {
+		t.Fatalf("expected loading row to explain preparation, got %#v", loading[0].Rows[0])
+	}
+
+	empty := backendToolSectionsWithLoading(backendPlanReport{}, false)
+	if len(empty) != 1 || empty[0].Name != "backend/ok" || len(empty[0].Rows) != 1 {
+		t.Fatalf("expected explicit empty backend section, got %#v", empty)
+	}
+
+	report := backendPlanReport{Findings: []backendFinding{{Type: "homebrew-to-mise", Provider: "brew", Kind: "brew", Name: "ripgrep", RecommendedProvider: "mise", RecommendedName: "ripgrep"}}}
+	sections := backendToolSectionsWithLoading(report, false)
+	if len(sections) == 0 || sections[0].Name == "backend/ok" || sections[0].Name == "backend/loading" {
+		t.Fatalf("expected real backend findings to be shown, got %#v", sections)
+	}
+}
+
 func TestBackendPreferenceTiersHonorConfiguredOrder(t *testing.T) {
 	config := updevConfig{Backends: updevBackendsConfig{PreferenceOrder: []string{"store/native", "mise/github", "linux/apt"}}}
 	tiers := backendPreferenceTiersWithConfig(config)

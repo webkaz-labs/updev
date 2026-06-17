@@ -120,14 +120,42 @@ func NewDetailBrowserModel(options DetailBrowserOptions) DetailBrowserModel {
 		FilterInput:         state.Query,
 		MouseMode:           browserMouseOff,
 		pendingMouseRelease: -1,
-		actionFocus:         -1,
+		actionFocus:         stateActionFocusIndex(state.ActionFocus),
 		actions:             fillActions(options.Actions),
 		labels:              fillDetailBrowserLabels(options.Labels),
 		format:              fillDetailBrowserFormatters(options.Format),
 	}
 	model.refreshFilteredRows()
 	model.clampSelection()
+	model.clampActionFocus()
 	return model
+}
+
+func stateActionFocusIndex(value int) int {
+	if value <= 0 {
+		return -1
+	}
+	return value - 1
+}
+
+func (m *DetailBrowserModel) setActionFocus(index int) {
+	m.actionFocus = index
+	if index < 0 {
+		m.State.ActionFocus = 0
+		return
+	}
+	m.State.ActionFocus = index + 1
+}
+
+func (m *DetailBrowserModel) clampActionFocus() {
+	rows := m.filteredRows()
+	if m.State.Selected < 0 || m.State.Selected >= len(rows) || !m.State.Expanded[m.State.Selected] {
+		m.setActionFocus(-1)
+		return
+	}
+	if m.actionFocus >= len(rows[m.State.Selected].Actions) {
+		m.setActionFocus(-1)
+	}
 }
 
 func DefaultDetailBrowserLabels() DetailBrowserLabels {
@@ -308,12 +336,12 @@ func (m DetailBrowserModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.Move(m.visibleRowCapacity())
 		case "home":
 			m.State.Selected = 0
-			m.actionFocus = -1
+			m.setActionFocus(-1)
 			m.EnsureSelectedVisible()
 		case "end":
 			if count := m.filteredRowCount(); count > 0 {
 				m.State.Selected = count - 1
-				m.actionFocus = -1
+				m.setActionFocus(-1)
 				m.EnsureSelectedVisible()
 			}
 		case "enter":
@@ -363,7 +391,7 @@ func (m DetailBrowserModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			m.State.Selected = msg.Index
-			m.actionFocus = -1
+			m.setActionFocus(-1)
 			m.EnsureSelectedVisible()
 			m.pendingMouseRelease = msg.Index
 		}
@@ -381,6 +409,7 @@ func (m *DetailBrowserModel) clearFilter() bool {
 	m.FilterInput = ""
 	m.State.Selected = 0
 	m.State.Offset = 0
+	m.setActionFocus(-1)
 	m.refreshFilteredRows()
 	m.clampSelection()
 	return true
@@ -417,14 +446,14 @@ func (m *DetailBrowserModel) applyFilterInput() {
 	m.State.Query = strings.TrimSpace(m.FilterInput)
 	m.State.Selected = 0
 	m.State.Offset = 0
-	m.actionFocus = -1
+	m.setActionFocus(-1)
 	m.refreshFilteredRows()
 	m.clampSelection()
 }
 
 func (m *DetailBrowserModel) handleMouseToggle(index int) {
 	m.State.Selected = index
-	m.actionFocus = -1
+	m.setActionFocus(-1)
 	m.ToggleSelected()
 }
 
@@ -435,13 +464,14 @@ func (m *DetailBrowserModel) Move(delta int) {
 		return
 	}
 	m.State.Selected += delta
-	m.actionFocus = -1
+	m.setActionFocus(-1)
 	if m.State.Selected < 0 {
 		m.State.Selected = 0
 	}
 	if m.State.Selected >= count {
 		m.State.Selected = count - 1
 	}
+	m.clampActionFocus()
 	m.EnsureSelectedVisible()
 }
 
@@ -462,16 +492,16 @@ func (m *DetailBrowserModel) moveFocus(delta int) {
 				next = 0
 			}
 			if next >= 0 && next < actionCount {
-				m.actionFocus = next
+				m.setActionFocus(next)
 				m.EnsureSelectedVisible()
 				return
 			}
 			if next < 0 {
-				m.actionFocus = -1
+				m.setActionFocus(-1)
 				m.EnsureSelectedVisible()
 				return
 			}
-			m.actionFocus = -1
+			m.setActionFocus(-1)
 		}
 	}
 	m.Move(delta)
@@ -501,7 +531,7 @@ func (m *DetailBrowserModel) ToggleSelected() {
 		m.State.Expanded = map[int]bool{}
 	}
 	m.State.Expanded[m.State.Selected] = !m.State.Expanded[m.State.Selected]
-	m.actionFocus = -1
+	m.setActionFocus(-1)
 	m.EnsureSelectedVisible()
 }
 
@@ -514,6 +544,7 @@ func (m *DetailBrowserModel) selectRowAction(index int) bool {
 	if index < 0 || index >= len(row.Actions) || row.Actions[index].Value == "" {
 		return false
 	}
+	m.setActionFocus(index)
 	m.State.Action = row.Actions[index].Value
 	return true
 }
