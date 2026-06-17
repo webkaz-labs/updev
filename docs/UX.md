@@ -44,11 +44,11 @@ evidence inspection.
    - `Tab` / `Shift+Tab` switches directly between installed inventory and
      manual app rows while preserving each view's cursor, filter, and expanded
      rows.
-   - Back/Home from the top inventory browser opens the full selector menu so
-     backend convergence, cached update/security evidence, and filter views are
-     easy to switch to.
-   - `updev hub` opens that full selector menu directly when a user wants the
-     all-menu list of views and filters first.
+   - Back/Home from the top inventory browser opens the domain switcher so
+     backend convergence and cached update/security evidence are easy to reach
+     without duplicating inventory filter controls.
+   - `updev hub` opens that domain switcher directly when a user wants review
+     domains first.
    - The installed inventory rows are primarily read-only.
    - Rows should expose routing actions to the relevant action domain when a
      matching manual/backend/security/update review context exists.
@@ -311,9 +311,9 @@ changes.
 - [x] `updev list --interactive` item rows expose routing actions when a focused
   item matches security or update evidence.
 - [x] `updev list` starts with the installed inventory browser, while
-  `updev hub` opens the full view/filter selector menu directly.
+  `updev hub` opens the review-domain switcher directly.
 - [x] `updev list` can switch between installed inventory and manual app rows
-  with `Tab` / `Shift+Tab` without visiting the full selector menu.
+  with `Tab` / `Shift+Tab` without visiting the domain switcher.
 - [x] Installed inventory expanded rows show enough evidence to explain why a
   routing action exists.
 - [x] Filtered `updev list --interactive` views propagate row routing actions

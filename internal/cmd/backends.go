@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/webkaz-labs/updev/internal/backend"
+	"github.com/webkaz-labs/updev/internal/plan"
 	"github.com/webkaz-labs/updev/internal/reviewui"
 	"github.com/webkaz-labs/updev/internal/runner"
 	"github.com/webkaz-labs/updev/internal/textui"
@@ -289,6 +290,33 @@ func backendToolSections(report backendPlanReport) []toolSection {
 		sections[sectionIndex].Rows = append(sections[sectionIndex].Rows, reviewui.DetailRowToRow(backendFindingDetailRow(finding)))
 	}
 	return sections
+}
+
+func backendToolSectionsWithLoading(report backendPlanReport, loading bool) []toolSection {
+	if loading {
+		return []toolSection{{
+			Name:  "backend/loading",
+			Title: tr("backend / loading", "backend / loading"),
+			Rows: []toolRow{{
+				Name:   tr("preparing backend evidence", "backend evidence を準備中"),
+				State:  string(plan.StatusHeld),
+				Detail: tr("Provider/backend recommendations are still being prepared. This view will refresh when the evidence is ready.", "provider/backend 推奨を準備中です。根拠が揃うとこの view は更新されます。"),
+			}},
+		}}
+	}
+	sections := backendToolSections(report)
+	if len(sections) > 0 {
+		return sections
+	}
+	return []toolSection{{
+		Name:  "backend/ok",
+		Title: tr("backend / ok", "backend / ok"),
+		Rows: []toolRow{{
+			Name:   tr("no backend findings", "backend 推奨なし"),
+			State:  string(plan.StatusOK),
+			Detail: tr("No provider/backend convergence findings are available for the current inventory.", "現在の inventory には provider/backend 整理の推奨はありません。"),
+		}},
+	}}
 }
 
 func backendFindingDetailRow(finding backendFinding) detailBrowserRow {
