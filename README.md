@@ -77,7 +77,8 @@ review queue, and JSON output for automation.
   desired/live package and runtime state. TTY runs open the grouped inventory
   list first, with drill-down tables grouped by provider, category, and status;
   `Tab` switches to manual app inventory without leaving the browser, and
-  `updev hub` opens the full view/filter selector when you want the menu first.
+  `updev hub` opens the review-domain switcher when you want manual/backend/
+  update/security/support views first.
 - **Desired-state checks**: `updev check`, `updev sync`, and `updev status`
   find missing, extra, drifted, blocked, and unavailable entries.
 - **mise hygiene**: `updev fix mise` previews rewrites for unsafe `latest` pins
@@ -265,7 +266,7 @@ candidate when strict mode is intentionally holding it.
 | `updev` | Run the update workflow. |
 | `updev --dry-run` | Preview the update workflow without applying updates. |
 | `updev list` / `updev ls` | Show grouped desired/live inventory. |
-| `updev hub` | Open the full inventory view/filter selector menu. |
+| `updev hub` | Open the review-domain switcher for inventory/manual/backend/update/security/support. |
 | `updev --plain` / `updev list --plain` | Print stable text output without opening TUI. |
 | `updev status` / `updev st` | Show compact current state. |
 | `updev check` / `updev ck` | Validate manifests and provider consistency. |

@@ -204,6 +204,27 @@ func ExtraGuidance(item plan.Item, lang string) Guidance {
 	return Guidance{Action: "adopt-remove-or-ignore", Detail: i18n.Pick(lang, "installed entry is unmanaged; adopt it, remove it, or document it as manual/local-only", "インストール済み entry が未管理です。採用するか、削除するか、manual/local-only として記録してください")}
 }
 
+func HomebrewExtraAdoptable(item plan.Item) bool {
+	if !strings.EqualFold(item.Provider, "brew") || item.Status != plan.StatusExtra || !item.Live {
+		return false
+	}
+	switch strings.ToLower(strings.TrimSpace(item.Kind)) {
+	case "brew", "cask", "tap", "vscode":
+		return strings.TrimSpace(item.Name) != ""
+	default:
+		return false
+	}
+}
+
+func HomebrewExtraDriftDetail(item plan.Item, lang string) string {
+	if !HomebrewExtraAdoptable(item) {
+		return ""
+	}
+	return i18n.Pick(lang,
+		"Homebrew reports this entry as installed, but it is not in the desired Brewfile. This can happen when it was installed through command brew/full-path brew, another shell, brew bundle, a vendor/app sidecar installer, or before the updev shell wrapper was adopted. Choose an explicit category before adopting it into Brewfile; otherwise uninstall it outside updev or document it as manual/local-only.",
+		"Homebrew にはインストール済みですが、desired Brewfile にはありません。原因候補: command brew / フルパス brew、別 shell、brew bundle、vendor/app の sidecar installer、updev shell wrapper 導入前の install。Brewfile に採用する場合は category を明示して選びます。採用しない場合は updev 外で uninstall するか、manual/local-only として記録してください。")
+}
+
 func ProviderMismatchIndex(items []plan.Item) map[string]plan.Item {
 	missing := map[string]plan.Item{}
 	extra := map[string]plan.Item{}

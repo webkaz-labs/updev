@@ -40,7 +40,7 @@ type options struct {
 const (
 	usageExitCode = 64
 	toolName      = "updev"
-	toolVersion   = "v0.7.13"
+	toolVersion   = "v0.7.14"
 )
 
 const (
@@ -939,7 +939,7 @@ func printUsage() {
 Human interactive entry points:
   updev                         # [interactive] update workflow, then dashboard on TTY
   updev list                    # [interactive] installed inventory browser on TTY
-  updev hub                     # [interactive] full list menu selector on TTY
+  updev hub                     # [interactive] review-domain switcher on TTY
   updev last                    # [interactive] reopen cached update dashboard on TTY
 
 Agent/script-safe output:
@@ -961,7 +961,7 @@ Commands:
   updev doctor dependencies [--ledger file] [--format text|json]
   updev doctor support [--surface provider|command|report|inventory_source|all] [--label supported_preview|experimental|compatibility|deferred] [--format text|json]
   updev last [--section summary|updates|security|inventory|logs|full] [--details] [--interactive|--no-interactive|--plain] [--format text|json]
-  updev hub [inventory/list options]  # full menu selector for list views
+  updev hub [inventory/list options]  # review-domain switcher for list views
   updev inventory [--refresh] [--include-vscode] [--provider name] [--kind kind] [--status status] [--query text] [--limit n] [--details] [--interactive|--no-interactive|--plain] [--format text|json]
   updev inventory scan [--provider manual] [--format text|json]
   updev inventory plan [--provider manual] [--action action] [--query text] [--limit n] [--format text|json]

@@ -18,7 +18,9 @@ import (
 	"github.com/webkaz-labs/updev/internal/manualinventory"
 	"github.com/webkaz-labs/updev/internal/plan"
 	"github.com/webkaz-labs/updev/internal/reviewui"
+	"github.com/webkaz-labs/updev/internal/runner"
 	"github.com/webkaz-labs/updev/internal/support"
+	"github.com/webkaz-labs/updev/internal/syncreport"
 	"github.com/webkaz-labs/updev/internal/textui"
 
 	tea "charm.land/bubbletea/v2"
@@ -690,7 +692,10 @@ const (
 	listHubActionFull      = "full"
 )
 
-const listRouteActionPrefix = "list-route"
+const (
+	listRouteActionPrefix = "list-route"
+	brewDriftActionPrefix = "brew-drift"
+)
 
 type listRouteAction struct {
 	Domain   string
@@ -723,10 +728,10 @@ func runListHub(report listReport, selectorHub bool) {
 		if action == "" {
 			var err error
 			color := textui.ColorEnabled()
-			choices := listHubChoices(report, backendPlan, backendLoading, lastUpdate.Report, hasLastUpdate)
+			choices := listHubChoices(report, backendPlan, backendLoading, lastUpdate.Report, hasLastUpdate, selectorHub)
 			if selectorHub {
 				printListHubDashboard(os.Stdout, report, color)
-				action, err = runUpdevSelect("updev hub", tr("Choose a view or filter. Back/Home/Exit are available after each view.", "表示または filter を選択します。各 view から Back/Home/Exit できます。"), choices, defaultAction)
+				action, err = runUpdevSelect("updev hub", tr("Choose a review domain. Back/Home/Exit are available after each view.", "確認 domain を選択します。各 view から Back/Home/Exit できます。"), choices, defaultAction)
 				if err != nil {
 					return
 				}
@@ -916,7 +921,7 @@ func runListHub(report listReport, selectorHub bool) {
 		case listHubActionBackends:
 			defaultAction = listHubActionBackends
 			stateKey := "list-backends"
-			state, err := runToolTableBrowserWithState("updev backend convergence", backendToolSections(backendPlan), detailStates[stateKey], textui.ColorEnabled())
+			state, err := runToolTableBrowserWithState("updev backend convergence", backendToolSectionsWithLoading(backendPlan, backendLoading), detailStates[stateKey], textui.ColorEnabled())
 			if err != nil {
 				printBackendPlanText(os.Stdout, backendPlan, textui.ColorEnabled())
 				break
@@ -1147,15 +1152,20 @@ func printListHubDashboard(w io.Writer, report listReport, color bool) {
 	printProviderSummary(w, report.Providers, color)
 }
 
-func listHubChoices(report listReport, backendPlan backendPlanReport, backendLoading bool, lastUpdate updateReport, hasLastUpdate bool) []updevChoice {
+func listHubChoices(report listReport, backendPlan backendPlanReport, backendLoading bool, lastUpdate updateReport, hasLastUpdate bool, selectorHub bool) []updevChoice {
 	choices := []updevChoice{
 		{Value: listHubActionFull, Label: tr("Installed inventory", "インストール済み一覧"), Description: fmt.Sprintf(tr("Review all %d installed and desired inventory rows with grouping, filters, and expansion.", "全 %d 件の installed / desired inventory 行を grouping / filter / 展開付きで確認します。"), listInventoryReviewCount(report)), Selected: true},
-		{Value: listHubActionProvider, Label: tr("Provider filter", "provider filter"), Description: tr("Choose a provider; rich rows expand with Enter or Space.", "provider を選びます。詳細行は Enter / Space で展開できます。")},
-		{Value: listHubActionKind, Label: tr("Kind filter", "kind filter"), Description: tr("Choose brew, cask, vscode, tap, or tool rows.", "brew / cask / vscode / tap / tool で絞り込みます。")},
-		{Value: listHubActionCategory, Label: tr("Category filter", "category filter"), Description: tr("Choose work, personal, runtime, core, npm, or another group.", "work / personal / runtime / core / npm などで絞り込みます。")},
-		{Value: listHubActionStatus, Label: tr("Status filter", "status filter"), Description: tr("Choose attention, active, inactive, missing, extra, drift, unavailable, or ok.", "attention / active / inactive / missing / extra / drift / unavailable / ok を選びます。")},
-		{Value: listHubActionQuery, Label: tr("Query filter", "query filter"), Description: tr("Search row names, versions, and descriptions.", "name / version / description を検索します。")},
 		{Value: listHubActionManual, Label: tr("Manual apps", "手動管理アプリ"), Description: tr("Review read-only manual, vendor, App Store, and non-provider app rows.", "manual / vendor / App Store / provider 外アプリを read-only で確認します。")},
+	}
+	if !selectorHub {
+		choices = append(
+			choices,
+			updevChoice{Value: listHubActionProvider, Label: tr("Provider filter", "provider filter"), Description: tr("Choose a provider; rich rows expand with Enter or Space.", "provider を選びます。詳細行は Enter / Space で展開できます。")},
+			updevChoice{Value: listHubActionKind, Label: tr("Kind filter", "kind filter"), Description: tr("Choose brew, cask, vscode, tap, or tool rows.", "brew / cask / vscode / tap / tool で絞り込みます。")},
+			updevChoice{Value: listHubActionCategory, Label: tr("Category filter", "category filter"), Description: tr("Choose work, personal, runtime, core, npm, or another group.", "work / personal / runtime / core / npm などで絞り込みます。")},
+			updevChoice{Value: listHubActionStatus, Label: tr("Status filter", "status filter"), Description: tr("Choose attention, active, inactive, missing, extra, drift, unavailable, or ok.", "attention / active / inactive / missing / extra / drift / unavailable / ok を選びます。")},
+			updevChoice{Value: listHubActionQuery, Label: tr("Query filter", "query filter"), Description: tr("Search row names, versions, and descriptions.", "name / version / description を検索します。")},
+		)
 	}
 	if backendLoading {
 		choices = append(choices, updevChoice{Value: listHubActionBackends, Label: tr("Backend convergence", "backend 整理"), Description: tr("Prepare provider/backend recommendations asynchronously after the view opens.", "view を開いてから provider/backend 推奨を非同期で準備します。")})
@@ -1526,6 +1536,7 @@ func itemToolRowActions(item plan.Item, evidence plan.EvidenceIndex) []reviewui.
 	if item.Provider == manualProviderName {
 		actions = append(actions, manualReviewRouteAction(item))
 	}
+	actions = append(actions, brewDriftReviewActions(item)...)
 	itemEvidence := itemListEvidence(item, evidence)
 	if len(itemEvidence.Backends) > 0 {
 		actions = append(actions, reviewui.Action{
@@ -1557,6 +1568,33 @@ func itemToolRowActions(item plan.Item, evidence plan.EvidenceIndex) []reviewui.
 	return actions
 }
 
+func brewDriftReviewActions(item plan.Item) []reviewui.Action {
+	if !syncreport.HomebrewExtraAdoptable(item) {
+		return nil
+	}
+	kind := strings.ToLower(strings.TrimSpace(item.Kind))
+	name := strings.TrimSpace(item.Name)
+	if kind == "" || name == "" {
+		return nil
+	}
+	return []reviewui.Action{
+		{
+			Value:       brewDriftActionValue("adopt", kind, name, "work"),
+			Label:       tr("add to Brewfile (work)", "Brewfile に追加(work)"),
+			Description: fmt.Sprintf(tr("adopt %s %q into the work category", "%s %q を work category に採用します"), kind, name),
+			Badge:       "fix",
+			BadgeStatus: string(plan.StatusDrift),
+		},
+		{
+			Value:       brewDriftActionValue("adopt", kind, name, "personal"),
+			Label:       tr("add to Brewfile (personal)", "Brewfile に追加(personal)"),
+			Description: fmt.Sprintf(tr("adopt %s %q into the personal category", "%s %q を personal category に採用します"), kind, name),
+			Badge:       "fix",
+			BadgeStatus: string(plan.StatusDrift),
+		},
+	}
+}
+
 func manualReviewRouteAction(item plan.Item) reviewui.Action {
 	return manualReviewRouteActionForTarget(item.Name, item.Provider, item.Kind)
 }
@@ -1583,6 +1621,25 @@ func parseListRouteAction(value string) (listRouteAction, bool) {
 		return listRouteAction{}, false
 	}
 	return listRouteAction{Domain: parts[1], Provider: parts[2], Kind: parts[3], Name: parts[4]}, true
+}
+
+func brewDriftActionValue(action string, kind string, name string, category string) string {
+	return strings.Join([]string{brewDriftActionPrefix, action, kind, name, category}, "\t")
+}
+
+func parseBrewDriftAction(value string) (action string, kind string, name string, category string, ok bool) {
+	parts := strings.SplitN(value, "\t", 5)
+	if len(parts) != 5 || parts[0] != brewDriftActionPrefix {
+		return "", "", "", "", false
+	}
+	action = strings.TrimSpace(parts[1])
+	kind = strings.TrimSpace(parts[2])
+	name = strings.TrimSpace(parts[3])
+	category = strings.TrimSpace(parts[4])
+	if action == "" || kind == "" || name == "" {
+		return "", "", "", "", false
+	}
+	return action, kind, name, category, true
 }
 
 type listRouteDetailOptions struct {
@@ -2896,6 +2953,9 @@ func enrichItems(items []plan.Item, cache legacycache.Cache, manualIndex map[str
 				enriched.Detail = listDriftGuidanceDetail(guidance)
 			}
 		}
+		if detail := syncreport.HomebrewExtraDriftDetail(enriched, defaultLanguage()); detail != "" {
+			enriched.Detail = joinManualDetails(enriched.Detail, tr("drift: ", "ドリフト: ")+detail)
+		}
 		out = append(out, enriched)
 	}
 	return out
@@ -3269,7 +3329,7 @@ func (m *listHubRouterModel) showAction(action string, returnAction string) {
 		manualReport := derivedListReport(m.report, listOptions{provider: manualProviderName})
 		m.showListFiltered("updev list manual", manualReport, listHubActionManual, returnAction, listHubActionFull, listHubActionFull)
 	case listHubActionBackends:
-		m.showTable("updev backend convergence", backendToolSections(m.backendPlan), listHubActionBackends, returnAction, tableBrowserActions(), tableBrowserLabels())
+		m.showTable("updev backend convergence", backendToolSectionsWithLoading(m.backendPlan, m.backendLoading), listHubActionBackends, returnAction, tableBrowserActions(), tableBrowserLabels())
 	case listHubActionUpdates:
 		if m.hasLastUpdate {
 			m.showDetail("updev update evidence", updateLogDetailRows(m.lastUpdate), listHubActionUpdates, returnAction)
@@ -3412,6 +3472,14 @@ func (m listHubRouterModel) handleConfirmAction(confirm confirmBrowserModel) (te
 }
 
 func (m *listHubRouterModel) refreshAfterWriteAction() {
+	if action, _, _, _, ok := parseBrewDriftAction(m.writeFlow.Action); ok && action == "adopt" {
+		result := collectInventory(context.Background(), m.report.Root, runner.Local{})
+		updated := buildListReport(inventoryResult{Report: result}, listOptions{root: m.report.Root})
+		if !m.backendLoading {
+			updated.Evidence = addBackendListEvidence(updated.Evidence, m.backendPlan)
+		}
+		m.report = updated
+	}
 	if action, _, _, ok := parseBackendDetailAction(m.writeFlow.Action); ok && backendDetailActionRequiresConfirmation(action) {
 		m.backendPlan = buildBackendPlanForHub(m.report.Root)
 		m.backendLoading = false
@@ -3845,6 +3913,16 @@ func (m listHubRouterModel) currentAction() string {
 type detailWriteActionSpec = reviewui.WriteActionSpec
 
 func routedDetailWriteActionSpec(value string) (detailWriteActionSpec, bool) {
+	if action, kind, name, category, ok := parseBrewDriftAction(value); ok {
+		if action != "adopt" || (category != "work" && category != "personal") {
+			return detailWriteActionSpec{}, false
+		}
+		return detailWriteActionSpec{
+			Title:       tr("Homebrew drift action", "Homebrew drift 操作"),
+			Prompt:      fmt.Sprintf(tr("Add %s %q to Brewfile category %s?", "Brewfile の %s category に %s %q を追加しますか?"), kind, name, category),
+			Description: tr("This changes desired state only. It does not install or uninstall the Homebrew package. Brewfile writes require [brewfile].write_mode to allow mutation.", "desired state だけを変更します。Homebrew package の install/uninstall は行いません。Brewfile 書き込みには [brewfile].write_mode で mutation を許可している必要があります。"),
+		}, true
+	}
 	if action, target, ok := parseManualPlanDetailAction(value); ok {
 		if action == "edit" || !manualPlanDetailActionRequiresConfirmation(action) {
 			return detailWriteActionSpec{}, false
@@ -3927,6 +4005,20 @@ func routedDetailWriteActionSpec(value string) (detailWriteActionSpec, bool) {
 }
 
 func applyRoutedDetailWriteAction(root string, report *updateReport, value string, reason string, expires string) bool {
+	if action, kind, name, category, ok := parseBrewDriftAction(value); ok {
+		if action != "adopt" {
+			return false
+		}
+		mutation := buildMutationReport(context.Background(), mutationOptions{
+			action:   "add",
+			root:     root,
+			provider: "brew",
+			kind:     kind,
+			name:     name,
+			category: category,
+		})
+		return mutation.Status == plan.StatusOK && mutation.Changed
+	}
 	if action, target, ok := parseManualPlanDetailAction(value); ok {
 		return applyConfirmedManualPlanDetailAction(root, action, target)
 	}

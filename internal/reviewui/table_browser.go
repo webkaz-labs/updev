@@ -90,9 +90,10 @@ func NewTableBrowserModel(title string, sections []Section, state State, labels 
 	} else if state.Selected >= count {
 		state.Selected = count - 1
 	}
-	model := TableBrowserModel{Title: title, Sections: sections, State: state, Color: color, FilterInput: state.Query, MouseMode: MouseOff, pendingMouseRelease: -1, actionFocus: -1, actions: fillActions(actions), labels: fillTableBrowserLabels(labels)}
+	model := TableBrowserModel{Title: title, Sections: sections, State: state, Color: color, FilterInput: state.Query, MouseMode: MouseOff, pendingMouseRelease: -1, actionFocus: stateActionFocusIndex(state.ActionFocus), actions: fillActions(actions), labels: fillTableBrowserLabels(labels)}
 	model.refreshFilteredSections()
 	model.clampSelection()
+	model.clampActionFocus()
 	return model
 }
 
@@ -150,12 +151,12 @@ func (m TableBrowserModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.move(m.visibleRowCapacity())
 		case "home":
 			m.State.Selected = 0
-			m.actionFocus = -1
+			m.setActionFocus(-1)
 			m.ensureSelectedVisible()
 		case "end":
 			if count := RowCount(m.Sections); count > 0 {
 				m.State.Selected = count - 1
-				m.actionFocus = -1
+				m.setActionFocus(-1)
 				m.ensureSelectedVisible()
 			}
 		case "enter":
@@ -202,7 +203,7 @@ func (m TableBrowserModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			m.State.Selected = msg.Index
-			m.actionFocus = -1
+			m.setActionFocus(-1)
 			m.ensureSelectedVisible()
 			m.pendingMouseRelease = msg.Index
 		}
@@ -220,6 +221,7 @@ func (m *TableBrowserModel) clearFilter() bool {
 	m.FilterInput = ""
 	m.State.Selected = 0
 	m.State.Offset = 0
+	m.setActionFocus(-1)
 	m.refreshFilteredSections()
 	m.clampSelection()
 	return true
@@ -256,7 +258,7 @@ func (m *TableBrowserModel) applyFilterInput() {
 	m.State.Query = strings.TrimSpace(m.FilterInput)
 	m.State.Selected = 0
 	m.State.Offset = 0
-	m.actionFocus = -1
+	m.setActionFocus(-1)
 	m.refreshFilteredSections()
 	m.clampSelection()
 }
@@ -278,7 +280,7 @@ func (m *TableBrowserModel) move(delta int) {
 		return
 	}
 	m.State.Selected += delta
-	m.actionFocus = -1
+	m.setActionFocus(-1)
 	if m.State.Selected < 0 {
 		m.State.Selected = 0
 	}
@@ -304,16 +306,16 @@ func (m *TableBrowserModel) moveFocus(delta int) {
 			next = 0
 		}
 		if next >= 0 && next < actionCount {
-			m.actionFocus = next
+			m.setActionFocus(next)
 			m.ensureSelectedVisible()
 			return
 		}
 		if next < 0 {
-			m.actionFocus = -1
+			m.setActionFocus(-1)
 			m.ensureSelectedVisible()
 			return
 		}
-		m.actionFocus = -1
+		m.setActionFocus(-1)
 	}
 	m.move(delta)
 }
@@ -343,15 +345,15 @@ func (m *TableBrowserModel) toggleSelected() {
 	}
 	m.State.Expanded[m.State.Selected] = !m.State.Expanded[m.State.Selected]
 	if !m.State.Expanded[m.State.Selected] {
-		m.actionFocus = -1
+		m.setActionFocus(-1)
 		m.ensureSelectedVisible()
 		return
 	}
 	row, ok := m.selectedRow()
 	if ok && len(row.Actions) > 0 {
-		m.actionFocus = 0
+		m.setActionFocus(0)
 	} else {
-		m.actionFocus = -1
+		m.setActionFocus(-1)
 	}
 	m.ensureSelectedVisible()
 }
@@ -365,6 +367,7 @@ func (m *TableBrowserModel) selectRowAction(index int) bool {
 	if !ok || index < 0 || index >= len(row.Actions) || row.Actions[index].Value == "" {
 		return false
 	}
+	m.setActionFocus(index)
 	m.State.Action = row.Actions[index].Value
 	return true
 }
@@ -375,6 +378,26 @@ func (m *TableBrowserModel) selectFocusedAction() bool {
 		return false
 	}
 	return m.selectRowAction(m.actionFocus)
+}
+
+func (m *TableBrowserModel) setActionFocus(index int) {
+	m.actionFocus = index
+	if index < 0 {
+		m.State.ActionFocus = 0
+		return
+	}
+	m.State.ActionFocus = index + 1
+}
+
+func (m *TableBrowserModel) clampActionFocus() {
+	row, ok := m.selectedRow()
+	if !ok || !m.State.Expanded[m.State.Selected] {
+		m.setActionFocus(-1)
+		return
+	}
+	if m.actionFocus >= len(row.Actions) {
+		m.setActionFocus(-1)
+	}
 }
 
 func (m TableBrowserModel) selectedRow() (Row, bool) {
@@ -815,6 +838,7 @@ func (m *TableBrowserModel) clampSelection() {
 	if m.State.Selected >= count {
 		m.State.Selected = count - 1
 	}
+	m.clampActionFocus()
 	m.ensureSelectedVisible()
 }
 

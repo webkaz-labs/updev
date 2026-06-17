@@ -61,11 +61,12 @@ func MergeActions(left []Action, right []Action) []Action {
 }
 
 type State struct {
-	Selected int
-	Offset   int
-	Query    string
-	Expanded map[int]bool
-	Action   string
+	Selected    int
+	Offset      int
+	Query       string
+	Expanded    map[int]bool
+	ActionFocus int
+	Action      string
 }
 
 func EnsureStateCache(states map[string]State) map[string]State {
