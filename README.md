@@ -183,7 +183,7 @@ Known-good validation for the current release gate:
 | Homebrew | `6.0.0-2-g1cd9e81` locally; CI uses mocked provider output. |
 | mise | `2026.6.2 macos-x64`; GitHub backend install smoke is covered separately. |
 | Go | module and repository mise config use `go1.26.4` for local validation. |
-| GitHub Actions | CI and release workflows use GitHub-maintained Node 24 action majors. |
+| GitHub Actions | CI uses GitHub-maintained Node 24 action majors; release uses the official GoReleaser action plus GitHub artifact attestations. |
 
 These are validation anchors, not permanent minimum versions. If a newer
 provider changes output shape or command behavior, `updev` should mark that
@@ -444,3 +444,7 @@ mise run docs-check
 | [docs/RELEASE.md](docs/RELEASE.md) | Active release scope, non-goals, blockers, and release-ready criteria. |
 | [docs/EXTERNAL-MANAGEMENT.md](docs/EXTERNAL-MANAGEMENT.md) | Manual/external app and installer direction. |
 | [docs/agent/USAGE.md](docs/agent/USAGE.md) | Agent and automation workflow guidance. |
+
+## License
+
+MIT. See [LICENSE](LICENSE).
