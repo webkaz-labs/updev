@@ -1053,7 +1053,7 @@ func detailBrowserActionLineWithFormat(index int, action detailBrowserAction, co
 
 func compactDetailBrowserActionDescription(value string) string {
 	value = strings.Join(strings.Fields(strings.TrimSpace(value)), " ")
-	for _, delimiter := range []string{"; source:", "; tap:", "; homepage:", "; download:", "; homepage host:", "; download host:", "; キャッシュ:", "; リリース経過:"} {
+	for _, delimiter := range []string{"; source:", "; tap:", "; homepage:", "; download:", "; homepage host:", "; download host:", "; cache:", "; release age:", "; キャッシュ:", "; リリース経過:"} {
 		if before, _, ok := strings.Cut(value, delimiter); ok {
 			value = strings.TrimSpace(before)
 		}

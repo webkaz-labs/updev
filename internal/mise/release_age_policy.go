@@ -79,7 +79,7 @@ func DetectMinimumReleaseAge(ctx context.Context, commandRunner CommandRunner, r
 	var payload map[string]any
 	if err := json.Unmarshal([]byte(settingsResult.Stdout), &payload); err != nil {
 		evidence.Status = plan.StatusDrift
-		evidence.Reason = "mise settings output is not valid JSON"
+		evidence.Reason = "mise settings output is not valid JSON: " + err.Error()
 		evidence.Remediation = "upgrade mise or update updev if the settings JSON contract changed"
 		return evidence
 	}

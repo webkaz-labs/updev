@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-version="v2.12.2"
-cache_root="${UPDEV_LINT_CACHE_DIR:-${TMPDIR:-/tmp}/updev-lint}"
+version="v2.6.2"
+cache_base="${UPDEV_LINT_CACHE_DIR:-${TMPDIR:-/tmp}/updev-lint}"
+cache_root="$cache_base/golangci-run"
 mkdir -p "$cache_root"
 
 export GOPATH="$cache_root/gopath"

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/webkaz-labs/updev/internal/githubrepo"
+	"github.com/webkaz-labs/updev/internal/nativeaudit"
 	"github.com/webkaz-labs/updev/internal/plan"
 	"github.com/webkaz-labs/updev/internal/registryaudit"
 	"github.com/webkaz-labs/updev/internal/runner"
@@ -476,7 +477,7 @@ func TestSecurityReviewCandidatesFromReportBuildsPrompts(t *testing.T) {
 			Target:            "pom.xml",
 			Decision:          "review",
 			Reason:            "Maven project audit unavailable",
-			UnavailableReason: "unsupported-target",
+			UnavailableReason: nativeaudit.FailureUnsupportedTarget,
 			Error:             "no configured provider-native Maven vulnerability audit",
 		}},
 		NPM: []npmPosture{{

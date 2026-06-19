@@ -31,13 +31,13 @@ func LocalizedSecurityReason(lang string, reason string) string {
 			return fmt.Sprintf(pattern.JA, left, right)
 		}
 	}
+	if value, ok := securityReasonJA[reason]; ok {
+		return value
+	}
 	for _, item := range securityReasonPrefixesJA {
 		if strings.HasPrefix(reason, item.Prefix) {
 			return item.JA + " " + strings.TrimSpace(strings.TrimPrefix(reason, item.Prefix))
 		}
-	}
-	if value, ok := securityReasonJA[reason]; ok {
-		return value
 	}
 	return reason
 }
@@ -125,6 +125,8 @@ var securityReasonJA = map[string]string{
 	"Marketplace metadata does not expose a source repository":                             "Marketplace metadata に source repository がありません",
 	"Marketplace extension age is unavailable":                                             "Marketplace extension の公開経過日数を確認できません",
 	"Marketplace extension update age is unavailable":                                      "Marketplace extension 更新の経過日数を確認できません",
+	"GitHub release/tag date unavailable before mise core update":                          "mise core 更新前に GitHub release/tag 日時を確認できません",
+	"GitHub release/tag date unavailable before mise update":                               "mise 更新前に GitHub release/tag 日時を確認できません",
 	"installed npm version is not present in registry metadata":                            "インストール済み npm version が registry metadata に存在しません",
 	"npm package has no maintainers in registry metadata":                                  "npm package の maintainers が registry metadata にありません",
 	"npm package does not expose a source repository URL":                                  "npm package に source repository URL がありません",

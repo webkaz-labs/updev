@@ -109,7 +109,7 @@ func DesiredFromPath(path string) ([]plan.Item, error) {
 			Kind:     "tap",
 			Name:     tap,
 			Category: category,
-			Detail:   "qualified brew/cask 由来の tap",
+			Detail:   "implicit tap from qualified brew/cask entry",
 		})
 	}
 	return items, scanner.Err()

@@ -61,6 +61,11 @@ brew "owner/tools/example"
 			t.Fatalf("missing implicit desired item %s in %#v", want, got)
 		}
 	}
+	for _, item := range items {
+		if item.Kind == "tap" && strings.Contains(item.Detail, "由来") {
+			t.Fatalf("implicit tap detail should use English default, got %#v", item)
+		}
+	}
 }
 
 func TestProviderDesiredExcludesVSCodeByDefault(t *testing.T) {

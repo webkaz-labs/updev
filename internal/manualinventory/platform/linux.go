@@ -200,12 +200,13 @@ func scanLinuxAppImages(roots []string) []App {
 				continue
 			}
 			name := strings.TrimSuffix(entry.Name(), filepath.Ext(entry.Name()))
+			path := filepath.Clean(filepath.Join(root, entry.Name()))
 			apps = append(apps, App{
 				Name:          name,
 				Source:        "appimage file",
-				Path:          filepath.Join(root, entry.Name()),
+				Path:          path,
 				IdentifierKey: "path",
-				Identifier:    filepath.Join(root, entry.Name()),
+				Identifier:    path,
 			})
 		}
 	}

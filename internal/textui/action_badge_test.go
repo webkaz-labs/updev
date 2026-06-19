@@ -49,6 +49,15 @@ func TestActionBadgeTruncatesAndSummarizesOverflow(t *testing.T) {
 	}
 }
 
+func TestActionBadgeWithNonPositiveWidthIsEmpty(t *testing.T) {
+	t.Setenv("UPDEV_NERD_FONT", "0")
+	for _, width := range []int{0, -1} {
+		if got := ActionBadgeWithWidth([]ActionBadgeInput{{Badge: "sec"}}, width, true); got != "" {
+			t.Fatalf("expected empty badge for width %d, got %q", width, got)
+		}
+	}
+}
+
 func TestActionBadgeColorsStatusBadges(t *testing.T) {
 	t.Setenv("UPDEV_NERD_FONT", "0")
 	got := ActionBadge([]ActionBadgeInput{{Badge: "hold 1d", Status: "held"}}, true)
