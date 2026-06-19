@@ -39,18 +39,20 @@ require_grep '^  contents: read$' ".github/workflows/ci.yml"
 require_grep '^  contents: read$' ".github/workflows/codeql.yml"
 require_grep '^      security-events: write$' ".github/workflows/codeql.yml"
 require_grep '^  pull-requests: write$' ".github/workflows/dependency-review.yml"
-require_grep '^      id-token: write$' ".github/workflows/release.yml"
-require_grep '^      attestations: write$' ".github/workflows/release.yml"
-require_grep 'uses: actions/attest-build-provenance@v4' ".github/workflows/release.yml"
-require_grep 'subject-path:' ".github/workflows/release.yml"
+require_grep '^  contents: write$' ".github/workflows/release.yml"
+require_grep '^  id-token: write$' ".github/workflows/release.yml"
+require_grep '^  attestations: write$' ".github/workflows/release.yml"
+require_grep 'uses: goreleaser/goreleaser-action@v7' ".github/workflows/release.yml"
+require_grep 'uses: actions/attest@v4' ".github/workflows/release.yml"
+require_grep 'subject-checksums:' ".github/workflows/release.yml"
 
 require_action_major "actions/checkout" "v6"
 require_action_major "actions/setup-go" "v6"
-require_action_major "actions/upload-artifact" "v7"
+require_action_major "goreleaser/goreleaser-action" "v7"
 require_action_major "github/codeql-action/init" "v4"
 require_action_major "github/codeql-action/analyze" "v4"
 require_action_major "actions/dependency-review-action" "v5"
-require_action_major "actions/attest-build-provenance" "v4"
+require_action_major "actions/attest" "v4"
 
 while IFS= read -r line; do
   file="${line%%:*}"
@@ -86,10 +88,10 @@ while IFS= read -r line; do
     actions/setup-go)
       expected_major="v6"
       ;;
-    actions/upload-artifact)
+    goreleaser/goreleaser-action)
       expected_major="v7"
       ;;
-    actions/attest-build-provenance)
+    actions/attest)
       expected_major="v4"
       ;;
     github/codeql-action/init | github/codeql-action/autobuild | github/codeql-action/analyze)
