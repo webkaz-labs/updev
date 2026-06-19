@@ -355,8 +355,8 @@ External advisory matching keeps confidence explicit:
   available, zizmor runs for GitHub Actions workflows, and Trivy/Grype are
   opt-in. Scanner/native-audit evidence classifies missing binaries,
   unsupported targets, skipped-by-scope checks, timeouts, rate limits, parse
-  failures, and command errors with structured `unavailable_reason` or
-  `error_kind` fields.
+  failures, report-unavailable conditions, and command errors with structured
+  `unavailable_reason` or `error_kind` fields.
 - Homebrew scan/gate covers formula/cask metadata, cask URL/homepage
   provenance, tap posture, URL casks, disabled/deprecated metadata,
   release-age evidence where GitHub source data is available, curated advisory

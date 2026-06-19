@@ -78,6 +78,9 @@ func AppKey(app App) string {
 		if app.IdentifierKey == "bundle_id" {
 			return "bundle:" + strings.ToLower(app.Identifier)
 		}
+		if app.IdentifierKey == "path" {
+			return "path:" + filepath.Clean(app.Identifier)
+		}
 		return strings.ToLower(app.IdentifierKey) + ":" + strings.ToLower(app.Identifier)
 	}
 	if app.BundleID != "" {

@@ -477,8 +477,9 @@ without posting public issues by default.
 audit evidence vocabulary. JSON includes `unavailable_reason` for unavailable
 checks and `error_kind` for failed checks; text output shows the same value in
 the compact `issue` column. This distinguishes missing binaries, unsupported
-targets, skipped-by-scope audits, timeouts, rate limits, parse failures, and
-command errors without turning optional missing scanners into update failures.
+targets, skipped-by-scope audits, timeouts, rate limits, parse failures,
+report-unavailable conditions, and command errors without turning optional
+missing scanners into update failures.
 
 On Homebrew 6, doctor also reads `brew trust --json=v1` with
 `HOMEBREW_NO_INSTALL_FROM_API=1` and compares it with non-official tap, formula,

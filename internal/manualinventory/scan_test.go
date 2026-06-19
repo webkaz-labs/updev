@@ -12,6 +12,9 @@ func TestAppKeyPrefersStableIdentity(t *testing.T) {
 	if got := AppKey(App{Name: "Demo", IdentifierKey: "package_id", Identifier: "com.example.Demo"}); got != "package_id:com.example.demo" {
 		t.Fatalf("expected generic package identifier key, got %q", got)
 	}
+	if got := AppKey(App{Name: "Demo", IdentifierKey: "path", Identifier: "/Tmp/CaseSensitive.AppImage"}); got != "path:/Tmp/CaseSensitive.AppImage" {
+		t.Fatalf("expected clean case-preserving path identifier key, got %q", got)
+	}
 	if got := AppKey(App{Name: "Demo", Path: "/Applications/../Applications/Demo.app"}); got != "path:/Applications/Demo.app" {
 		t.Fatalf("expected clean path key, got %q", got)
 	}

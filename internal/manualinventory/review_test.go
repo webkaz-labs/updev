@@ -57,6 +57,17 @@ name = "Other App"
 	}
 }
 
+func TestValidateAgentDraftsRejectsDraftCountMismatch(t *testing.T) {
+	candidates := []ReviewCandidate{{Name: "One"}, {Name: "Two"}}
+	_, err := ValidateAgentDrafts(`
+[[manual.apps]]
+name = "One"
+`, candidates, nil)
+	if err == nil || !strings.Contains(err.Error(), "usable draft entries") {
+		t.Fatalf("expected draft count mismatch rejection, got %v", err)
+	}
+}
+
 func TestReviewCandidateIdentityKeys(t *testing.T) {
 	keys := ReviewCandidateIdentityKeys(ReviewCandidate{
 		Name: "Parent / Child",

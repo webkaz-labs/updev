@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-gofumpt_version="v0.10.0"
+gofumpt_version="v0.9.2"
 goimports_version="v0.46.0"
-cache_root="${UPDEV_LINT_CACHE_DIR:-${TMPDIR:-/tmp}/updev-lint}"
+cache_base="${UPDEV_LINT_CACHE_DIR:-${TMPDIR:-/tmp}/updev-lint}"
+cache_root="$cache_base/fmt"
 mkdir -p "$cache_root"
 
 export GOPATH="$cache_root/gopath"
