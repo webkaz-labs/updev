@@ -17,7 +17,6 @@ type WriteActionSpec struct {
 	Prompt         string
 	Description    string
 	NeedsReason    bool
-	NeedsExpiry    bool
 	DefaultReason  string
 	DefaultExpires string
 }

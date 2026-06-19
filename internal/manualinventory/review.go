@@ -99,6 +99,9 @@ func ValidateAgentDrafts(content string, candidates []ReviewCandidate, command [
 	if len(out) == 0 {
 		return nil, fmt.Errorf("manual inventory agent output did not contain usable draft entries")
 	}
+	if len(out) != len(candidates) {
+		return nil, fmt.Errorf("manual inventory agent output contained %d usable draft entries for %d selected candidates", len(out), len(candidates))
+	}
 	return out, nil
 }
 

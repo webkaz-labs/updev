@@ -1225,7 +1225,15 @@ func miseNativeReleaseAgeHoldFinding(finding safetyFinding, reason string) safet
 }
 
 func enrichMiseSafetyFindings(ctx context.Context, commandRunner commandRunner, client *http.Client, findings []safetyFinding, minReleaseAge time.Duration) []safetyFinding {
-	registry := miseRegistryIndex(ctx, commandRunner)
+	var registry map[string]mise.RegistryEntry
+	registryLoaded := false
+	loadRegistry := func() map[string]mise.RegistryEntry {
+		if !registryLoaded {
+			registry = miseRegistryIndex(ctx, commandRunner)
+			registryLoaded = true
+		}
+		return registry
+	}
 	out := make([]safetyFinding, 0, len(findings))
 	for _, finding := range findings {
 		if finding.Provider != "mise" {
@@ -1250,11 +1258,11 @@ func enrichMiseSafetyFindings(ctx context.Context, commandRunner commandRunner, 
 				out = append(out, preserveMiseNativeReleaseAgeHold(enriched, nativeHold, originalReason))
 				continue
 			}
-			if enriched, ok := applyMiseRegistryGitHubReleaseAge(ctx, client, registry, finding, minReleaseAge); ok {
+			if enriched, ok := applyMiseRegistryGitHubReleaseAge(ctx, client, loadRegistry(), finding, minReleaseAge); ok {
 				out = append(out, preserveMiseNativeReleaseAgeHold(enriched, nativeHold, originalReason))
 				continue
 			}
-			if enriched, ok := applyMiseRegistryProviderMetadataReleaseAge(ctx, client, registry, finding, minReleaseAge); ok {
+			if enriched, ok := applyMiseRegistryProviderMetadataReleaseAge(ctx, client, loadRegistry(), finding, minReleaseAge); ok {
 				out = append(out, preserveMiseNativeReleaseAgeHold(enriched, nativeHold, originalReason))
 				continue
 			}

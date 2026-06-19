@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -22,6 +23,7 @@ import (
 	"github.com/webkaz-labs/updev/internal/support"
 	"github.com/webkaz-labs/updev/internal/syncreport"
 	"github.com/webkaz-labs/updev/internal/textui"
+	"github.com/webkaz-labs/updev/internal/updatereason"
 
 	tea "charm.land/bubbletea/v2"
 )
@@ -487,9 +489,6 @@ func printListAttentionSummary(w io.Writer, report listReport, color bool) {
 
 func printListEvidenceSummary(w io.Writer, report listReport, color bool) {
 	summary := listReportEvidenceSummary(report, color)
-	if summary == "" {
-		return
-	}
 	fmt.Fprintf(w, "%s %s\n", textui.StyleLabel(tr("review:", "確認:"), color), summary)
 }
 
@@ -2109,7 +2108,7 @@ func compactListEvidenceText(value string) string {
 	}
 	text := localizedListEvidenceText(value)
 	text = strings.Join(strings.Fields(text), " ")
-	for _, delimiter := range []string{"; source:", "; tap:", "; homepage:", "; download:", "; homepage host:", "; download host:", "; キャッシュ:", "; リリース経過:"} {
+	for _, delimiter := range []string{"; source:", "; tap:", "; homepage:", "; download:", "; homepage host:", "; download host:", "; cache:", "; release age:", "; キャッシュ:", "; リリース経過:"} {
 		if before, _, ok := strings.Cut(text, delimiter); ok {
 			text = strings.TrimSpace(before)
 		}
@@ -2398,9 +2397,14 @@ func localizedHomebrewStrictSafetyEvidenceText(value string) string {
 	if !ok {
 		return value
 	}
-	japanese := fmt.Sprintf("strict safety は安全な Homebrew 候補 %s 件を適用し、%s 件を保留します", strings.TrimSpace(safeCount), strings.TrimSpace(holdCount))
-	suffix = strings.ReplaceAll(suffix, "; Homebrew cannot generally install an older intermediate release", "。Homebrew は通常、古い中間リリースだけを個別に入れられません")
+	japanese := updatereason.LocalizeJapanese(updatereason.StrictBrewPartialReason(mustAtoi(safeCount), mustAtoi(holdCount)))
+	suffix = strings.ReplaceAll(suffix, "; Homebrew cannot generally install an older intermediate release", "")
 	return value[:start] + japanese + suffix
+}
+
+func mustAtoi(value string) int {
+	n, _ := strconv.Atoi(strings.TrimSpace(value))
+	return n
 }
 
 func localizedMiseBumpAppliedEvidenceText(value string) string {
@@ -3740,11 +3744,12 @@ func listProviderFilterRows(report listReport) []detailBrowserRow {
 	rows := make([]detailBrowserRow, 0, len(report.Providers))
 	for _, provider := range report.Providers {
 		summaryParts := []string{fmt.Sprintf("desired=%d live=%d missing=%d extra=%d", provider.Desired, provider.Live, provider.Missing, provider.Extra)}
-		if label := providerSupportLabel(provider.Name); support.LabelIsDenseBadge(label) {
+		label := providerSupportLabel(provider.Name)
+		if support.LabelIsDenseBadge(label) {
 			summaryParts = append(summaryParts, "support="+label)
 		}
 		metadata := []string{}
-		if label := providerSupportLabel(provider.Name); label != "" {
+		if label != "" {
 			metadata = append(metadata, "support_label: "+label)
 		}
 		rows = append(rows, detailBrowserRow{
@@ -3919,7 +3924,7 @@ func routedDetailWriteActionSpec(value string) (detailWriteActionSpec, bool) {
 		}
 		return detailWriteActionSpec{
 			Title:       tr("Homebrew drift action", "Homebrew drift 操作"),
-			Prompt:      fmt.Sprintf(tr("Add %s %q to Brewfile category %s?", "Brewfile の %s category に %s %q を追加しますか?"), kind, name, category),
+			Prompt:      fmt.Sprintf(tr("Add %s %q to Brewfile category %s?", "Brewfile に %s %q を category %s として追加しますか?"), kind, name, category),
 			Description: tr("This changes desired state only. It does not install or uninstall the Homebrew package. Brewfile writes require [brewfile].write_mode to allow mutation.", "desired state だけを変更します。Homebrew package の install/uninstall は行いません。Brewfile 書き込みには [brewfile].write_mode で mutation を許可している必要があります。"),
 		}, true
 	}
@@ -3995,7 +4000,6 @@ func routedDetailWriteActionSpec(value string) (detailWriteActionSpec, bool) {
 			spec.Prompt = fmt.Sprintf(tr("Allow %s/%s %s with a custom reason and expiry?", "%s/%s %s を理由/期限付きで許可しますか?"), provider, kind, name)
 			spec.Description = tr("Enter a review reason and YYYY-MM-DD expiry before writing the local allow rule.", "local allow rule を書く前に review reason と YYYY-MM-DD expiry を入力します。")
 			spec.NeedsReason = true
-			spec.NeedsExpiry = true
 			spec.DefaultReason = "accepted from updev detail browser after local review"
 			spec.DefaultExpires = time.Now().AddDate(0, 0, 7).Format("2006-01-02")
 		}

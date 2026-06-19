@@ -40,6 +40,9 @@ func ActionBadge(actions []ActionBadgeInput, color bool) string {
 }
 
 func ActionBadgeWithWidth(actions []ActionBadgeInput, maxWidth int, color bool) string {
+	if maxWidth <= 0 {
+		return ""
+	}
 	labels := []actionBadgeEntry{}
 	seen := map[string]bool{}
 	for _, action := range actions {
@@ -135,7 +138,7 @@ func compactActionLabel(label string) string {
 	if label == "" {
 		return ""
 	}
-	return Truncate(label, 18)
+	return Truncate(label, defaultActionBadgeMaxWidth)
 }
 
 func actionBadgePriority(label string) int {

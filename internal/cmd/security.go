@@ -514,9 +514,7 @@ func applyConfirmedHomebrewTrustDetailAction(report *updateReport, action string
 		result = local.Run(ctx, command[0], command[1:]...)
 	}
 	if result.Err != nil || result.Code != 0 {
-		if printResult {
-			fmt.Fprintf(os.Stderr, "homebrew trust failed: %s\n", brewOutdatedResultDetail(result, "brew trust failed"))
-		}
+		fmt.Fprintf(os.Stderr, "homebrew trust failed: %s\n", brewOutdatedResultDetail(result, "brew trust failed"))
 		return true
 	}
 	if report != nil {

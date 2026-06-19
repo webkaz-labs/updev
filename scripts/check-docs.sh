@@ -39,16 +39,22 @@ fi
 require_file "docs/agent/USAGE.md"
 require_file "docs/agent/SKILL.md"
 require_grep 'docs/agent/' "docs/DESIGN.md"
-go_cache="${GOCACHE:-${TMPDIR:-/tmp}/updev-gocache}"
-if ! diff -u "$root/docs/agent/SKILL.md" <(cd "$root" && GOCACHE="$go_cache" go run . skill); then
+go_cache="${GOCACHE:-}"
+if [[ -z "$go_cache" ]]; then
+  go_cache="$(mktemp -d "${TMPDIR:-/tmp}/updev-docs-gocache.XXXXXX")"
+fi
+go_path="${GOPATH:-}"
+if [[ -z "$go_path" ]]; then
+  go_path="$(mktemp -d "${TMPDIR:-/tmp}/updev-docs-gopath.XXXXXX")"
+fi
+go_mod_cache="${GOMODCACHE:-$go_path/pkg/mod}"
+if ! diff -u "$root/docs/agent/SKILL.md" <(cd "$root" && GOPATH="$go_path" GOMODCACHE="$go_mod_cache" GOCACHE="$go_cache" go run . skill); then
   fail "embedded updev skill output drifted from docs/agent/SKILL.md"
 fi
-if ! diff -u "$root/docs/agent/USAGE.md" <(cd "$root" && GOCACHE="$go_cache" go run . help agent); then
+if ! diff -u "$root/docs/agent/USAGE.md" <(cd "$root" && GOPATH="$go_path" GOMODCACHE="$go_mod_cache" GOCACHE="$go_cache" go run . help agent); then
   fail "embedded updev help agent output drifted from docs/agent/USAGE.md"
 fi
-if [[ -f "$root/docs/PUBLISHING.md" ]]; then
-  require_grep 'docs/release-notes/<tag>\.md' "docs/DESIGN.md"
-fi
+require_grep 'docs/release-notes/<tag>\.md' "docs/DESIGN.md"
 
 require_grep 'uses: actions/setup-go@v6' ".github/workflows/ci.yml"
 require_grep 'run: scripts/check-docs\.sh' ".github/workflows/ci.yml"
