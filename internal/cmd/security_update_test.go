@@ -294,6 +294,7 @@ func TestUpdateOutcomeRowsShowsBrewHeldCandidateItem(t *testing.T) {
 
 func TestUpdateSummaryTablesCompactReleaseAgeReasons(t *testing.T) {
 	withDefaultLanguageForTest(t, "ja")
+	releasedAt := time.Now().Add(-24 * time.Hour).UTC().Format(time.RFC3339)
 	finding := safetyFinding{
 		Provider:          "brew",
 		Kind:              "brew",
@@ -303,8 +304,8 @@ func TestUpdateSummaryTablesCompactReleaseAgeReasons(t *testing.T) {
 		Decision:          "hold",
 		Reason:            "candidate release is too new",
 		MinReleaseAgeDays: 3,
-		ReleaseDate:       "2026-06-14T15:31:32Z",
-		ReleaseAgeDays:    2,
+		ReleaseDate:       releasedAt,
+		ReleaseAgeDays:    1,
 	}
 	rows := updateOutcomeRows(updateReport{
 		Security: "strict",

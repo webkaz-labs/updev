@@ -71,7 +71,16 @@ Scope:
    - Keep direct `brewfile` and compatibility commands documented as low-level
      surfaces, not the primary workflow.
 
-2. **Provider evidence follow-through**
+2. **Release automation hardening**
+   - Migrate the public tag release workflow to GoReleaser while preserving the
+     existing archive names, `checksums.txt`, release-note body source, and
+     GitHub artifact attestation verification path.
+   - Keep `scripts/install.sh` compatible with both legacy `./archive` checksum
+     entries and GoReleaser's plain archive checksum entries.
+   - Add local validation tasks for `goreleaser check` and snapshot archive
+     builds so release workflow changes can be tested before tagging.
+
+3. **Provider evidence follow-through**
    - Continue improving Homebrew/mise evidence only where cached reports can
      prove item identity, release age, source URL, and action target.
    - Add resolver-backed detail only through data-driven provider metadata; keep
@@ -79,7 +88,7 @@ Scope:
    - Revisit high-noise summaries and raw evidence strings after real TTY
      dogfood, but avoid broad scanner/provider expansion.
 
-3. **TUI workflow polish**
+4. **TUI workflow polish**
    - Dogfood `updev`, `updev last`, `updev list`, `updev hub`, security policy,
      manual inventory, backend convergence, and update/security detail flows
      from a real TTY and from cached reports.
@@ -89,7 +98,7 @@ Scope:
    - Keep provider command execution outside alternate-screen TUI so Homebrew
      and mise logs continue to stream normally.
 
-4. **Review readability polish**
+5. **Review readability polish**
    - Make expanded detail rows lower-noise: concise Japanese summaries first,
      grouped evidence second, raw provider/log/source details only when useful.
    - Keep update/security/backend/manual action labels short and stable, with
@@ -99,19 +108,19 @@ Scope:
    - Make backend convergence loading and empty states explicit so a preparing
      backend plan is not mistaken for "0 findings".
 
-5. **Policy UX follow-through**
+6. **Policy UX follow-through**
    - Keep policy cleanup, renew, and narrowing flows reachable from the security
      views where the relevant rule is visible.
    - Preserve JSON/text parity for every TUI-only convenience.
 
-6. **Regression coverage and release hygiene**
+7. **Regression coverage and release hygiene**
    - Add or update fast route/readability regression tests for every fixed TTY
      path. Reserve slow PTY/e2e dogfood for release acceptance.
    - Keep README, CLI docs, release notes, and public export docs current-state
      focused.
    - Keep generated/embedded docs drift checks passing.
 
-7. **Bounded quality cleanup**
+8. **Bounded quality cleanup**
    - When touching v0.7.15 routes, reduce local duplication in route
      construction, action labels, compact reason formatting, and empty/loading
      state handling.
@@ -136,6 +145,8 @@ Release-ready criteria:
 - [ ] `mise -C tools/updev run docs-check`
 - [ ] `git diff --check`
 - [ ] `chezmoi apply --dry-run`
+- [ ] `mise -C tools/updev run goreleaser-check`
+- [ ] `mise -C tools/updev run goreleaser-snapshot`
 - [ ] Real TTY dogfood covers `updev`, `updev last`, `updev list`, `updev hub`,
   and at least one route each for update logs, security review, inventory
   attention, manual review, backend convergence, and policy review.

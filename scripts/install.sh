@@ -126,7 +126,7 @@ curl --fail --location --silent --show-error \
   --output "${tmpdir}/checksums.txt" \
   "${base_url}/checksums.txt"
 
-if ! awk -v target="./${archive}" '$2 == target { print; found = 1 } END { exit found ? 0 : 1 }' \
+if ! awk -v target="${archive}" '$2 == target || $2 == "./" target { print; found = 1 } END { exit found ? 0 : 1 }' \
   "${tmpdir}/checksums.txt" > "${tmpdir}/checksum.txt"; then
   echo "install.sh: checksum entry not found for ${archive}" >&2
   exit 1
