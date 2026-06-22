@@ -74,3 +74,90 @@ cask "always"
 		t.Fatalf("entry was not inserted before the outer category end:\n%s", updated)
 	}
 }
+
+func TestInsertIntoWorkCategorySupportsBaselineProfileBlock(t *testing.T) {
+	content := `{{- if or (has "work" .profiles) (has "personal" .profiles) }}
+cask "cursor"
+{{- end }}
+
+{{- if has "personal" .profiles }}
+cask "warp"
+{{- end }}
+`
+	updated, ok := insertIntoCategory(content, "work", `cask "cursor-cli"`)
+	if !ok {
+		t.Fatal("expected insert to succeed")
+	}
+	insertedAt := strings.Index(updated, `cask "cursor-cli"`)
+	workEndAt := strings.Index(updated, "{{- end }}")
+	personalAt := strings.Index(updated, `{{- if has "personal" .profiles }}`)
+	if insertedAt < 0 || insertedAt > workEndAt || insertedAt > personalAt {
+		t.Fatalf("work entry was not inserted inside the baseline block:\n%s", updated)
+	}
+}
+
+func TestInsertIntoCategoryMatchesCompoundProfileConditionWithoutRepoSpecificText(t *testing.T) {
+	content := `{{- if and (has "runtime" .profiles) (ne .chezmoi.os "windows") }}
+brew "go"
+{{- end }}
+`
+	updated, ok := insertIntoCategory(content, "runtime", `brew "rust"`)
+	if !ok {
+		t.Fatal("expected insert to succeed")
+	}
+	if !strings.Contains(updated, `brew "rust"`) {
+		t.Fatalf("runtime entry was not inserted:\n%s", updated)
+	}
+}
+
+func TestCategoriesFromTemplateDetectsGenericUpdevMarkers(t *testing.T) {
+	content := `# updev: category shared
+brew "git"
+
+# updev: category gui
+cask "firefox"
+`
+	categories := CategoriesFromTemplate(content)
+	if strings.Join(categories, ",") != "shared,gui" {
+		t.Fatalf("unexpected categories: %#v", categories)
+	}
+}
+
+func TestInsertIntoCategorySupportsGenericUpdevMarkers(t *testing.T) {
+	content := `# updev: category shared
+brew "git"
+
+# updev: category gui
+cask "firefox"
+`
+	updated, ok := insertIntoCategory(content, "shared", `brew "jq"`)
+	if !ok {
+		t.Fatal("expected marker insert to succeed")
+	}
+	jqAt := strings.Index(updated, `brew "jq"`)
+	guiAt := strings.Index(updated, `# updev: category gui`)
+	if jqAt < 0 || jqAt > guiAt {
+		t.Fatalf("entry was not inserted before next category marker:\n%s", updated)
+	}
+}
+
+func TestInsertIntoCategoryAppendsWhenBrewfileHasNoCategories(t *testing.T) {
+	content := `brew "git"
+`
+	updated, ok := insertIntoCategory(content, "", `brew "jq"`)
+	if !ok {
+		t.Fatal("expected ungrouped insert to succeed")
+	}
+	if !strings.Contains(updated, "brew \"git\"\nbrew \"jq\"\n") {
+		t.Fatalf("entry was not appended:\n%s", updated)
+	}
+}
+
+func TestInsertIntoCategoryRejectsUngroupedInsertWhenCategoriesExist(t *testing.T) {
+	content := `# updev: category shared
+brew "git"
+`
+	if _, ok := insertIntoCategory(content, "", `brew "jq"`); ok {
+		t.Fatal("expected ungrouped insert to fail when categories exist")
+	}
+}

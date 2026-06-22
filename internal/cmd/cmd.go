@@ -40,7 +40,7 @@ type options struct {
 const (
 	usageExitCode = 64
 	toolName      = "updev"
-	toolVersion   = "v0.7.14"
+	toolVersion   = "v0.7.16"
 )
 
 const (
@@ -397,6 +397,13 @@ func Run(args []string) int {
 			return usageExitCode
 		}
 		return runUpdate(opts, runner.Local{})
+	case "apply":
+		opts, err := parseApplyOptions(args)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			return usageExitCode
+		}
+		return runApply(opts, runner.Local{})
 	case "sync":
 		opts, err := parseSyncOptions(args)
 		if err != nil {
@@ -951,8 +958,9 @@ Agent/script-safe output:
 Commands:
   updev -h | --help             # help
   updev update [--dry-run] [--security warn|strict|off] [--include-vscode] [--policy file] [--inventory fast|legacy] [--interactive|--no-interactive|--plain] [--format text|json]
+  updev apply brewfile [--safe-only] [--dry-run] [--policy file] [--format text|json]
   updev sync [--format text|json]
-  updev add [--provider brew|mise] [--kind brew|cask|tap|vscode|tool] [--category work|personal] [--version version] <name>
+  updev add [--provider brew|mise] [--kind brew|cask|tap|vscode|tool] [--category name] [--version version] <name>
   updev remove [--provider brew|mise] [--kind brew|cask|tap|vscode|tool] <name>
   updev edit [--provider brew|mise]
   updev rollback [--token token] [--format text|json]

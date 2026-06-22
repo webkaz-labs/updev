@@ -275,7 +275,7 @@ func runUpdate(opts updateOptions, commandRunner commandRunner) int {
 	safetyProgress.Done()
 	streamProviderLogs := shouldStreamUpdateProviderLogs(opts)
 	for _, step := range updateSteps() {
-		if refreshedStep, refreshedGate, ok := runStrictBrewRefreshIfNoCandidates(ctx, commandRunner, step, opts, policyUse.Policy, report.Safety, streamProviderLogs); ok {
+		if refreshedStep, refreshedGate, ok := runStrictBrewRefreshBeforeApply(ctx, commandRunner, step, opts, policyUse.Policy, report.Safety, streamProviderLogs); ok {
 			report.Safety = replaceUpdateSafetyGate(report.Safety, refreshedGate)
 			if refreshedStep.Status == plan.StatusError {
 				report.Status = plan.StatusError
@@ -544,12 +544,12 @@ func runUpdateStepCommand(ctx context.Context, commandRunner commandRunner, step
 	return commandRunner.Run(ctx, command[0], command[1:]...)
 }
 
-func runStrictBrewRefreshIfNoCandidates(ctx context.Context, commandRunner commandRunner, step updateStep, opts updateOptions, policy securityPolicy, gates []safetyGate, stream bool) (updateStep, safetyGate, bool) {
+func runStrictBrewRefreshBeforeApply(ctx context.Context, commandRunner commandRunner, step updateStep, opts updateOptions, policy securityPolicy, gates []safetyGate, stream bool) (updateStep, safetyGate, bool) {
 	if step.Name != "brew" || opts.security != "strict" || opts.dryRun {
 		return updateStep{}, safetyGate{}, false
 	}
 	gate, ok := updateSafetyGateForProvider("brew", gates)
-	if !ok || gate.Status != plan.StatusOK || len(gate.Findings) > 0 {
+	if !ok || gate.Status == plan.StatusError {
 		return updateStep{}, safetyGate{}, false
 	}
 	refreshStep := updateStep{
@@ -586,10 +586,28 @@ func runStrictBrewRefreshIfNoCandidates(ctx context.Context, commandRunner comma
 		scoped.Stderr = strings.TrimSpace(strings.Join(nonEmptyStrings(refreshStep.Stderr, scoped.Stderr), "\n"))
 		return scoped, refreshedGate, true
 	}
+	if brewStepIsRefreshOnly(scoped) && refreshedGate.Status == plan.StatusHeld {
+		scoped.Status = plan.StatusHeld
+		scoped.Skipped = true
+		scoped.Stdout = refreshStep.Stdout
+		scoped.Stderr = refreshStep.Stderr
+		return scoped, refreshedGate, true
+	}
 	scoped = runUpdateStepWithOutput(ctx, commandRunner, scoped, false, "", stream)
 	scoped.Stdout = strings.TrimSpace(strings.Join(nonEmptyStrings(refreshStep.Stdout, scoped.Stdout), "\n"))
 	scoped.Stderr = strings.TrimSpace(strings.Join(nonEmptyStrings(refreshStep.Stderr, scoped.Stderr), "\n"))
 	return scoped, refreshedGate, true
+}
+
+func brewStepIsRefreshOnly(step updateStep) bool {
+	if step.Name != "brew" {
+		return false
+	}
+	commands := updateStepCommands(step)
+	if len(commands) != 1 {
+		return false
+	}
+	return strings.Join(commands[0].Command, "\x00") == strings.Join(brew.UpdateCommand(), "\x00")
 }
 
 func replaceUpdateSafetyGate(gates []safetyGate, replacement safetyGate) []safetyGate {
@@ -1954,6 +1972,10 @@ func updateOutcomeRows(report updateReport, limit int, color bool) [][]string {
 				item = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(item), "would bump "))
 			}
 			name, detail := updatelog.UpdatedItemParts(item)
+			if failure := updateStepUpdatedItemFailure(step, item); failure != "" {
+				outcome = "error"
+				detail = strings.TrimSpace(firstNonEmpty(detail, item) + " - " + failure)
+			}
 			rows = append(rows, []string{
 				textui.StyleStatus(outcome, color),
 				textui.StyleName(step.Name, color),
@@ -2307,7 +2329,7 @@ func printUpdateInventoryDashboard(w io.Writer, inventory plan.Report, color boo
 			{Header: "provider", Min: 8, Max: 12},
 			{Header: "missing", Min: 7, Max: 8},
 			{Header: "extra", Min: 5, Max: 8},
-			{Header: "profile", Min: 7, Max: 8},
+			{Header: "scope", Min: 5, Max: 8},
 			{Header: tr("status", "状態"), Min: 7, Max: 12},
 		}, providerRows, color)
 	}
@@ -3475,7 +3497,7 @@ func updateDashboardDetailRows(report updateReport, manualPlan inventoryPlanRepo
 			Title:   "Inventory",
 			Status:  string(report.Inventory.Status),
 			Summary: updateDashboardInventorySummary(report.Inventory),
-			Detail:  "Review installed, desired, missing, extra, held, and profile-mismatch inventory rows.",
+			Detail:  "Review installed, desired, missing, extra, held, and inactive-scope inventory rows.",
 			Metadata: []string{
 				fmt.Sprintf("items: %d", len(report.Inventory.Items)),
 				fmt.Sprintf("attention: %d", updateDashboardInventoryAttention(report.Inventory)),
@@ -4049,8 +4071,16 @@ func updateLogDetailRows(report updateReport) []detailBrowserRow {
 			}
 		}
 		if len(step.Updated) > 0 {
-			metadata = append(metadata, "updated: "+strings.Join(step.Updated, "; "))
+			successes := updateStepSuccessfulUpdatedItems(step)
+			if len(successes) > 0 {
+				metadata = append(metadata, "updated: "+strings.Join(successes, "; "))
+			}
 			for _, item := range step.Updated {
+				if failure := updateStepUpdatedItemFailure(step, item); failure != "" {
+					metadata = append(metadata, tr("failed update item: ", "失敗した更新 item: ")+item)
+					metadata = append(metadata, tr("failed update reason: ", "失敗理由: ")+failure)
+					continue
+				}
 				metadata = append(metadata, tr("updated item: ", "更新 item: ")+item)
 			}
 		}
@@ -4083,6 +4113,22 @@ func updateStepItemDetailRows(step updateStep) []detailBrowserRow {
 	for _, item := range step.Updated {
 		item = strings.TrimSpace(item)
 		if item == "" {
+			continue
+		}
+		if failure := updateStepUpdatedItemFailure(step, item); failure != "" {
+			rows = append(rows, detailBrowserRow{
+				Title:   step.Name + " error",
+				Status:  "error",
+				Summary: item,
+				Detail:  failure,
+				Metadata: []string{
+					"provider: " + step.Name,
+					"result: error",
+					"item: " + item,
+					"command: " + updateStepCommandText(step),
+					"reason: " + failure,
+				},
+			})
 			continue
 		}
 		rows = append(rows, detailBrowserRow{
@@ -4122,6 +4168,38 @@ func updateStepItemDetailRows(step updateStep) []detailBrowserRow {
 		})
 	}
 	return rows
+}
+
+func updateStepSuccessfulUpdatedItems(step updateStep) []string {
+	out := []string{}
+	for _, item := range step.Updated {
+		if strings.TrimSpace(item) == "" || updateStepUpdatedItemFailure(step, item) != "" {
+			continue
+		}
+		out = append(out, item)
+	}
+	return out
+}
+
+func updateStepUpdatedItemFailure(step updateStep, item string) string {
+	if step.Status != plan.StatusError {
+		return ""
+	}
+	name, _ := updatelog.UpdatedItemParts(item)
+	if name == "" {
+		name = strings.TrimSpace(item)
+	}
+	logText := strings.Join([]string{step.Stderr, step.Stdout, step.Reason}, "\n")
+	if step.Name == "brew" &&
+		strings.Contains(logText, name) &&
+		strings.Contains(logText, "It seems the App source") &&
+		strings.Contains(logText, "is not there") {
+		return tr(
+			"Homebrew cask app source is missing; reinstall or repair the stale cask state before treating this update as complete.",
+			"Homebrew cask の app 実体が見つからないため更新に失敗しました。更新完了扱いにする前に reinstall するか、古い cask 状態を修復してください。",
+		)
+	}
+	return ""
 }
 
 func updateStepItemDetailActions(step updateStep, item string) []detailBrowserAction {

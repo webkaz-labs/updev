@@ -36,6 +36,22 @@ func TestNormalizeSkippedItemNamesHomebrewTrustWarnings(t *testing.T) {
 	}
 }
 
+func TestNormalizeSkippedItemNamesHomebrewMostRecentWarnings(t *testing.T) {
+	got := NormalizeSkippedItem("Warning: Skipping gh: most recent version 2.95.0 not installed")
+	want := "gh skipped: most recent version 2.95.0 not installed"
+	if got != want {
+		t.Fatalf("NormalizeSkippedItem = %q, want %q", got, want)
+	}
+}
+
+func TestNormalizeSkippedItemNamesCachedHomebrewMostRecentWarnings(t *testing.T) {
+	got := NormalizeSkippedItem("gh: most recent version 2.95.0 not installed skipped: Warning: Skipping gh: most recent version 2.95.0 not installed")
+	want := "gh skipped: most recent version 2.95.0 not installed"
+	if got != want {
+		t.Fatalf("NormalizeSkippedItem = %q, want %q", got, want)
+	}
+}
+
 func TestAppendUniqueUpdatedKeepsHomebrewAndTapKeysSeparate(t *testing.T) {
 	got := AppendUniqueUpdated(
 		nil,

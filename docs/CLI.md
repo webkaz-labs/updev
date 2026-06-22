@@ -133,7 +133,7 @@ Global flags:
   and `--format json`; add global verbosity only when a concrete cross-command
   diagnostic need appears.
 - `updev version`, `updev --version`, and `updev -v` report the current
-  implemented release contract, currently `updev v0.7.14`. JSON output from
+  implemented release contract, currently `updev v0.7.16`. JSON output from
   `updev version --format json` includes SemVer parts and the stable/pre-stable
   contract label.
 - `updev support` and `updev doctor support` print the current support-level
@@ -151,14 +151,20 @@ Global flags:
 Portable defaults:
 
 - With no config, `updev` should use the current working directory as the source
-  root and inspect provider-native live/config evidence without assuming
-  `~/.local/share/chezmoi`.
+  root and inspect provider-native live/config evidence without assuming a fixed
+  dotfiles checkout path.
 - `UPDEV_ROOT`, `[sources].root`, or `CHEZMOI_SOURCE_DIR` can select a different
   source root. `CHEZMOI_SOURCE_DIR` is kept as compatibility for dotfiles-hosted
   workflows.
 - `[brewfile].desired` controls whether Homebrew desired state comes from
   `auto`, `home`, `root`, `template`, or is `disabled`. Write behavior is
   separate and remains controlled by `[brewfile].write_mode`.
+- `updev apply brewfile` reviews missing desired Homebrew items and applies only
+  gate-approved candidates through item-scoped `brew tap`, `brew install`, or
+  `brew install --cask` commands. Chezmoi Brewfile hooks stay warning-only by
+  default and do not run `brew bundle`; use `updev apply brewfile --safe-only
+  --dry-run`, `updev check --dependencies`, `updev list --status missing
+  --plain`, and `updev update` for daily review.
 - Repository-local manual Markdown such as `docs/apps.md` is ignored unless
   `[inventory.manual].markdown_compat = true` or an explicit Markdown source is
   configured.
@@ -317,6 +323,10 @@ mise and updev remain the release-age gate for that provider command.
 grouped installed inventory browser first because listing inventory is the
 command's primary job, while focused rows may expose explicit confirmed
 desired-state writes when the target and category are unambiguous.
+Homebrew drift rows derive Brewfile adoption categories from the target
+manifest, not from a built-in deployment-scope list. Generic `# updev:
+category <name>` markers, compatible template guards such as `has "<category>"
+.profiles`, and uncategorized Brewfiles are supported.
 From that browser, `Tab` / `Shift+Tab` switches directly between installed
 inventory and manual apps while preserving each view's cursor, filter, and
 expanded rows. Back/Home returns to the domain switcher, where backend
@@ -340,7 +350,14 @@ updev list --format json
 ```
 
 `--status attention` means error/blocked/held/missing/extra/drift/unavailable
-rows. `--status profile-mismatch` isolates inactive-scope drift. `--provider
+rows. When Homebrew desired state comes from a rendered `~/Brewfile`, source
+entries that exist only in `Brewfile.tmpl` source state are not treated as
+active desired state; if the item is installed, it is shown as
+`profile-mismatch` rather than as a fresh adoption candidate.
+`profile-mismatch` is the compatibility status name for deployment-scope
+mismatch: source state contains the entry, but the rendered state for this
+machine does not. `--status profile-mismatch` isolates that inactive
+source/rendered-scope drift. `--provider
 manual` is opt-in and reads the manual/non-provider inventory bridge,
 structured overrides, and read-only `.app` bundle / Mac App Store receipt
 evidence without forcing full Homebrew/mise provider collection. When `mas` is
@@ -463,11 +480,16 @@ contract checks for local CLIs that updev depends on. Required checks cover
 Homebrew and mise version commands plus the JSON shapes used by update safety
 and inventory collection. The mise dependency checks also report
 `minimum_release_age`, its source, active/inactive status, and whether the
-current `mise latest` command shape advertises release-age filtering. Optional
-scanner checks cover installed versions of OSV-Scanner, gitleaks, zizmor,
-Trivy, Grype, and the optional Codex description-translation backend. Missing
-optional integrations are reported as unavailable but do not make the report
-fail; changed required JSON contracts return drift. JSON output includes a
+current `mise latest` command shape advertises release-age filtering. Homebrew
+diagnostics also show whether the current shell exported the optional
+`UPDEV_BREW_WRAPPER` marker and whether `[brewfile].write_mode` enables
+updev-managed Brewfile writes. Inactive wrapper/write-boundary diagnostics are
+reported as optional unavailable checks so users can understand drift-prevention
+coverage without making public-preview installs fail. Optional scanner checks
+cover installed versions of OSV-Scanner, gitleaks, zizmor, Trivy, Grype, and
+the optional Codex description-translation backend. Missing optional
+integrations are reported as unavailable but do not make the report fail;
+changed required JSON contracts return drift. JSON output includes a
 `compatibility_ledger` with provider/tool versions, command evidence, support
 status, support label, and remediation. `updev doctor dependencies --ledger
 <file>` writes the ledger as a local JSON artifact for CI or release review
@@ -484,8 +506,9 @@ missing scanners into update failures.
 On Homebrew 6, doctor also reads `brew trust --json=v1` with
 `HOMEBREW_NO_INSTALL_FROM_API=1` and compares it with non-official tap, formula,
 and cask entries in the configured `Brewfile.tmpl`. Missing trust is reported as
-drift with item-scoped remediation. Security detail views in `updev`, `updev
-last`, and `updev list` can run confirmed item-scoped `brew trust --formula` /
+drift with a tap-group list; formula/cask entries already trusted by Homebrew
+are not prompted again. Security detail views in `updev`, `updev last`, and
+`updev list` can run confirmed item-scoped `brew trust --formula` /
 `brew trust --cask` actions. updev does not auto-run `brew trust`; whole-tap
 trust remains a human security decision and requires its own confirmation.
 

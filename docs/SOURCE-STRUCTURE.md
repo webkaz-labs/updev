@@ -94,8 +94,8 @@ Completed P1 foundation slices:
   `internal/securityadvisory`.
 - Homebrew and mise provider mutations use runner-backed command plans with
   argv/env and item-scoped semantics.
-- Inventory report annotations that depend on provider evidence and root/profile
-  policy live in `internal/inventoryannotate`.
+- Inventory report annotations that depend on provider evidence and
+  desired-source/deployment-scope policy live in `internal/inventoryannotate`.
 - Shared inventory/provider status and item-query helpers live in
   `internal/plan`; cmd code no longer reimplements provider status, attention
   status ordering, or basic item search semantics.

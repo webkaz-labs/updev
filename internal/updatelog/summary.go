@@ -70,6 +70,9 @@ func NormalizeSkippedItem(value string) string {
 	if name, detail, ok := parseHomebrewSkippingWarning(value); ok {
 		return name + " skipped: " + detail
 	}
+	if name, detail, ok := parseHomebrewMostRecentSkipped(value); ok {
+		return name + " skipped: " + detail
+	}
 	return value
 }
 
@@ -255,6 +258,9 @@ func parseHomebrewSkippingWarning(value string) (string, string, bool) {
 		if before, after, ok := strings.Cut(rest, " because "); ok {
 			name = strings.TrimSpace(before)
 			detail = "because " + strings.TrimSpace(after)
+		} else if before, after, ok := strings.Cut(rest, ": "); ok && strings.TrimSpace(after) != "" {
+			name = strings.TrimSpace(before)
+			detail = strings.TrimSpace(after)
 		}
 		name = strings.Trim(name, "`\"'")
 		if name == "" {
@@ -263,6 +269,24 @@ func parseHomebrewSkippingWarning(value string) (string, string, bool) {
 		return name, detail, true
 	}
 	return "", "", false
+}
+
+func parseHomebrewMostRecentSkipped(value string) (string, string, bool) {
+	trimmed := strings.TrimSpace(value)
+	candidate := trimmed
+	if before, _, ok := strings.Cut(trimmed, " skipped: "); ok {
+		candidate = strings.TrimSpace(before)
+	}
+	name, detail, ok := strings.Cut(candidate, ": ")
+	if !ok {
+		return "", "", false
+	}
+	name = strings.TrimSpace(name)
+	detail = strings.TrimSpace(detail)
+	if name == "" || detail == "" || !strings.Contains(strings.ToLower(detail), "most recent version") || !strings.Contains(strings.ToLower(detail), "not installed") {
+		return "", "", false
+	}
+	return strings.Trim(name, "`\"'"), detail, true
 }
 
 func updatedItemKey(value string) string {

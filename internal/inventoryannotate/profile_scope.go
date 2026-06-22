@@ -24,7 +24,7 @@ func AnnotateProfileScopedExtras(report *plan.Report, root string) {
 			continue
 		}
 		source, ok := index[profileScopeKey(*item)]
-		if !ok || !strings.EqualFold(source.Category, "personal") {
+		if !ok {
 			continue
 		}
 		if item.Category == "" {
@@ -60,7 +60,11 @@ func profileScopeKey(item plan.Item) string {
 }
 
 func ProfileMismatchDetail(category string) string {
-	return profileMismatchDetailPrefix + " entry is defined in " + category + " scope but is not active in the current rendered Brewfile"
+	category = strings.TrimSpace(category)
+	if category == "" {
+		category = "source"
+	}
+	return profileMismatchDetailPrefix + " entry is defined in source deployment scope " + category + " but is not active in the current rendered Brewfile"
 }
 
 func ItemHasProfileMismatch(item plan.Item) bool {

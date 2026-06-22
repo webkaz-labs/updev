@@ -81,6 +81,9 @@ review queue, and JSON output for automation.
   update/security/support views first.
 - **Desired-state checks**: `updev check`, `updev sync`, and `updev status`
   find missing, extra, drifted, blocked, and unavailable entries.
+- **Safe Brewfile apply**: `updev apply brewfile` turns missing Homebrew desired
+  items into item-scoped install candidates, applies only gate-approved safe
+  items, and leaves extra/uninstall decisions outside the flow.
 - **mise hygiene**: `updev fix mise` previews rewrites for unsafe `latest` pins
   while keeping Node `lts` as the only allowed LTS shortcut.
 - **Security review**: `updev security scan`, `gate`, `review`, and `policy`
@@ -271,6 +274,7 @@ candidate when strict mode is intentionally holding it.
 | `updev status` / `updev st` | Show compact current state. |
 | `updev check` / `updev ck` | Validate manifests and provider consistency. |
 | `updev sync` | Compare desired and live state without mutating. |
+| `updev apply brewfile --safe-only` | Apply gate-approved missing Homebrew desired items with item-scoped commands. |
 | `updev last` | Re-open the cached last update dashboard on TTY. |
 | `updev fix mise` | Preview or apply safe mise manifest pin fixes. |
 | `updev security scan` | Run explicit broad security checks. |
@@ -365,6 +369,16 @@ compatibility bridge, or optional agent enrichment. Agent enrichment is
 disabled by default; when enabled, generated manual app metadata remains draft
 review data until accepted or edited. Structured manual app rows are treated as
 desired state only when `review_status = "accepted"`.
+
+Homebrew drift adoption does not require chezmoi. For plain Brewfiles, a
+confirmed adoption action appends the missing entry. For categorized manifests,
+add generic markers such as `# updev: category work` or use compatible
+chezmoi/deployment-scope guards that contain `has "<category>" .profiles`;
+`updev list` derives the available TUI actions from the manifest instead of
+hardcoding category names. Entries present only in source state but absent from
+the active rendered state are shown as `profile-mismatch`, not as adoption
+candidates.
+
 Manual review can call a configured agent with `inventory review --action
 enrich` or `enrich-batch`; updev validates the returned TOML and writes only
 draft entries.

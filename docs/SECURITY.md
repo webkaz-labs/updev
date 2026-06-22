@@ -239,13 +239,17 @@ Provider scope:
 Homebrew 6 tap trust is handled as security posture, not as an automatic
 mutation. `updev doctor dependencies` reads `brew trust --json=v1` with
 `HOMEBREW_NO_INSTALL_FROM_API=1` and compares it with non-official entries in
-the configured `Brewfile.tmpl`. Security posture rows for non-official taps and
-qualified formula/cask entries include the preferred item-scoped `brew trust`
-command and a structured `trust_command_argv` array so agents do not need to
-parse shell text. `updev`, `updev last`, and `updev list` security detail views
-can run confirmed item-scoped `brew trust --formula` / `brew trust --cask`
-actions. Whole-tap `brew trust --tap` is offered only from tap findings,
-requires an explicit confirmation, and never runs automatically during update.
+the configured `Brewfile.tmpl`. Doctor groups missing trust by tap so already
+trusted formula/cask entries are not prompted again, and the remediation points
+at the affected tap group. Security posture rows for non-official taps and
+qualified formula/cask entries still include structured `brew trust` command
+argv so agents do not need to parse shell text. During strict update gating,
+updev also reads the Homebrew trust state and does not hold a candidate solely
+because it comes from a non-official tap when the tap/formula/cask is already
+trusted by Homebrew. `updev`, `updev last`, and `updev list` security detail
+views can run confirmed item-scoped `brew trust --formula` /
+`brew trust --cask` actions. Whole-tap `brew trust --tap` requires an explicit
+confirmation and never runs automatically during update.
 
 Scanner scope:
 

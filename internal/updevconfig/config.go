@@ -11,14 +11,15 @@ import (
 )
 
 type Config struct {
-	Security  SecurityConfig
-	Providers ProvidersConfig
-	Update    UpdateConfig
-	UI        UIConfig
-	Sources   SourcesConfig
-	Brewfile  BrewfileConfig
-	Inventory InventoryConfig
-	Backends  BackendsConfig
+	Security     SecurityConfig
+	Providers    ProvidersConfig
+	Update       UpdateConfig
+	UI           UIConfig
+	Sources      SourcesConfig
+	Brewfile     BrewfileConfig
+	ChezmoiHooks ChezmoiHooksConfig
+	Inventory    InventoryConfig
+	Backends     BackendsConfig
 }
 
 type SecurityConfig struct {
@@ -71,6 +72,14 @@ type SourcesConfig struct {
 type BrewfileConfig struct {
 	Desired   *string
 	WriteMode *string
+}
+
+type ChezmoiHooksConfig struct {
+	Brewfile ChezmoiBrewfileHookConfig
+}
+
+type ChezmoiBrewfileHookConfig struct {
+	Mode *string
 }
 
 type InventoryConfig struct {
@@ -245,6 +254,11 @@ func ParseTOMLWithError(data string) (Config, error) {
 					config.Brewfile.WriteMode = &normalized
 				}
 			}
+		case "chezmoi_hooks.brewfile":
+			if key == "mode" && ValidChezmoiBrewfileHookMode(stringValue) {
+				normalized := strings.ToLower(strings.TrimSpace(stringValue))
+				config.ChezmoiHooks.Brewfile.Mode = &normalized
+			}
 		case "inventory":
 			switch key {
 			case "state_dir":
@@ -308,6 +322,15 @@ func ValidBrewfileDesiredMode(value string) bool {
 func ValidBrewfileWriteMode(value string) bool {
 	switch strings.ToLower(strings.TrimSpace(value)) {
 	case "disabled", "direct", "template", "chezmoi-template":
+		return true
+	default:
+		return false
+	}
+}
+
+func ValidChezmoiBrewfileHookMode(value string) bool {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "off", "warn", "apply-safe":
 		return true
 	default:
 		return false

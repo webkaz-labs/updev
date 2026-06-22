@@ -80,7 +80,7 @@ func TestMutationReportAllowsConfiguredBrewfileWriteMode(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("UPDEV_ROOT", root)
 	configPath := filepath.Join(root, "updev.toml")
-	if err := os.WriteFile(configPath, []byte("[brewfile]\nwrite_mode = \"template\"\n"), 0o600); err != nil {
+	if err := os.WriteFile(configPath, []byte("[brewfile]\nwrite_mode = \"template\"\ndesired = \"root\"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("UPDEV_CONFIG", configPath)
@@ -107,6 +107,116 @@ func TestMutationReportAllowsConfiguredBrewfileWriteMode(t *testing.T) {
 	})
 	if report.Status != plan.StatusOK || !report.Changed || report.Snapshot == nil {
 		t.Fatalf("expected configured Brewfile write to succeed, got %#v", report)
+	}
+}
+
+func TestMutationReportSyncsRenderedHomeBrewfileWhenHomeDesiredIsActive(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	root := t.TempDir()
+	t.Setenv("UPDEV_ROOT", root)
+	configPath := filepath.Join(root, "updev.toml")
+	if err := os.WriteFile(configPath, []byte("[brewfile]\nwrite_mode = \"template\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("UPDEV_CONFIG", configPath)
+	if err := os.WriteFile(filepath.Join(root, "Brewfile.tmpl"), []byte(`{{ if has "work" .profiles }}
+{{ end }}
+`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(home, "Brewfile"), []byte(""), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	miseDir := filepath.Join(root, "dot_config", "mise")
+	if err := os.MkdirAll(miseDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(miseDir, "config.toml"), []byte("[tools]\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	binDir := t.TempDir()
+	fakeChezmoi := filepath.Join(binDir, "chezmoi")
+	if err := os.WriteFile(fakeChezmoi, []byte("#!/bin/sh\ncp \"$UPDEV_TEST_BREWFILE_SOURCE\" \"$HOME/Brewfile\"\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("UPDEV_TEST_BREWFILE_SOURCE", filepath.Join(root, "Brewfile.tmpl"))
+
+	report := buildMutationReport(context.Background(), mutationOptions{
+		action:   "add",
+		root:     root,
+		provider: "brew",
+		kind:     "cask",
+		name:     "antigravity-cli",
+		category: "work",
+	})
+	if report.Status != plan.StatusOK || !report.Changed {
+		t.Fatalf("expected Home Brewfile sync mutation to succeed, got %#v", report)
+	}
+	rendered, err := os.ReadFile(filepath.Join(home, "Brewfile"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(rendered), `cask "antigravity-cli"`) {
+		t.Fatalf("expected rendered Home Brewfile to include adopted cask:\n%s", rendered)
+	}
+}
+
+func TestMutationReportSyncsRenderedHomeBrewfileOnNoopBrewfileMutation(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	root := t.TempDir()
+	t.Setenv("UPDEV_ROOT", root)
+	configPath := filepath.Join(root, "updev.toml")
+	if err := os.WriteFile(configPath, []byte("[brewfile]\nwrite_mode = \"template\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("UPDEV_CONFIG", configPath)
+	source := filepath.Join(root, "Brewfile.tmpl")
+	if err := os.WriteFile(source, []byte(`{{ if has "work" .profiles }}
+cask "antigravity-cli"
+{{ end }}
+`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(home, "Brewfile"), []byte(""), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	miseDir := filepath.Join(root, "dot_config", "mise")
+	if err := os.MkdirAll(miseDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(miseDir, "config.toml"), []byte("[tools]\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	binDir := t.TempDir()
+	fakeChezmoi := filepath.Join(binDir, "chezmoi")
+	if err := os.WriteFile(fakeChezmoi, []byte("#!/bin/sh\ncp \"$UPDEV_TEST_BREWFILE_SOURCE\" \"$HOME/Brewfile\"\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("UPDEV_TEST_BREWFILE_SOURCE", source)
+
+	report := buildMutationReport(context.Background(), mutationOptions{
+		action:   "add",
+		root:     root,
+		provider: "brew",
+		kind:     "cask",
+		name:     "antigravity-cli",
+		category: "work",
+	})
+	if report.Status != plan.StatusOK || report.Changed {
+		t.Fatalf("expected no-op Home Brewfile sync mutation to succeed without source change, got %#v", report)
+	}
+	rendered, err := os.ReadFile(filepath.Join(home, "Brewfile"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(rendered), `cask "antigravity-cli"`) {
+		t.Fatalf("expected no-op mutation to repair rendered Home Brewfile:\n%s", rendered)
 	}
 }
 
@@ -346,7 +456,7 @@ func TestPrintSyncTextShowsCategoryMeaning(t *testing.T) {
 	var out bytes.Buffer
 	printSyncText(&out, report, false)
 	text := out.String()
-	for _, want := range []string{"categories: personal=1", "personal-only additions on top of work", "action", "adopt-remove-or-manual", "details"} {
+	for _, want := range []string{"categories: personal=1", "personal deployment-scope additions on top of work", "action", "adopt-remove-or-manual", "details"} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("expected sync text to include %q:\n%s", want, text)
 		}

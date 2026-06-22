@@ -100,6 +100,32 @@ func TestUpdateOutcomeRowsSplitItemAndVersionDetail(t *testing.T) {
 	}
 }
 
+func TestUpdateOutcomeRowsTreatsHomebrewMissingAppSourceAsItemError(t *testing.T) {
+	step := updateStep{
+		Name:    "brew",
+		Status:  plan.StatusError,
+		Updated: []string{"muxy-app/tap/muxy 0.28.0 -> 1.0.0"},
+		Stderr:  "Error: muxy-app/tap/muxy: It seems the App source '/Applications/Muxy.app' is not there.",
+	}
+	rows := updateOutcomeRows(updateReport{Steps: []updateStep{step}}, 10, false)
+	if len(rows) != 1 {
+		t.Fatalf("expected one outcome row, got %#v", rows)
+	}
+	if rows[0][0] != "error" || rows[0][2] != "muxy-app/tap/muxy" || !strings.Contains(rows[0][3], "app") {
+		t.Fatalf("expected missing app source to be item error, got %#v", rows[0])
+	}
+	logRows := updateLogDetailRows(updateReport{Steps: []updateStep{step}})
+	if len(logRows) != 2 {
+		t.Fatalf("expected item error row and provider log row, got %#v", logRows)
+	}
+	if logRows[0].Status != "error" || strings.Contains(strings.Join(logRows[0].Metadata, " "), "result: updated") {
+		t.Fatalf("expected first row to be item-level error, got %#v", logRows[0])
+	}
+	if metadata := strings.Join(logRows[1].Metadata, " "); strings.Contains(metadata, "updated: muxy-app/tap/muxy") || !strings.Contains(metadata, "failed update item") {
+		t.Fatalf("expected provider log metadata to avoid successful updated label, got %#v", logRows[1].Metadata)
+	}
+}
+
 func TestUpdateOutcomeRowsSplitMiseBumpSkippedItems(t *testing.T) {
 	report := updateReport{Steps: []updateStep{{
 		Name:         miseBumpProvider,
@@ -141,6 +167,7 @@ func TestLastUpdateReportNormalizesCachedOutcomes(t *testing.T) {
 		},
 		SkippedItems: []string{
 			"Warning: Skipping oven-sh/bun because it is not trusted. Run `brew trust oven-sh/bun`.",
+			"Warning: Skipping gh: most recent version 2.95.0 not installed",
 			"Already up-to-date.",
 		},
 	}}}
@@ -158,11 +185,11 @@ func TestLastUpdateReportNormalizesCachedOutcomes(t *testing.T) {
 	if strings.Join(step.Updated, "\n") != strings.Join(wantUpdated, "\n") {
 		t.Fatalf("expected cached update outcomes to be normalized, got %#v", step.Updated)
 	}
-	if len(step.SkippedItems) != 1 || step.SkippedItems[0] != "oven-sh/bun skipped: because it is not trusted. Run `brew trust oven-sh/bun`." {
+	if len(step.SkippedItems) != 2 || step.SkippedItems[0] != "oven-sh/bun skipped: because it is not trusted. Run `brew trust oven-sh/bun`." || step.SkippedItems[1] != "gh skipped: most recent version 2.95.0 not installed" {
 		t.Fatalf("expected cached skipped outcomes to be normalized, got %#v", step.SkippedItems)
 	}
 	rows := updateOutcomeRows(report, 10, false)
-	if len(rows) != 3 || rows[0][2] != "mole" || rows[2][2] != "oven-sh/bun" {
+	if len(rows) != 4 || rows[0][2] != "mole" || rows[2][2] != "oven-sh/bun" || rows[3][2] != "gh" || !strings.Contains(rows[3][3], "2.95.0") {
 		t.Fatalf("expected normalized cached outcome rows, got %#v", rows)
 	}
 }
@@ -289,6 +316,22 @@ func TestUpdateOutcomeRowsShowsBrewHeldCandidateItem(t *testing.T) {
 	}
 	if !strings.Contains(rows[0][3], "latest review") || !strings.Contains(rows[0][3], "Homebrew cask") {
 		t.Fatalf("expected skipped row detail to include version, decision, and localized reason, got %#v", rows[0])
+	}
+}
+
+func TestUpdateOutcomeRowsLocalizeHomebrewMostRecentSkippedWarnings(t *testing.T) {
+	withDefaultLanguageForTest(t, "ja")
+	report := updateReport{Steps: []updateStep{{
+		Name:         "brew",
+		Status:       plan.StatusHeld,
+		SkippedItems: []string{"gh skipped: most recent version 2.95.0 not installed"},
+	}}}
+	rows := updateOutcomeRows(report, 10, false)
+	if len(rows) != 1 {
+		t.Fatalf("expected one skipped row, got %#v", rows)
+	}
+	if rows[0][2] != "gh" || rows[0][3] != "最新版 2.95.0 は未インストール" {
+		t.Fatalf("expected localized most-recent skipped row, got %#v", rows[0])
 	}
 }
 
@@ -594,7 +637,7 @@ func TestPrintUpdateTextUsesCompactInventoryDashboard(t *testing.T) {
 		},
 	})
 	got := buffer.String()
-	for _, want := range []string{"inventory drift", "top inventory items", "jq", "profile", "profile-mismatch"} {
+	for _, want := range []string{"inventory drift", "top inventory items", "jq", "scope", "profile-mismatch"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("expected compact update dashboard to include %q, got %q", want, got)
 		}
@@ -1570,6 +1613,105 @@ func TestRunUpdateStrictSafetyHoldsTooNewBrewCandidate(t *testing.T) {
 	if !strings.Contains(brewStep.SkippedItems[0], "jq -> 1.8.1 hold") || strings.Contains(brewStep.SkippedItems[0], "security=strict held update") {
 		t.Fatalf("expected package-specific hold reason, got %#v", brewStep.SkippedItems)
 	}
+}
+
+func TestStrictBrewRefreshReplacesStaleHeldGateWithFreshCaskCandidates(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	t.Setenv("UPDEV_CONFIG", filepath.Join(t.TempDir(), "missing-config.toml"))
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "Brewfile.tmpl"), []byte(`
+cask "antigravity"
+cask "antigravity-cli"
+cask "wezterm@nightly"
+`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(http.NotFoundHandler())
+	defer server.Close()
+	t.Setenv("UPDEV_HOMEBREW_API_URL", server.URL)
+	t.Setenv("UPDEV_GITHUB_API_URL", server.URL)
+	t.Setenv("UPDEV_OSV_API_URL", server.URL)
+	outdatedJSON := `{"formulae":[],"casks":[
+{"name":"antigravity","installed_versions":"1.0.0","current_version":"1.1.0"},
+{"name":"antigravity-cli","installed_versions":"1.0.0","current_version":"1.1.0"},
+{"name":"wezterm@nightly","installed_versions":"latest","current_version":"latest"}
+]}`
+	fake := &fakeCommandRunner{results: map[string]runner.Result{
+		strings.Join([]string{"brew", "update"}, "\x00"): {Stdout: "Updated Homebrew metadata"},
+		strings.Join([]string{"env", "HOMEBREW_NO_AUTO_UPDATE=1", "HOMEBREW_NO_INSTALL_FROM_API=1", "brew", "outdated", "--json=v2", "--greedy"}, "\x00"): {Stdout: outdatedJSON},
+	}}
+	staleGate := safetyGate{
+		Provider: "brew",
+		Status:   plan.StatusHeld,
+		Findings: []safetyFinding{{
+			Provider:       "brew",
+			Kind:           "cask",
+			Name:           "wezterm@nightly",
+			CurrentVersion: "latest",
+			Decision:       "review",
+		}},
+	}
+	step, refreshedGate, ok := runStrictBrewRefreshBeforeApply(
+		context.Background(),
+		fake,
+		updateSteps()[0],
+		updateOptions{root: root, security: "strict"},
+		securityPolicy{},
+		[]safetyGate{staleGate},
+		false,
+	)
+	if !ok {
+		t.Fatal("expected strict brew refresh to run for stale held gate")
+	}
+	if refreshedGate.Status != plan.StatusHeld || len(refreshedGate.Findings) != 3 {
+		t.Fatalf("expected fresh cask candidates to replace stale gate, got %#v", refreshedGate)
+	}
+	for _, name := range []string{"antigravity", "antigravity-cli", "wezterm@nightly"} {
+		if !safetyFindingsContain(refreshedGate.Findings, "cask", name) {
+			t.Fatalf("expected refreshed cask candidate %q, got %#v", name, refreshedGate.Findings)
+		}
+		if !updateSkippedItemsContain(step.SkippedItems, name) {
+			t.Fatalf("expected skipped item for %q, got %#v", name, step.SkippedItems)
+		}
+	}
+	if step.Status != plan.StatusHeld || !step.Skipped {
+		t.Fatalf("expected refreshed unsafe casks to hold brew step, got %#v", step)
+	}
+	if countCommandCalls(fake.calls, []string{"brew", "update"}) != 1 {
+		t.Fatalf("expected a single brew update refresh call, got %#v", fake.calls)
+	}
+	if fakeCommandWasCalled(fake.calls, []string{"brew", "upgrade", "--greedy"}) {
+		t.Fatalf("unsafe cask refresh should not run broad brew upgrade: %#v", fake.calls)
+	}
+}
+
+func safetyFindingsContain(findings []safetyFinding, kind string, name string) bool {
+	for _, finding := range findings {
+		if finding.Kind == kind && finding.Name == name {
+			return true
+		}
+	}
+	return false
+}
+
+func updateSkippedItemsContain(items []string, needle string) bool {
+	for _, item := range items {
+		if strings.Contains(item, needle) {
+			return true
+		}
+	}
+	return false
+}
+
+func countCommandCalls(calls [][]string, want []string) int {
+	count := 0
+	for _, call := range calls {
+		if strings.Join(call, "\x00") == strings.Join(want, "\x00") {
+			count++
+		}
+	}
+	return count
 }
 
 func fakeCommandIsBrewUpgrade(call []string) bool {

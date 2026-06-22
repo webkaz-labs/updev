@@ -105,6 +105,7 @@ var securityReasonJA = map[string]string{
 	"release-age and provenance evidence are not available in the first Go safety slice":                 "現在の Go safety 判定では、リリース経過日数と配布元の根拠を確認できません",
 	"URL-based Homebrew cask needs manual provenance review before update":                               "URL 指定の Homebrew cask は、更新前に配布元の手動確認が必要です",
 	"non-official Homebrew tap needs provenance review before update":                                    "非公式 Homebrew tap は、更新前に配布元の確認が必要です",
+	"Homebrew trust is already configured for this non-official tap candidate":                           "この非公式 Homebrew tap 候補は、Homebrew trust 設定済みです",
 	"Homebrew cask updates need provenance and URL/release-age checks before strict mode can allow them": "Homebrew cask 更新は、strict mode で許可する前に配布元・URL・リリース経過日数の確認が必要です",
 	"Homebrew cask download host differs from homepage host; vendor provenance review required":          "Homebrew cask のダウンロード元 host が homepage と異なるため、配布元の確認が必要です",
 	"non-official Homebrew tap needs provenance review":                                                  "非公式 Homebrew tap は配布元の確認が必要です",

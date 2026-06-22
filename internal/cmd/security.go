@@ -278,6 +278,7 @@ func homebrewPostureReviewCount(postures []homebrewPosture) int {
 
 type (
 	homebrewTrustTarget = brew.TrustTarget
+	homebrewTrustGroup  = brew.TrustGroup
 	homebrewTrustState  = brew.TrustState
 )
 
@@ -319,22 +320,25 @@ func homebrewTapTrustDependencyCheck(ctx context.Context, commandRunner runner.R
 	}
 	targets = applyHomebrewTrustState(targets, state)
 	check.TrustTargets = targets
-	trusted, untrusted := homebrewTrustTargetCounts(targets)
-	check.Value = fmt.Sprintf("%d trusted, %d untrusted, %d targets", trusted, untrusted, len(targets))
+	groups := homebrewTrustGroupsByTap(targets)
+	check.TrustGroups = groups
+	trustedGroups, untrustedGroups := homebrewTrustGroupCounts(groups)
+	trustedTargets, untrustedTargets := homebrewTrustTargetCounts(targets)
+	check.Value = fmt.Sprintf("%d trusted taps, %d untrusted taps, %d targets (%d trusted, %d untrusted)", trustedGroups, untrustedGroups, len(targets), trustedTargets, untrustedTargets)
 	if result.Code != 0 || result.Err != nil {
 		check.Status = plan.StatusDrift
 		check.Reason = "brew trust --json=v1 returned non-zero but JSON output was parsed"
 		check.Remediation = "repair Homebrew trust metadata access; updev used the parsed trust JSON but provider diagnostics should exit cleanly"
 		return check
 	}
-	if untrusted > 0 {
+	if untrustedGroups > 0 {
 		check.Status = plan.StatusDrift
-		check.Reason = "untrusted Homebrew tap targets: " + strings.Join(homebrewUntrustedTargetNames(targets, 4), ", ")
-		check.Remediation = "review source provenance, then prefer item-scoped brew trust commands"
-		if command := firstHomebrewUntrustedTrustCommand(targets); command != "" {
+		check.Reason = "untrusted Homebrew tap groups: " + strings.Join(homebrewUntrustedTrustGroupNames(groups, 4), ", ")
+		check.Remediation = "review source provenance, then trust the affected tap group"
+		if command := firstHomebrewUntrustedTrustCommand(groups); command != "" {
 			check.Remediation += " such as `" + command + "`"
 		}
-		check.Remediation += "; trust whole taps only when you accept all current and future entries"
+		check.Remediation += "; tap trust accepts all current and future entries in that tap"
 	}
 	return check
 }
@@ -372,12 +376,24 @@ func homebrewTrustTargetCounts(targets []homebrewTrustTarget) (int, int) {
 	return brew.TrustTargetCounts(targets)
 }
 
+func homebrewTrustGroupsByTap(targets []homebrewTrustTarget) []homebrewTrustGroup {
+	return brew.TrustGroupsByTap(targets)
+}
+
+func homebrewTrustGroupCounts(groups []homebrewTrustGroup) (int, int) {
+	return brew.TrustGroupCounts(groups)
+}
+
 func homebrewUntrustedTargetNames(targets []homebrewTrustTarget, limit int) []string {
 	return brew.UntrustedTargetNames(targets, limit)
 }
 
-func firstHomebrewUntrustedTrustCommand(targets []homebrewTrustTarget) string {
-	return brew.FirstUntrustedTrustCommand(targets)
+func homebrewUntrustedTrustGroupNames(groups []homebrewTrustGroup, limit int) []string {
+	return brew.UntrustedGroupNames(groups, limit)
+}
+
+func firstHomebrewUntrustedTrustCommand(groups []homebrewTrustGroup) string {
+	return brew.FirstUntrustedTrustCommand(groups)
 }
 
 func isHomebrewTrustSecurityAction(action string) bool {
@@ -691,7 +707,7 @@ func defaultSecurityOptions() securityOptions {
 
 func bindSecurityOptionFlags(fs *flag.FlagSet, opts *securityOptions) {
 	fs.StringVar(&opts.format, "format", opts.format, "output format: text or json")
-	fs.StringVar(&opts.root, "root", opts.root, "chezmoi source root")
+	fs.StringVar(&opts.root, "root", opts.root, "desired source root")
 	fs.StringVar(&opts.provider, "provider", "", "provider filter")
 	fs.StringVar(&opts.ecosystem, "ecosystem", "", "high-confidence ecosystem filter")
 	fs.StringVar(&opts.policy, "policy", opts.policy, "security policy path")
@@ -706,7 +722,7 @@ func parseSecurityGateOptions(args []string) (securityGateOptions, error) {
 	fs := flag.NewFlagSet("security gate", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	fs.StringVar(&opts.format, "format", opts.format, "output format: text or json")
-	fs.StringVar(&opts.root, "root", opts.root, "chezmoi source root")
+	fs.StringVar(&opts.root, "root", opts.root, "desired source root")
 	fs.StringVar(&opts.provider, "provider", opts.provider, "provider to gate")
 	fs.StringVar(&opts.policy, "policy", opts.policy, "security policy path")
 	fs.BoolVar(&opts.includeVSCode, "include-vscode", false, "include Brewfile-managed VS Code extensions when provider is all")

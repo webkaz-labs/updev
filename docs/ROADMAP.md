@@ -14,7 +14,7 @@ history in git log, and keep the current/next release target in
 - Compact update dashboards, `updev last`, list/update selector hubs,
   expandable detail rows, keyboard and opt-in mouse navigation, filters,
   Japanese human labels, provider log streaming, updated/deferred summaries,
-  profile mismatch filtering, VS Code opt-in defaults, manual-app guidance, and
+  inactive deployment-scope mismatch filtering, VS Code opt-in defaults, manual-app guidance, and
   non-destructive smoke coverage are implemented.
 - Common TTY review flows use routed dashboard/table/detail/input/confirmation
   views so post-report navigation no longer repeatedly exits and restarts
@@ -31,14 +31,15 @@ history in git log, and keep the current/next release target in
 - Documentation source-of-truth guidance, canonical `docs/agent/` usage/skill
   files, tag-specific release notes, and focused `docs-check` drift coverage are
   implemented.
-- `updev v0.7.14` is the current preview contract: it keeps the `v0.6.x`
+- `updev v0.7.16` is the current preview contract: it keeps the `v0.6.x`
   Homebrew/mise provider gate and the `v0.7.3` support-label catalog, includes
   the `v0.7.5` P1 scalability refactor, the `v0.7.8` large command-package
   reset, the `v0.7.9` agent-friendly quality tooling patch, and the `v0.7.10`
   provider evidence detail patch, the `v0.7.11` scanner hardening patch, and
   the `v0.7.12` policy ergonomics patch, the `v0.7.13` route-to-intent
-  completion and navigation cleanup patch, and the `v0.7.14` post-route polish
-  patch. It
+  completion and navigation cleanup patch, the `v0.7.14` post-route polish
+  patch, the `v0.7.15` drift-prevention and rendered Brewfile sync patch, and
+  the `v0.7.16` Brewfile hook/apply bridge patch. It
   keeps `check` fast, adds slower `audit` evidence for release/scheduled
   reviews, tracks non-blocking `aislop` findings in `SOURCE-STRUCTURE.md`,
   shows richer Homebrew/mise source, release-age, and cache context in detail
@@ -48,16 +49,25 @@ history in git log, and keep the current/next release target in
   row actions route to item-scoped detail views when a stable target exists,
   redundant inventory attention/detail choices stay out of the primary hubs,
   and Homebrew extra live inventory rows explain drift causes plus offer
-  category-explicit Brewfile adoption through the mutation boundary.
+  category-explicit Brewfile adoption through the mutation boundary. Homebrew
+  wrapper diagnostics, trust handling, rendered Brewfile sync,
+  deployment-scope mismatch filtering, warning-only daily hooks, and safe
+  item-scoped `updev apply brewfile` installs are part of the current preview
+  contract.
 - `updev brewfile ...` and `brewfile` remain compatibility or low-level
   surfaces, not the primary human workflow.
+- Chezmoi Brewfile onchange hooks are warning-only daily plumbing. They do not
+  run `brew bundle`; first-time bootstrap remains an explicit bootstrap task,
+  and normal missing Homebrew desired-state application uses `updev apply
+  brewfile`.
 
 ## Near-Term Order
 
 1. Continue the broader `v0.7.x` workstream plan in
-   [RELEASE.md](RELEASE.md#next-release-target-v0715). `v0.7.15` follows the
-   v0.7.14 polish patch with drift-prevention diagnostics, provider-evidence
-   follow-through, and low-step TUI review loops.
+   [RELEASE.md](RELEASE.md#next-release-target-v0717). `v0.7.17` follows the
+   v0.7.16 Brewfile hook/apply bridge with real TTY dogfood, route/readability
+   polish, and a decision on whether hook-triggered `apply-safe` should remain
+   documented-only or become explicit opt-in behavior.
 2. Preserve TTY/report regression guardrails for the accepted `updev`,
    `updev last`, and `updev list` flows before making additional UX changes.
 3. Continue `v0.7.x` support-label dogfood without turning the catalog into list
@@ -88,25 +98,30 @@ history in git log, and keep the current/next release target in
 9. Extend pending-update gates beyond the current Homebrew/mise/VS Code paths
    only as those providers move into Go, using the same updev-owned gate
    vocabulary and item-scoped allow/hold/review decisions.
-10. Keep policy ergonomics current as policy rules grow: guided helpers,
+10. Dogfood `updev apply brewfile` as the safe Homebrew desired-state bridge:
+    keep active desired tied to `[brewfile].desired`, propose only missing
+    desired installs, never uninstall extras, leave outdated updates to
+    `updev update`, and keep `brew bundle` as explicit bootstrap/compatibility
+    fallback.
+11. Keep policy ergonomics current as policy rules grow: guided helpers,
    diagnostic indexes, and shadowed-rule references should remain visible from
    CLI and TUI review paths.
-11. Keep `updev skill` / `updev help agent` synchronized with canonical
+12. Keep `updev skill` / `updev help agent` synchronized with canonical
    `docs/agent/` files through docs-check drift coverage.
-12. Continue hardening portable structured manual inventory sources and optional
+13. Continue hardening portable structured manual inventory sources and optional
    agent-assisted enrichment: agent output is structured draft metadata, not
    desired state, until the user accepts or edits it from CLI/TUI review.
-13. Keep agent-assisted review optional for ambiguous candidates. Agent-generated
+14. Keep agent-assisted review optional for ambiguous candidates. Agent-generated
    manual app metadata must be schema-validated draft data, callable from the
    manual app TUI flow, and safe when Codex or another configured agent is not
    installed.
-14. Keep Go CLI standard checks as part of future release reviews; direct
+15. Keep Go CLI standard checks as part of future release reviews; direct
    subprocess exceptions, JSON encoding, and verbosity policy are documented for
    the current tool surface.
-15. Keep release notes and public docs focused on `v0.7.x` preview hardening.
+16. Keep release notes and public docs focused on `v0.7.x` preview hardening.
     Do not turn support-level labels into `v1.0.0` promises until the dogfood
     evidence is strong enough to freeze them.
-16. Maintain the macOS/Homebrew/mise public preview with installation docs,
+17. Maintain the macOS/Homebrew/mise public preview with installation docs,
     privacy boundaries, and explicit experimental status for Linux/Windows
     providers. Reserve `updev v1.0.0` for the first stable public contract after
     that scope is deliberately narrowed and documented.

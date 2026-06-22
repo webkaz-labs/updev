@@ -52,6 +52,23 @@ func UpdateCommand() []string {
 	return []string{"brew", "update"}
 }
 
+func InstallCommand(kind string, name string) []string {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return nil
+	}
+	switch strings.TrimSpace(kind) {
+	case "brew", "formula":
+		return []string{"env", "HOMEBREW_NO_AUTO_UPDATE=1", "brew", "install", name}
+	case "cask":
+		return []string{"env", "HOMEBREW_NO_AUTO_UPDATE=1", "brew", "install", "--cask", name}
+	case "tap":
+		return []string{"env", "HOMEBREW_NO_AUTO_UPDATE=1", "brew", "tap", name}
+	default:
+		return nil
+	}
+}
+
 func TrustJSONCommand() []string {
 	return []string{"env", "HOMEBREW_NO_INSTALL_FROM_API=1", "brew", "trust", "--json=v1"}
 }

@@ -71,9 +71,17 @@ func TestBuildListReportUsesManualInventoryForCaskDriftGuidance(t *testing.T) {
 }
 
 func TestBrewExtraInventoryRowsExposeAdoptActions(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "Brewfile.tmpl"), []byte(`{{ if has "work" .profiles }}
+{{ end }}
+{{ if has "personal" .profiles }}
+{{ end }}
+`), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	report := buildListReport(inventoryResult{Report: plan.Report{
 		Status: plan.StatusDrift,
-		Root:   "/repo",
+		Root:   root,
 		Items: []plan.Item{{
 			Provider: "brew",
 			Kind:     "cask",
@@ -81,7 +89,7 @@ func TestBrewExtraInventoryRowsExposeAdoptActions(t *testing.T) {
 			Status:   plan.StatusExtra,
 			Live:     true,
 		}},
-	}}, listOptions{root: "/repo"})
+	}}, listOptions{root: root})
 	sections := listTableSections(report)
 	var row toolRow
 	found := false
@@ -112,6 +120,40 @@ func TestBrewExtraInventoryRowsExposeAdoptActions(t *testing.T) {
 	}
 }
 
+func TestBrewExtraInventoryRowsExposeGenericAdoptActionForUngroupedBrewfile(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "Brewfile.tmpl"), []byte("brew \"git\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	report := buildListReport(inventoryResult{Report: plan.Report{
+		Status: plan.StatusDrift,
+		Root:   root,
+		Items: []plan.Item{{
+			Provider: "brew",
+			Kind:     "cask",
+			Name:     "cursor-cli",
+			Status:   plan.StatusExtra,
+			Live:     true,
+		}},
+	}}, listOptions{root: root})
+	sections := listTableSections(report)
+	var actions []reviewui.Action
+	for _, section := range sections {
+		for _, candidate := range section.Rows {
+			if candidate.Name == "cursor-cli" {
+				actions = candidate.Actions
+			}
+		}
+	}
+	if len(actions) != 1 {
+		t.Fatalf("expected one ungrouped adopt action, got %#v", actions)
+	}
+	action, kind, name, category, ok := parseBrewDriftAction(actions[0].Value)
+	if !ok || action != "adopt" || kind != "cask" || name != "cursor-cli" || category != "" {
+		t.Fatalf("unexpected brew drift action: action=%q kind=%q name=%q category=%q ok=%v", action, kind, name, category, ok)
+	}
+}
+
 func TestBrewDriftAdoptActionWritesBrewfileThroughMutationBoundary(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	t.Setenv("HOME", t.TempDir())
@@ -137,6 +179,64 @@ func TestBrewDriftAdoptActionWritesBrewfileThroughMutationBoundary(t *testing.T)
 	}
 	if !applyRoutedDetailWriteAction(root, &updateReport{}, action, "", "") {
 		t.Fatalf("expected brew drift action to write Brewfile")
+	}
+	data, err := os.ReadFile(filepath.Join(root, "Brewfile.tmpl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), `cask "cursor-cli"`) {
+		t.Fatalf("expected adopted cask in Brewfile:\n%s", data)
+	}
+}
+
+func TestBrewDriftAdoptActionReportsWrittenTokenAndDiff(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	t.Setenv("HOME", t.TempDir())
+	root := t.TempDir()
+	enableBrewfileWriteMode(t, root, "template")
+	if err := os.WriteFile(filepath.Join(root, "Brewfile.tmpl"), []byte(`{{ if has "work" .profiles }}
+{{ end }}
+`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	miseDir := filepath.Join(root, "dot_config", "mise")
+	if err := os.MkdirAll(miseDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(miseDir, "config.toml"), []byte("[tools]\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	action := brewDriftActionValue("adopt", "cask", "antigravity-cli", "work")
+	result := applyRoutedDetailWriteActionResult(root, &updateReport{}, action, "", "")
+	if !result.Applied || result.Status != plan.StatusOK {
+		t.Fatalf("expected applied result, got %#v", result)
+	}
+	for _, want := range []string{`target: cask "antigravity-cli"`, "category: work", "changed: true", `+cask "antigravity-cli"`} {
+		if !strings.Contains(result.Detail, want) {
+			t.Fatalf("expected result detail to include %q:\n%s", want, result.Detail)
+		}
+	}
+}
+
+func TestBrewDriftAdoptActionWritesUngroupedBrewfile(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	t.Setenv("HOME", t.TempDir())
+	root := t.TempDir()
+	enableBrewfileWriteMode(t, root, "template")
+	if err := os.WriteFile(filepath.Join(root, "Brewfile.tmpl"), []byte("brew \"git\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	miseDir := filepath.Join(root, "dot_config", "mise")
+	if err := os.MkdirAll(miseDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(miseDir, "config.toml"), []byte("[tools]\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	action := brewDriftActionValue("adopt", "cask", "cursor-cli", "")
+	result := applyRoutedDetailWriteActionResult(root, &updateReport{}, action, "", "")
+	if !result.Applied || result.Status != plan.StatusOK {
+		t.Fatalf("expected applied result, got %#v", result)
 	}
 	data, err := os.ReadFile(filepath.Join(root, "Brewfile.tmpl"))
 	if err != nil {
@@ -255,7 +355,7 @@ func TestPrintListTextShowsCategoryMeaning(t *testing.T) {
 	var out bytes.Buffer
 	printListText(&out, report, "updev inventory", false)
 	text := out.String()
-	for _, want := range []string{"categories", "personal=1", "runtime=1", "meaning:", "personal-only additions on top of work", "other categories are provider/backend groups"} {
+	for _, want := range []string{"categories", "personal=1", "runtime=1", "meaning:", "personal deployment-scope additions on top of work", "other categories are provider/backend groups"} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("expected category summary to include %q:\n%s", want, text)
 		}

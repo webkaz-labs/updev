@@ -18,3 +18,16 @@ func TestParseTOMLKeepsCompatibilityWrapper(t *testing.T) {
 		t.Fatalf("unexpected parsed language: %#v", config.UI.Language)
 	}
 }
+
+func TestParseTOMLReadsChezmoiBrewfileHookMode(t *testing.T) {
+	config := ParseTOML("[chezmoi_hooks.brewfile]\nmode = \"apply-safe\"\n")
+	if config.ChezmoiHooks.Brewfile.Mode == nil || *config.ChezmoiHooks.Brewfile.Mode != "apply-safe" {
+		t.Fatalf("unexpected hook mode: %#v", config.ChezmoiHooks.Brewfile.Mode)
+	}
+	if !ValidChezmoiBrewfileHookMode("warn") || !ValidChezmoiBrewfileHookMode("off") || !ValidChezmoiBrewfileHookMode("apply-safe") {
+		t.Fatal("expected documented hook modes to be valid")
+	}
+	if ValidChezmoiBrewfileHookMode("bundle") {
+		t.Fatal("did not expect bundle mode to be valid")
+	}
+}

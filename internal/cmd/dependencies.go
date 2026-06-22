@@ -17,6 +17,7 @@ import (
 	"github.com/webkaz-labs/updev/internal/runner"
 	"github.com/webkaz-labs/updev/internal/support"
 	"github.com/webkaz-labs/updev/internal/textui"
+	"github.com/webkaz-labs/updev/internal/updevconfig"
 )
 
 const dependencyContractReportSchemaVersion = 1
@@ -53,6 +54,7 @@ type dependencyContractCheck struct {
 	RequiredField         []string              `json:"required_fields,omitempty"`
 	MissingField          []string              `json:"missing_fields,omitempty"`
 	TrustTargets          []homebrewTrustTarget `json:"trust_targets,omitempty"`
+	TrustGroups           []homebrewTrustGroup  `json:"trust_groups,omitempty"`
 }
 
 type dependencyCompatibilityLedger struct {
@@ -181,6 +183,8 @@ func buildDependencyContractReport(ctx context.Context, opts dependencyOptions, 
 	}
 	checks = append(checks, dependencyMiseMinimumReleaseAgeCheck(ctx, commandRunner, opts.root))
 	checks = append(checks, homebrewTapTrustDependencyCheck(ctx, commandRunner, opts.root))
+	checks = append(checks, homebrewShellWrapperDependencyCheck())
+	checks = append(checks, brewfileWriteBoundaryDependencyCheck(opts.root))
 	checks = append(checks, dependencyCodexTranslationCheck(commandRunner))
 	sort.SliceStable(checks, func(i, j int) bool {
 		if checks[i].Required != checks[j].Required {
@@ -235,7 +239,7 @@ func buildDependencyCompatibilityLedger(root string, checks []dependencyContract
 
 func dependencySupportLabel(check dependencyContractCheck) string {
 	switch check.Tool {
-	case "brew", "mise":
+	case "brew", "brewfile", "mise":
 		return support.LabelSupportedPreview
 	case "codex", "osv-scanner", "gitleaks", "zizmor", "trivy", "grype":
 		return support.LabelExperimental
@@ -245,6 +249,55 @@ func dependencySupportLabel(check dependencyContractCheck) string {
 		}
 		return support.LabelExperimental
 	}
+}
+
+func homebrewShellWrapperDependencyCheck() dependencyContractCheck {
+	active, ok := parseBoolValue(os.Getenv("UPDEV_BREW_WRAPPER"))
+	check := dependencyContractCheck{
+		Tool:        "brew",
+		Feature:     "shell-wrapper",
+		Required:    false,
+		Status:      plan.StatusUnavailable,
+		Active:      &active,
+		Source:      "UPDEV_BREW_WRAPPER",
+		Reason:      "Homebrew shell wrapper is not active in this updev process",
+		Remediation: "start updev from a shell that loads the Homebrew wrapper, or keep using explicit updev add/list drift review actions",
+	}
+	if ok {
+		check.Value = os.Getenv("UPDEV_BREW_WRAPPER")
+	}
+	if active {
+		check.Status = plan.StatusOK
+		check.Reason = "Homebrew shell wrapper is active"
+		check.Remediation = ""
+	}
+	return check
+}
+
+func brewfileWriteBoundaryDependencyCheck(root string) dependencyContractCheck {
+	mode := brewfileWriteMode(root)
+	active := mode != "disabled"
+	check := dependencyContractCheck{
+		Tool:        "brewfile",
+		Feature:     "write-boundary",
+		Required:    false,
+		Status:      plan.StatusUnavailable,
+		Value:       mode,
+		Active:      &active,
+		Reason:      "Brewfile mutation boundary is disabled",
+		Remediation: "set [brewfile].write_mode to template or chezmoi-template before using updev-managed Brewfile write actions",
+	}
+	if path := updevconfig.ConfigPath(); path != "" {
+		check.Source = path
+	} else {
+		check.Source = "default"
+	}
+	if active {
+		check.Status = plan.StatusOK
+		check.Reason = "Brewfile mutation boundary is enabled"
+		check.Remediation = ""
+	}
+	return check
 }
 
 func writeDependencyCompatibilityLedger(path string, ledger dependencyCompatibilityLedger) error {
@@ -311,7 +364,7 @@ func dependencyMiseMinimumReleaseAgeCheck(ctx context.Context, commandRunner run
 
 func dependencyProbes() []dependencyProbe {
 	return []dependencyProbe{
-		{Tool: "brew", Required: true, Env: []string{"HOMEBREW_NO_INSTALL_FROM_API=1"}, VersionArgs: []string{"--version"}, Feature: "outdated-json-v2", JSONArgs: []string{"outdated", "--json=v2"}, JSONFields: []string{"formulae", "casks"}, JSONRootObj: true},
+		{Tool: "brew", Required: true, Env: []string{"HOMEBREW_NO_AUTO_UPDATE=1", "HOMEBREW_NO_INSTALL_FROM_API=1"}, VersionArgs: []string{"--version"}, Feature: "outdated-json-v2", JSONArgs: []string{"outdated", "--json=v2"}, JSONFields: []string{"formulae", "casks"}, JSONRootObj: true},
 		{Tool: "mise", Required: true, VersionArgs: []string{"--version"}, Feature: "current-json", JSONArgs: []string{"ls", "--current", "--json"}, JSONRootObj: true},
 		{Tool: "osv-scanner", VersionArgs: []string{"--version"}},
 		{Tool: "gitleaks", VersionArgs: []string{"version"}},
@@ -544,6 +597,7 @@ func printDependencyContractText(w io.Writer, report dependencyContractReport, c
 		{Header: "status", Min: 10, Max: 12},
 		{Header: "detail", Min: 20, Max: 80},
 	}, rows, color)
+	printDependencyTrustGroups(w, report, color)
 	if report.Status == plan.StatusOK {
 		return
 	}
@@ -554,4 +608,39 @@ func printDependencyContractText(w io.Writer, report dependencyContractReport, c
 		}
 		fmt.Fprintf(w, "  %s: %s\n", check.Tool, check.Remediation)
 	}
+}
+
+func printDependencyTrustGroups(w io.Writer, report dependencyContractReport, color bool) {
+	var groups []homebrewTrustGroup
+	for _, check := range report.Checks {
+		if check.Tool == "brew" && check.Feature == "tap-trust" {
+			groups = check.TrustGroups
+			break
+		}
+	}
+	if len(groups) == 0 {
+		return
+	}
+	rows := [][]string{}
+	for _, group := range groups {
+		if group.Trusted {
+			continue
+		}
+		rows = append(rows, []string{
+			textui.StyleName(group.Tap, color),
+			textui.StyleStatus("drift", color),
+			fmt.Sprintf("%d/%d", group.UntrustedCount, group.TargetCount),
+			joinCommand(group.TrustCommandArgv),
+		})
+	}
+	if len(rows) == 0 {
+		return
+	}
+	fmt.Fprintln(w, "\nhomebrew trust")
+	textui.PrintTable(w, []textui.Column{
+		{Header: "tap", Min: 16, Max: 32},
+		{Header: "status", Min: 8, Max: 10},
+		{Header: "untrusted", Min: 10, Max: 10},
+		{Header: "command", Min: 24, Max: 80},
+	}, rows, color)
 }

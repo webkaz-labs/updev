@@ -68,7 +68,7 @@ func parseInventoryPlanOptions(args []string) (inventoryPlanOptions, error) {
 	fs.IntVar(&opts.limit, "limit", opts.limit, "maximum text rows; 0 means unlimited")
 	fs.StringVar(&opts.provider, "provider", opts.provider, "inventory provider to plan")
 	fs.StringVar(&opts.query, "query", opts.query, "case-insensitive name/detail filter")
-	fs.StringVar(&opts.root, "root", opts.root, "chezmoi source root")
+	fs.StringVar(&opts.root, "root", opts.root, "desired source root")
 	if err := fs.Parse(args); err != nil {
 		return opts, err
 	}

@@ -13,7 +13,10 @@ import (
 	"github.com/webkaz-labs/updev/internal/updevpath"
 )
 
-var lineRe = regexp.MustCompile(`^\s*(brew|cask|tap|vscode)\s+"([^"]+)"`)
+var (
+	lineRe           = regexp.MustCompile(`^\s*(brew|cask|tap|vscode)\s+"([^"]+)"`)
+	categoryMarkerRe = regexp.MustCompile(`^\s*#\s*updev:\s*category\s+([A-Za-z0-9_-]+)\s*$`)
+)
 
 func Run(ctx context.Context, root string, args []string) int {
 	if len(args) == 0 {
@@ -55,7 +58,7 @@ func Run(ctx context.Context, root string, args []string) int {
 		if len(args) > 0 {
 			mode = args[0]
 		}
-		_ = runCommandQuiet(ctx, "chezmoi", "apply", filepath.Join(updevpath.HomeDir(), "Brewfile"))
+		_ = SyncHome(ctx)
 		return runCommand(ctx, "brewtmplcheck", mode)
 	case "help", "--help", "-h":
 		usage()
@@ -64,6 +67,14 @@ func Run(ctx context.Context, root string, args []string) int {
 		usage()
 		return 1
 	}
+}
+
+func SyncHome(ctx context.Context) error {
+	home := updevpath.HomeDir()
+	if home == "" {
+		return fmt.Errorf("home directory unavailable")
+	}
+	return runCommandQuiet(ctx, "chezmoi", "apply", filepath.Join(home, "Brewfile"))
 }
 
 func runAdd(root string, kind string, name string, category string) int {
@@ -94,8 +105,10 @@ func AddEntry(root string, kind string, name string, category string) (bool, err
 	if err := validateKind(kind); err != nil {
 		return false, err
 	}
-	if err := validateCategory(category); err != nil {
-		return false, err
+	if category != "" {
+		if err := validateCategoryName(category); err != nil {
+			return false, err
+		}
 	}
 	path := SourcePath(root)
 	if HasEntry(root, kind, name) {
@@ -108,12 +121,167 @@ func AddEntry(root string, kind string, name string, category string) (bool, err
 	line := fmt.Sprintf("%s %q", kind, name)
 	updated, ok := insertIntoCategory(string(text), category, line)
 	if !ok {
+		if category == "" {
+			return false, fmt.Errorf("Brewfile append target was not found")
+		}
 		return false, fmt.Errorf("%s block was not found", category)
 	}
 	if err := os.WriteFile(path, []byte(updated), mode); err != nil {
 		return false, err
 	}
 	return true, nil
+}
+
+func Categories(root string) []string {
+	text, _, err := readSource(SourcePath(root))
+	if err != nil {
+		return nil
+	}
+	return CategoriesFromTemplate(string(text))
+}
+
+func CategoriesFromTemplate(text string) []string {
+	re := regexp.MustCompile(`has\s+"([^"]+)"\s+\.profiles`)
+	seen := map[string]bool{}
+	categories := []string{}
+	scanner := bufio.NewScanner(strings.NewReader(text))
+	for scanner.Scan() {
+		line := scanner.Text()
+		if marker := categoryMarker(line); marker != "" {
+			if !seen[marker] {
+				seen[marker] = true
+				categories = append(categories, marker)
+			}
+			continue
+		}
+		if isTemplateIf(line) && strings.Contains(line, `.profiles`) {
+			for _, match := range re.FindAllStringSubmatch(line, -1) {
+				category := strings.TrimSpace(match[1])
+				if validateCategoryName(category) != nil || seen[category] {
+					continue
+				}
+				seen[category] = true
+				categories = append(categories, category)
+			}
+		}
+	}
+	return categories
+}
+
+func categoryMarker(line string) string {
+	match := categoryMarkerRe.FindStringSubmatch(line)
+	if match == nil {
+		return ""
+	}
+	category := strings.TrimSpace(match[1])
+	if validateCategoryName(category) != nil {
+		return ""
+	}
+	return category
+}
+
+func hasCategoryBlocks(text string) bool {
+	scanner := bufio.NewScanner(strings.NewReader(text))
+	for scanner.Scan() {
+		line := scanner.Text()
+		if categoryMarker(line) != "" {
+			return true
+		}
+		if isTemplateIf(line) && strings.Contains(line, `.profiles`) {
+			if len(templateLineCategories(line)) > 0 {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func appendUngrouped(text string, line string) string {
+	trimmed := strings.TrimRight(text, "\n")
+	if trimmed == "" {
+		return line + "\n"
+	}
+	return trimmed + "\n" + line + "\n"
+}
+
+func insertIntoMarkerCategory(text string, category string, line string) (string, bool) {
+	lines := strings.SplitAfter(text, "\n")
+	var out strings.Builder
+	inCategory := false
+	inserted := false
+	found := false
+	for _, current := range lines {
+		if marker := categoryMarker(current); marker != "" {
+			if inCategory && !inserted {
+				out.WriteString(line)
+				out.WriteByte('\n')
+				inserted = true
+				inCategory = false
+			}
+			if marker == category {
+				inCategory = true
+				found = true
+			}
+			out.WriteString(current)
+			continue
+		}
+		out.WriteString(current)
+	}
+	if inCategory && !inserted {
+		out.WriteString(line)
+		out.WriteByte('\n')
+		inserted = true
+	}
+	return out.String(), found && inserted
+}
+
+func insertIntoTemplateCategory(text string, category string, line string) (string, bool) {
+	lines := strings.SplitAfter(text, "\n")
+	var out strings.Builder
+	inCategory := false
+	inserted := false
+	found := false
+	templateDepth := 0
+	for _, current := range lines {
+		if !inCategory && isCategoryTemplateStart(current, category) {
+			inCategory = true
+			found = true
+			templateDepth = 1
+			out.WriteString(current)
+			continue
+		}
+		if inCategory {
+			if isTemplateIf(current) {
+				templateDepth++
+			}
+			if isTemplateEnd(current) {
+				if templateDepth == 1 && !inserted {
+					out.WriteString(line)
+					out.WriteByte('\n')
+					inserted = true
+					inCategory = false
+				}
+				templateDepth--
+			}
+		}
+		out.WriteString(current)
+	}
+	return out.String(), found && inserted
+}
+
+func templateLineCategories(line string) []string {
+	re := regexp.MustCompile(`has\s+"([^"]+)"\s+\.profiles`)
+	out := []string{}
+	seen := map[string]bool{}
+	for _, match := range re.FindAllStringSubmatch(line, -1) {
+		category := strings.TrimSpace(match[1])
+		if validateCategoryName(category) != nil || seen[category] {
+			continue
+		}
+		seen[category] = true
+		out = append(out, category)
+	}
+	return out
 }
 
 func RemoveEntry(root string, kind string, name string) (bool, error) {
@@ -141,6 +309,11 @@ func HasEntry(root string, kind string, name string) bool {
 
 func SourcePath(root string) string {
 	return sourcePath(root)
+}
+
+func SourceExists(root string) bool {
+	_, err := os.Stat(SourcePath(root))
+	return err == nil
 }
 
 func has(root string, kind string, name string) bool {
@@ -179,37 +352,31 @@ func readSource(path string) ([]byte, os.FileMode, error) {
 }
 
 func insertIntoCategory(text string, category string, line string) (string, bool) {
-	lines := strings.SplitAfter(text, "\n")
-	var out strings.Builder
-	inCategory := false
-	inserted := false
-	found := false
-	templateDepth := 0
-	for _, current := range lines {
-		if !inCategory && strings.Contains(current, `if has "`+category+`" .profiles`) {
-			inCategory = true
-			found = true
-			templateDepth = 1
-			out.WriteString(current)
-			continue
+	if strings.TrimSpace(category) == "" {
+		if hasCategoryBlocks(text) {
+			return text, false
 		}
-		if inCategory {
-			if isTemplateIf(current) {
-				templateDepth++
-			}
-			if isTemplateEnd(current) {
-				if templateDepth == 1 && !inserted {
-					out.WriteString(line)
-					out.WriteByte('\n')
-					inserted = true
-					inCategory = false
-				}
-				templateDepth--
-			}
-		}
-		out.WriteString(current)
+		return appendUngrouped(text, line), true
 	}
-	return out.String(), found && inserted
+	if updated, ok := insertIntoMarkerCategory(text, category, line); ok {
+		return updated, true
+	}
+	return insertIntoTemplateCategory(text, category, line)
+}
+
+func isCategoryTemplateStart(line string, category string) bool {
+	if !isTemplateIf(line) || !strings.Contains(line, `.profiles`) {
+		return false
+	}
+	if category == "" {
+		return false
+	}
+	for _, candidate := range templateLineCategories(line) {
+		if candidate == category {
+			return true
+		}
+	}
+	return false
 }
 
 func isTemplateIf(line string) bool {
@@ -243,13 +410,18 @@ func validateKind(kind string) error {
 	}
 }
 
-func validateCategory(category string) error {
-	switch category {
-	case "work", "personal":
-		return nil
-	default:
+func validateCategoryName(category string) error {
+	category = strings.TrimSpace(category)
+	if category == "" {
 		return fmt.Errorf("unsupported category: %s", category)
 	}
+	for _, r := range category {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '_' || r == '-' {
+			continue
+		}
+		return fmt.Errorf("unsupported category: %s", category)
+	}
+	return nil
 }
 
 func normalizeName(kind string, name string) string {
@@ -283,20 +455,20 @@ func runCommand(ctx context.Context, name string, args ...string) int {
 	return 0
 }
 
-func runCommandQuiet(ctx context.Context, name string, args ...string) int {
+func runCommandQuiet(ctx context.Context, name string, args ...string) error {
 	command := exec.CommandContext(ctx, name, args...)
 	if err := command.Run(); err != nil {
 		if exit, ok := err.(*exec.ExitError); ok {
-			return exit.ExitCode()
+			return fmt.Errorf("%s exited with code %d", name, exit.ExitCode())
 		}
-		return 1
+		return err
 	}
-	return 0
+	return nil
 }
 
 func usage() {
 	fmt.Fprintln(os.Stderr, `Usage:
-  updev brewfile add <brew|cask|tap|vscode> <name> <work|personal>
+  updev brewfile add <brew|cask|tap|vscode> <name> <category>
   updev brewfile remove <brew|cask|tap|vscode> <name>
   updev brewfile has <brew|cask|tap|vscode> <name>
   updev brewfile check [--strict|--lenient]

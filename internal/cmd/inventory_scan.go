@@ -31,7 +31,7 @@ func parseInventoryScanOptions(args []string) (inventoryScanOptions, error) {
 	fs.SetOutput(io.Discard)
 	fs.StringVar(&opts.format, "format", opts.format, "output format: text or json")
 	fs.StringVar(&opts.provider, "provider", opts.provider, "inventory provider to scan")
-	fs.StringVar(&opts.root, "root", opts.root, "chezmoi source root")
+	fs.StringVar(&opts.root, "root", opts.root, "desired source root")
 	if err := fs.Parse(args); err != nil {
 		return opts, err
 	}
@@ -128,7 +128,7 @@ func parseInventoryRenderOptions(args []string) (inventoryRenderOptions, error) 
 	fs := flag.NewFlagSet("inventory render", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	fs.StringVar(&opts.format, "format", opts.format, "output format: text or json")
-	fs.StringVar(&opts.root, "root", opts.root, "chezmoi source root")
+	fs.StringVar(&opts.root, "root", opts.root, "desired source root")
 	fs.StringVar(&opts.report, "report", opts.report, "configured inventory report name")
 	if err := fs.Parse(args); err != nil {
 		return opts, err

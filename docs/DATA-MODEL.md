@@ -11,7 +11,7 @@ dimensions:
 
 | Dimension | Examples | Purpose |
 |-----------|----------|---------|
-| Scope/profile | environment labels, OS/arch selectors | Where a desired entry may deploy. |
+| Deployment scope | environment labels, OS/arch selectors | Where a desired entry may deploy. Scope names are project data, not fixed public categories. |
 | Lifecycle | `adopted`, `trial`, `candidate`, `local-only`, `deprecated` | Whether an entry is reproducible desired state or being evaluated. |
 | Provider/distribution | `mise`, `brew`, `manual`, `mas`, `external`, `vendor` | How the tool/app is installed or tracked. |
 | Safety decision | `allow`, `hold`, `review`, `block`, `unknown` | Whether a candidate can be installed/updated now. |
@@ -37,10 +37,24 @@ For temporary or alternate roots, providers read source files under that root
 instead of the user's live rendered files. This keeps smoke tests and agent
 workflows isolated from the real machine.
 
+## Source, Rendered State, And Scope Drift
+
+`source state` is the unrendered desired source, such as `Brewfile.tmpl` or
+tool TOML. `rendered state` is the desired state that is active for the current
+machine, such as rendered `~/Brewfile` when `[brewfile].desired = "auto"`.
+
+`profile-mismatch` is retained as the inventory status name for compatibility,
+but it means deployment-scope mismatch: an item exists in source state for some
+scope and is installed locally, while the active rendered state does not include
+it. This is not a fresh adoption candidate, so Brewfile adoption actions must
+not be shown for that row. The user can render the matching deployment scope,
+remove the local install, or intentionally promote the item into the active
+scope.
+
 The public command default should discover or configure a portable source root;
-it should not require `~/.local/share/chezmoi`. Dotfiles-specific root fallback
-and `Brewfile.tmpl` mutation remain compatibility behavior until the public
-source model supports explicit desired-source paths.
+it should not require a fixed dotfiles checkout path. Dotfiles-specific root
+fallback and `Brewfile.tmpl` mutation remain compatibility behavior until the
+public source model supports explicit desired-source paths.
 
 Public defaults and advanced integrations have different responsibilities:
 
@@ -116,6 +130,9 @@ root = "auto"
 desired = "auto"
 write_mode = "disabled"
 
+[chezmoi_hooks.brewfile]
+mode = "warn" # planned: off | warn | apply-safe
+
 [inventory.manual]
 sources = ["~/.config/updev/manual-apps.toml"]
 
@@ -156,6 +173,37 @@ debugging, and secrets.
 only the human `updev list` description cache: `auto` may call the optional
 Codex CLI in Japanese TTY text mode, `manual` requires explicit translate flags, and
 `off` prevents translation attempts.
+
+## Brewfile Apply Bridge
+
+`updev apply brewfile` owns rendered Homebrew desired-state application.
+Chezmoi daily hooks must not call `brew bundle`; they should only detect
+rendered `~/Brewfile` changes, run lightweight checks, and point users to updev
+review commands.
+
+Semantics:
+
+- active desired state follows `[brewfile].desired`;
+- only missing desired items become item-scoped install candidates;
+- extra live items are never uninstalled by this flow;
+- outdated updates remain owned by `updev update`;
+- every install candidate passes release-age, tap trust, provenance, and local
+  security policy gates before mutation when metadata is available;
+- safe items apply through item-scoped `brew tap`, `brew install`, or
+  `brew install --cask`;
+- `brew bundle` remains a compatibility/bootstrap fallback, not the normal
+  daily hook path.
+
+Hook mode is:
+
+```toml
+[chezmoi_hooks.brewfile]
+mode = "warn" # off | warn | apply-safe
+```
+
+The default mode is `warn`. `off` suppresses hook guidance. `apply-safe` is
+reserved for installations that deliberately opt into hook-triggered safe apply;
+the default daily hook remains warning-only.
 
 ## Status Vocabulary
 

@@ -11,15 +11,14 @@ stays an integer schema contract. `v0.x` releases are public preview releases;
 
 ## Current Release
 
-The current implemented release is `updev v0.7.14`. `updev version`,
+The current implemented release is `updev v0.7.16`. `updev version`,
 `updev --version`, and `updev -v` report this command contract.
 
-`updev v0.7.14` is the first polish patch after the route-to-intent completion
-release. It preserves the same supported macOS/Homebrew/mise preview scope,
-keeps provider log streaming outside the alternate-screen TUI, keeps focused
-summary/list/last routes inside their origin browser, and adds bounded
-Homebrew-drift actions plus readability/quality cleanup where cached reports
-can prove the item identity and safe write target.
+`updev v0.7.16` completes the Brewfile hook ownership split for the
+macOS/Homebrew/mise public preview. Chezmoi daily hooks remain warning-only,
+explicit bootstrap remains the only `brew bundle` fallback, and
+`updev apply brewfile` owns safe item-scoped application of missing Homebrew
+desired state.
 
 Current support promise:
 
@@ -42,94 +41,32 @@ Current release validation:
 - [x] `mise -C tools/updev run docs-check`
 - [x] `git diff --check`
 - [x] `chezmoi apply --dry-run`
-- [x] Route-to-intent and focus-regression tests prove summary/list/last row
-  actions open focused item details and restore origin focus without requiring a
-  second item selection when a stable target exists.
-- [x] Homebrew inventory drift tests prove extra live items explain likely
-  bypass causes and only offer category-explicit Brewfile adoption through the
-  existing mutation boundary.
-- [x] Hub/navigation tests prove `updev hub` is a review-domain switcher instead
-  of a duplicate filter menu, while filters remain available from inventory
-  browsing.
+- [x] `updev apply brewfile --dry-run --format json`
+- [x] `updev apply brewfile --safe-only --dry-run`
+- [x] The daily Brewfile hook renders warning-only guidance and does not run
+  `brew bundle`.
 - [x] Release notes exist.
 
-## Next Release Target: v0.7.15
+## Next Release Target: v0.7.17
 
-`updev v0.7.15` should continue the same preview scope and spend the next patch
-on the highest-friction dogfood loops that remain after v0.7.14: preventing
-Homebrew drift before it appears, tightening provider evidence where release-age
-proof is still weak, and keeping list/hub/detail navigation low-step.
+`updev v0.7.17` should dogfood the new Brewfile apply bridge and tighten the
+remaining route/readability edges without widening provider scope.
 
 Scope:
 
-1. **Drift prevention and wrapper diagnostics**
-   - Add user-facing diagnostics that explain whether the shell `brew` wrapper
-     is active in the current shell and whether the low-level `brewfile`
-     mutation boundary is configured.
-   - Plan the `brew` wrapper adoption flow so successful installs can keep the
-     Brewfile in sync without surprising category guesses.
-   - Keep direct `brewfile` and compatibility commands documented as low-level
-     surfaces, not the primary workflow.
-
-2. **Release automation hardening**
-   - Migrate the public tag release workflow to GoReleaser while preserving the
-     existing archive names, `checksums.txt`, release-note body source, and
-     GitHub artifact attestation verification path.
-   - Keep `scripts/install.sh` compatible with both legacy `./archive` checksum
-     entries and GoReleaser's plain archive checksum entries.
-   - Add local validation tasks for `goreleaser check` and snapshot archive
-     builds so release workflow changes can be tested before tagging.
-
-3. **Provider evidence follow-through**
-   - Continue improving Homebrew/mise evidence only where cached reports can
-     prove item identity, release age, source URL, and action target.
-   - Add resolver-backed detail only through data-driven provider metadata; keep
-     opaque or unsupported providers review-only with concrete reason codes.
-   - Revisit high-noise summaries and raw evidence strings after real TTY
-     dogfood, but avoid broad scanner/provider expansion.
-
-4. **TUI workflow polish**
-   - Dogfood `updev`, `updev last`, `updev list`, `updev hub`, security policy,
-     manual inventory, backend convergence, and update/security detail flows
-     from a real TTY and from cached reports.
-   - Fix any path where a focused actionable row still opens an unrelated list,
-     loses Back/Home/focus/expanded-row state, or makes the user select the same
-     item again.
-   - Keep provider command execution outside alternate-screen TUI so Homebrew
-     and mise logs continue to stream normally.
-
-5. **Review readability polish**
-   - Make expanded detail rows lower-noise: concise Japanese summaries first,
-     grouped evidence second, raw provider/log/source details only when useful.
-   - Keep update/security/backend/manual action labels short and stable, with
-     clear disabled or review-only reasons when no direct action is safe.
-   - Keep summary tables readable: no duplicated security sections, no overly
-     long reason text in compact rows, and no header/body alignment regressions.
-   - Make backend convergence loading and empty states explicit so a preparing
-     backend plan is not mistaken for "0 findings".
-
-6. **Policy UX follow-through**
-   - Keep policy cleanup, renew, and narrowing flows reachable from the security
-     views where the relevant rule is visible.
-   - Preserve JSON/text parity for every TUI-only convenience.
-
-7. **Regression coverage and release hygiene**
-   - Add or update fast route/readability regression tests for every fixed TTY
-     path. Reserve slow PTY/e2e dogfood for release acceptance.
-   - Keep README, CLI docs, release notes, and public export docs current-state
-     focused.
-   - Keep generated/embedded docs drift checks passing.
-
-8. **Bounded quality cleanup**
-   - When touching v0.7.15 routes, reduce local duplication in route
-     construction, action labels, compact reason formatting, and empty/loading
-     state handling.
-   - Move reusable provider-drift and review-action helpers into existing owner
-     packages (`brewfile`, `inventoryrun`, `reviewui`, `textui`, or provider
-     packages) instead of adding ad hoc helpers under `cmd`.
-   - Add focused tests for any extracted helper. Do not churn stable code only
-     to satisfy size metrics, and do not reopen the completed large refactor
-     unless a v0.7.15 bug fix requires it.
+1. Dogfood `updev apply brewfile` from real TTY and JSON paths, especially
+   mixed allow/review/hold candidate sets and Back/Home focus restore from
+   `updev list --status missing`.
+2. Decide whether `[chezmoi_hooks.brewfile].mode = "apply-safe"` should remain
+   documented-only or become an explicit opt-in hook mutation mode. Keep the
+   default daily hook warning-only either way.
+3. Improve apply-candidate detail readability if real output is too verbose:
+   concise reason first, grouped evidence second, raw command/provider evidence
+   only where useful.
+4. Add focused regression coverage for daily hook mutation guards outside the
+   public updev docs-check if the dotfiles hook keeps evolving.
+5. Keep public docs generic and avoid environment-specific paths, profile names,
+   or local package assumptions.
 
 Non-goals:
 
@@ -137,7 +74,9 @@ Non-goals:
 - Linux/Windows promotion beyond experimental provider evidence;
 - broad scanner default expansion;
 - public issue posting or automatic remote remediation;
-- large architecture refactors without a focused release plan.
+- large architecture refactors without a focused release plan;
+- general Homebrew cleanup/uninstall automation;
+- unscoped `brew bundle` as a daily mutation path.
 
 Release-ready criteria:
 
@@ -147,20 +86,19 @@ Release-ready criteria:
 - [ ] `chezmoi apply --dry-run`
 - [ ] `mise -C tools/updev run goreleaser-check`
 - [ ] `mise -C tools/updev run goreleaser-snapshot`
-- [ ] Real TTY dogfood covers `updev`, `updev last`, `updev list`, `updev hub`,
-  and at least one route each for update logs, security review, inventory
-  attention, manual review, backend convergence, and policy review.
-- [ ] No accepted focused row with a stable target opens a generic second-choice
-  list or returns to the wrong origin after Back/Home.
-- [ ] Compact summary/detail rows remain readable in Japanese: concise labels,
-  no duplicated sections, no excessive raw evidence in compact rows, and aligned
-  table headers.
-- [ ] Cached reports, JSON/text, and TUI detail views agree for any provider
-  evidence or policy UX changes.
+- [ ] Real TTY dogfood covers `updev apply brewfile --dry-run`,
+  `updev list --status missing`, focused apply-candidate routes,
+  Back/Home/focus restore, and visible Homebrew command logs.
 - [ ] Release notes exist.
 
 ## Released patch notes
 
+- [v0.7.16](release-notes/v0.7.16.md): Brewfile hook ownership split with
+  warning-only daily hooks, explicit bootstrap fallback, and safe
+  `updev apply brewfile` item-scoped installs.
+- [v0.7.15](release-notes/v0.7.15.md): drift-prevention patch with Homebrew
+  wrapper diagnostics, trust handling, rendered Brewfile sync, and routed
+  Homebrew drift actions.
 - [v0.7.14](release-notes/v0.7.14.md): post-route-to-intent polish with
   Homebrew drift adoption actions, review-domain hub cleanup, and bounded
   quality fixes.
