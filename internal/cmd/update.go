@@ -4823,9 +4823,9 @@ func newUpdateSummaryBrowserModel(options updateSummaryBrowserOptions) updateSum
 func newActionSummaryBrowserModel(title string, lines []updateSummaryLine, state reviewui.State, focusAction string, color bool) updateSummaryBrowserModel {
 	labels := reviewui.ActionSummaryLabels{
 		HelpMove:      tr("Up/Down or j/k: move between selectable summary rows", "↑↓ または j/k: 選択可能な summary 行を移動"),
-		HelpOpen:      tr("Enter, Space, or a: open the selected detail", "Enter / Space / a: 選択した詳細を開く"),
-		HelpExit:      tr("b, q, Esc, or Ctrl-C: exit", "b / q / Esc / Ctrl-C: 終了"),
-		Controls:      tr("Up/Down/j/k move, Enter open selected summary, Space/a open, ? help, q exit", "↑↓/j/k 移動、Enter で選択 summary を開く、Space/a も開く、? help、q 終了"),
+		HelpOpen:      tr("Enter, Space, or a: open the selected detail; i/m/b/s/u jump to inventory/manual/backend/security/updates", "Enter / Space / a: 選択した詳細を開く。i/m/b/s/u: inventory/manual/backend/security/update へ移動"),
+		HelpExit:      tr("q, Esc, or Ctrl-C: exit", "q / Esc / Ctrl-C: 終了"),
+		Controls:      tr("Up/Down/j/k move, Enter open selected summary, i inventory, m manual, b backend, s security, u updates, ? help, q exit", "↑↓/j/k 移動、Enter で選択 summary を開く、i inventory、m manual、b backend、s security、u updates、? help、q 終了"),
 		FocusedPrefix: tr("focused actions:", "選択中の操作:"),
 		EnterFormat:   tr("Enter: %s", "Enter: %s"),
 	}
@@ -4897,8 +4897,8 @@ func updateSummaryBrowserLinesWithLoading(report updateReport, manualPlan invent
 				section = "inventory"
 				kind = updateSummaryLineSection
 				styledLine = trimmed
-				action = updateSummaryRoute{Base: updateHubActionInventoryAll, Status: "attention"}.Encode()
-				label = tr("open inventory attention", "inventory 注意行を開く")
+				action = updateSummaryRoute{Base: updateHubActionInventoryAll}.Encode()
+				label = tr("open installed inventory", "インストール済み一覧を開く")
 			}
 		}
 		if action == "" {
@@ -4985,7 +4985,12 @@ func updateSummaryRouteForTableLine(section string, line string) (updateSummaryR
 		return updateSummaryRoute{Base: updateHubActionSecurity, Provider: provider, Query: query}, fmt.Sprintf(tr("open %s security details", "%s の security 詳細を開く"), provider), true
 	case "inventory":
 		provider := fields[0]
-		return updateSummaryRoute{Base: updateHubActionInventoryAll, Provider: provider, Status: "attention"}, fmt.Sprintf(tr("open %s inventory attention", "%s の inventory 注意行を開く"), provider), true
+		route := updateSummaryRoute{Base: updateHubActionInventoryAll, Provider: provider}
+		if plan.IsAttentionStatus(plan.Status(strings.ToLower(fields[len(fields)-1]))) {
+			route.Status = "attention"
+			return route, fmt.Sprintf(tr("open %s inventory attention", "%s の inventory 注意行を開く"), provider), true
+		}
+		return route, fmt.Sprintf(tr("open %s inventory", "%s の inventory を開く"), provider), true
 	case "inventory-items":
 		if len(fields) < 4 {
 			return updateSummaryRoute{}, "", false
@@ -5329,6 +5334,11 @@ func (m updateHubRouterModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 	switch m.screen {
 	case updateHubRouterDashboard:
+		if !m.dashboard.Help {
+			if action := updateHubDashboardShortcutAction(msg); action != "" {
+				return m.handleAction(action)
+			}
+		}
 		updated, _ := m.dashboard.Update(msg)
 		if dashboard, ok := updated.(updateSummaryBrowserModel); ok {
 			action := reviewui.TakeActionAndRemember(m.detailStates, m.stateKey, &dashboard.State)
@@ -5377,6 +5387,27 @@ func (m updateHubRouterModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.height = size.Height
 	}
 	return m, nil
+}
+
+func updateHubDashboardShortcutAction(msg tea.Msg) string {
+	key, ok := msg.(tea.KeyPressMsg)
+	if !ok {
+		return ""
+	}
+	switch key.String() {
+	case "i":
+		return updateHubActionInventoryAll
+	case "m":
+		return listHubActionManual
+	case "b":
+		return updateHubActionBackends
+	case "s":
+		return updateHubActionSecurity
+	case "u":
+		return updateHubActionLogs
+	default:
+		return ""
+	}
 }
 
 func (m *updateHubRouterModel) refreshCurrentScreen() {

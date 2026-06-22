@@ -278,6 +278,10 @@ holding in the real TTY, not only in renderer tests:
    - `Enter` on a focused summary row follows the same primary action as
      `a/1`, so the update result can be operated as a summary-first hub
      without requiring action-key memorization.
+   - Global summary shortcuts keep the common domains one key away: `i`
+     installed inventory, `m` manual app inventory, `b` backend convergence,
+     `s` security review, and `u` update logs. They apply to both `updev` and
+     `updev last`; child table/detail screens keep their own local keymaps.
    - Footer selectors remain available only as a fallback for cross-domain or
      filter flows that do not fit inside a single dashboard row; they must not
      appear automatically after the dashboard summary.
@@ -340,6 +344,9 @@ changes.
   common dashboard/table/detail review screens, so logs, inventory, manual
   review, backend convergence, security, and full-report detail routes do not
   repeatedly leave and restart the alt-screen.
+- [x] `updev` and `updev last` summary dashboards provide one-key jumps for
+  installed inventory (`i`), manual inventory (`m`), backend convergence (`b`),
+  security (`s`), and update logs (`u`).
 - [x] `updev list` uses a routed TUI model for the installed inventory, manual
   app inventory, backend convergence, cached update/security evidence, and
   compact detail views, so common list-domain navigation no longer repeatedly
