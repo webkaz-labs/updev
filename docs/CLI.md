@@ -100,6 +100,10 @@ an agent/script needs deterministic non-TUI output. Dashboard rows can open
 inventory, manual app review,
 backend convergence, security, update-step filters, and logs without dropping
 back to a separate footer-only selector when the action fits the focused row.
+The post-update summary also supports global one-key jumps: `i` opens installed
+inventory, `m` opens manual app inventory, `b` opens backend convergence, `s`
+opens security review, and `u` opens update logs. The same shortcuts are
+available from `updev last` because it reuses the routed update dashboard.
 Collapsed rows surface compact badges such as action count, updated/deferred
 counts, security decision, release asset status, and backend applyability, and
 the focused row always shows its `a/1`, `2`, ... action hints before expansion,
@@ -133,7 +137,7 @@ Global flags:
   and `--format json`; add global verbosity only when a concrete cross-command
   diagnostic need appears.
 - `updev version`, `updev --version`, and `updev -v` report the current
-  implemented release contract, currently `updev v0.7.16`. JSON output from
+  implemented release contract, currently `updev v0.7.17`. JSON output from
   `updev version --format json` includes SemVer parts and the stable/pre-stable
   contract label.
 - `updev support` and `updev doctor support` print the current support-level

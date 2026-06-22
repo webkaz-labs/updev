@@ -11,14 +11,14 @@ stays an integer schema contract. `v0.x` releases are public preview releases;
 
 ## Current Release
 
-The current implemented release is `updev v0.7.16`. `updev version`,
+The current implemented release is `updev v0.7.17`. `updev version`,
 `updev --version`, and `updev -v` report this command contract.
 
-`updev v0.7.16` completes the Brewfile hook ownership split for the
-macOS/Homebrew/mise public preview. Chezmoi daily hooks remain warning-only,
-explicit bootstrap remains the only `brew bundle` fallback, and
-`updev apply brewfile` owns safe item-scoped application of missing Homebrew
-desired state.
+`updev v0.7.17` is a summary-first TTY routing patch for the
+macOS/Homebrew/mise public preview. It keeps the `v0.7.16` Brewfile hook/apply
+bridge, keeps daily hooks warning-only, and makes the post-update dashboard
+faster to use by routing inventory summaries to installed inventory and adding
+one-key summary jumps for common review domains.
 
 Current support promise:
 
@@ -41,30 +41,33 @@ Current release validation:
 - [x] `mise -C tools/updev run docs-check`
 - [x] `git diff --check`
 - [x] `chezmoi apply --dry-run`
+- [x] `mise -C tools/updev run goreleaser-check`
+- [x] `mise -C tools/updev run goreleaser-snapshot`
+- [x] `mise -C tools/updev run test-e2e-smoke`
 - [x] `updev apply brewfile --dry-run --format json`
 - [x] `updev apply brewfile --safe-only --dry-run`
-- [x] The daily Brewfile hook renders warning-only guidance and does not run
-  `brew bundle`.
+- [x] `updev list --status missing --plain --limit 20`
 - [x] Release notes exist.
 
-## Next Release Target: v0.7.17
+## Next Release Target: v0.7.18
 
-`updev v0.7.17` should dogfood the new Brewfile apply bridge and tighten the
-remaining route/readability edges without widening provider scope.
+`updev v0.7.18` should keep the v0.7.17 summary-first dashboard stable while
+deciding whether the Brewfile hook bridge should grow an explicit safe-apply
+opt-in.
 
 Scope:
 
-1. Dogfood `updev apply brewfile` from real TTY and JSON paths, especially
-   mixed allow/review/hold candidate sets and Back/Home focus restore from
-   `updev list --status missing`.
-2. Decide whether `[chezmoi_hooks.brewfile].mode = "apply-safe"` should remain
-   documented-only or become an explicit opt-in hook mutation mode. Keep the
-   default daily hook warning-only either way.
-3. Improve apply-candidate detail readability if real output is too verbose:
-   concise reason first, grouped evidence second, raw command/provider evidence
-   only where useful.
-4. Add focused regression coverage for daily hook mutation guards outside the
-   public updev docs-check if the dotfiles hook keeps evolving.
+1. Decide whether `[chezmoi_hooks.brewfile].mode = "apply-safe"` remains
+   documented-only or becomes an explicit opt-in daily hook mode. The default
+   daily hook must remain warning-only either way.
+2. If `apply-safe` becomes real, make it call only `updev apply brewfile
+   --safe-only` after the same item-scoped release-age, tap trust, provenance,
+   and security-policy gates used by normal apply.
+3. Improve apply-candidate detail readability only where real dogfood shows
+   unnecessary verbosity: concise reason first, grouped evidence second, raw
+   command/provider evidence only where useful.
+4. Add focused regression coverage for daily hook mutation guards if the
+   dotfiles hook keeps evolving.
 5. Keep public docs generic and avoid environment-specific paths, profile names,
    or local package assumptions.
 
@@ -86,13 +89,17 @@ Release-ready criteria:
 - [ ] `chezmoi apply --dry-run`
 - [ ] `mise -C tools/updev run goreleaser-check`
 - [ ] `mise -C tools/updev run goreleaser-snapshot`
-- [ ] Real TTY dogfood covers `updev apply brewfile --dry-run`,
-  `updev list --status missing`, focused apply-candidate routes,
-  Back/Home/focus restore, and visible Homebrew command logs.
+- [ ] Real TTY dogfood covers the warning-only daily hook, `updev apply
+  brewfile --dry-run`, `updev list --status missing`, focused apply-candidate
+  routes when candidates exist, Back/Home/focus restore, and visible Homebrew
+  command logs.
 - [ ] Release notes exist.
 
 ## Released patch notes
 
+- [v0.7.17](release-notes/v0.7.17.md): summary-first TTY routing with
+  installed-inventory summary routes and one-key `i/m/b/s/u` jumps from
+  `updev` and `updev last`.
 - [v0.7.16](release-notes/v0.7.16.md): Brewfile hook ownership split with
   warning-only daily hooks, explicit bootstrap fallback, and safe
   `updev apply brewfile` item-scoped installs.

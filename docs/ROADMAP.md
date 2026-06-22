@@ -31,7 +31,7 @@ history in git log, and keep the current/next release target in
 - Documentation source-of-truth guidance, canonical `docs/agent/` usage/skill
   files, tag-specific release notes, and focused `docs-check` drift coverage are
   implemented.
-- `updev v0.7.16` is the current preview contract: it keeps the `v0.6.x`
+- `updev v0.7.17` is the current preview contract: it keeps the `v0.6.x`
   Homebrew/mise provider gate and the `v0.7.3` support-label catalog, includes
   the `v0.7.5` P1 scalability refactor, the `v0.7.8` large command-package
   reset, the `v0.7.9` agent-friendly quality tooling patch, and the `v0.7.10`
@@ -39,7 +39,8 @@ history in git log, and keep the current/next release target in
   the `v0.7.12` policy ergonomics patch, the `v0.7.13` route-to-intent
   completion and navigation cleanup patch, the `v0.7.14` post-route polish
   patch, the `v0.7.15` drift-prevention and rendered Brewfile sync patch, and
-  the `v0.7.16` Brewfile hook/apply bridge patch. It
+  the `v0.7.16` Brewfile hook/apply bridge patch, and the `v0.7.17`
+  summary-first route shortcut patch. It
   keeps `check` fast, adds slower `audit` evidence for release/scheduled
   reviews, tracks non-blocking `aislop` findings in `SOURCE-STRUCTURE.md`,
   shows richer Homebrew/mise source, release-age, and cache context in detail
@@ -53,7 +54,9 @@ history in git log, and keep the current/next release target in
   wrapper diagnostics, trust handling, rendered Brewfile sync,
   deployment-scope mismatch filtering, warning-only daily hooks, and safe
   item-scoped `updev apply brewfile` installs are part of the current preview
-  contract.
+  contract. `updev` and `updev last` summary dashboards also provide direct
+  `i/m/b/s/u` jumps for inventory, manual app inventory, backend convergence,
+  security review, and update logs.
 - `updev brewfile ...` and `brewfile` remain compatibility or low-level
   surfaces, not the primary human workflow.
 - Chezmoi Brewfile onchange hooks are warning-only daily plumbing. They do not
@@ -64,10 +67,10 @@ history in git log, and keep the current/next release target in
 ## Near-Term Order
 
 1. Continue the broader `v0.7.x` workstream plan in
-   [RELEASE.md](RELEASE.md#next-release-target-v0717). `v0.7.17` follows the
-   v0.7.16 Brewfile hook/apply bridge with real TTY dogfood, route/readability
-   polish, and a decision on whether hook-triggered `apply-safe` should remain
-   documented-only or become explicit opt-in behavior.
+   [RELEASE.md](RELEASE.md#next-release-target-v0718). `v0.7.18` should keep
+   the `v0.7.17` summary-first dashboard stable while deciding whether
+   hook-triggered `apply-safe` should remain documented-only or become explicit
+   opt-in behavior.
 2. Preserve TTY/report regression guardrails for the accepted `updev`,
    `updev last`, and `updev list` flows before making additional UX changes.
 3. Continue `v0.7.x` support-label dogfood without turning the catalog into list

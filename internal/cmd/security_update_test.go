@@ -740,6 +740,12 @@ func TestLastReportHubUsesTopAnchoredUpdateSummary(t *testing.T) {
 			SkippedItems: []string{"aqua:modem-dev/hunk 0.14.0 -> 0.14.1"},
 		}},
 		Report: "/tmp/last-update.json",
+		Inventory: plan.Report{Items: []plan.Item{{
+			Provider: "brew",
+			Kind:     "brew",
+			Name:     "ripgrep",
+			Status:   plan.StatusOK,
+		}}},
 	}
 	model := newUpdateHubRouterModel(report, inventoryPlanReport{}, false, backendPlanReport{}, false, lastReportHubDefaultAction("summary"), updateHubActionDashboard, false)
 	model.height = 16
@@ -751,6 +757,11 @@ func TestLastReportHubUsesTopAnchoredUpdateSummary(t *testing.T) {
 	rowIndex := strings.Index(view, "skipped")
 	if rootIndex < 0 || outcomeIndex < 0 || headerIndex < 0 || rowIndex < 0 || !(rootIndex < outcomeIndex && outcomeIndex < headerIndex && headerIndex < rowIndex) {
 		t.Fatalf("expected last-report hub summary to stay top-anchored with title/header before rows:\n%s", view)
+	}
+	updated, _ := model.Update(tea.KeyPressMsg(tea.Key{Text: "i", Code: 'i'}))
+	model = updated.(updateHubRouterModel)
+	if model.screen != updateHubRouterTable || model.stateKey != "inventory-all" {
+		t.Fatalf("expected last-report summary i shortcut to open installed inventory, screen=%q state=%q", model.screen, model.stateKey)
 	}
 }
 
@@ -1208,6 +1219,11 @@ func TestUpdateDashboardDetailRowsExposeHubActions(t *testing.T) {
 	if strings.Contains(dashboardView, "\n  report:") || strings.Contains(dashboardView, "\n  レポート:") {
 		t.Fatalf("expected report metadata line to stay flush with summary labels:\n%s", dashboardView)
 	}
+	for _, want := range []string{"i inventory", "m manual", "b backend", "s security", "u updates"} {
+		if !strings.Contains(dashboardView, want) {
+			t.Fatalf("expected update hub view to expose dashboard shortcut %q:\n%s", want, dashboardView)
+		}
+	}
 	for _, line := range summaryModel.Lines {
 		if strings.HasPrefix(strings.TrimSpace(line.Text), "reason:") || strings.HasPrefix(strings.TrimSpace(line.Text), "理由:") {
 			if line.Action != "" {
@@ -1260,8 +1276,8 @@ func TestUpdateDashboardDetailRowsExposeHubActions(t *testing.T) {
 	if route, ok := firstUpdateSummaryRoute(summaryModel.Lines, "brew"); !ok || route.Base != updateHubActionLogs || route.Provider != "brew" {
 		t.Fatalf("expected brew update row to route to provider-filtered logs, route=%+v ok=%v", route, ok)
 	}
-	if route, ok := firstUpdateSummaryRoute(summaryModel.Lines, "inventory drift"); !ok || route.Base != updateHubActionInventoryAll || route.Status != "attention" {
-		t.Fatalf("expected inventory drift heading to route to attention inventory, route=%+v ok=%v", route, ok)
+	if route, ok := firstUpdateSummaryRoute(summaryModel.Lines, "inventory drift"); !ok || route.Base != updateHubActionInventoryAll || route.Status != "" {
+		t.Fatalf("expected inventory drift heading to route to installed inventory list, route=%+v ok=%v", route, ok)
 	}
 	reviewFocused := newUpdateSummaryBrowserModel(updateSummaryBrowserOptions{
 		Title:       updateHubTitle(report),
@@ -1278,6 +1294,24 @@ func TestUpdateDashboardDetailRowsExposeHubActions(t *testing.T) {
 	}
 	if strings.Contains(reviewView, "[Enter: open manual review]") {
 		t.Fatalf("expected review action row to avoid inline Enter badge:\n%s", reviewView)
+	}
+	for _, tc := range []struct {
+		key        string
+		wantScreen updateHubRouterScreen
+		wantState  string
+	}{
+		{key: "i", wantScreen: updateHubRouterTable, wantState: "inventory-all"},
+		{key: "m", wantScreen: updateHubRouterTable, wantState: listHubActionManual},
+		{key: "b", wantScreen: updateHubRouterTable, wantState: "backends"},
+		{key: "s", wantScreen: updateHubRouterDetail, wantState: "security"},
+		{key: "u", wantScreen: updateHubRouterDetail, wantState: "logs"},
+	} {
+		router := newUpdateHubRouterModel(report, manualPlan, false, backendPlan, false, updateHubActionDashboard, updateHubActionDashboard, false)
+		updated, _ := router.Update(tea.KeyPressMsg(tea.Key{Text: tc.key, Code: rune(tc.key[0])}))
+		router = updated.(updateHubRouterModel)
+		if router.screen != tc.wantScreen || router.stateKey != tc.wantState {
+			t.Fatalf("summary shortcut %q routed to screen=%q state=%q, want screen=%q state=%q", tc.key, router.screen, router.stateKey, tc.wantScreen, tc.wantState)
+		}
 	}
 	coloredSummaryModel := newUpdateSummaryBrowserModel(updateSummaryBrowserOptions{
 		Title:       updateHubTitle(report),
@@ -1367,6 +1401,10 @@ func TestUpdateSummarySecurityRoutesOpenNonEmptyDetails(t *testing.T) {
 	inventoryRoute, _, ok := updateSummaryRouteForTableLine("inventory", "brew 0 2 0 drift")
 	if !ok || inventoryRoute.Provider != "brew" || inventoryRoute.Status != "attention" {
 		t.Fatalf("expected provider drift inventory row to route by provider and attention status, route=%+v ok=%v", inventoryRoute, ok)
+	}
+	inventoryOKRoute, _, ok := updateSummaryRouteForTableLine("inventory", "mise 12 12 0 ok")
+	if !ok || inventoryOKRoute.Provider != "mise" || inventoryOKRoute.Status != "" {
+		t.Fatalf("expected provider ok inventory row to route to provider inventory list, route=%+v ok=%v", inventoryOKRoute, ok)
 	}
 	outcomeLogRoute, _, ok := updateSummaryRouteForTableLine("outcome", "updated brew jq 1.7 -> 1.8.1")
 	if !ok || outcomeLogRoute.Base != updateHubActionLogs || outcomeLogRoute.Provider != "brew" || outcomeLogRoute.Query != "jq" {
