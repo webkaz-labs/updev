@@ -41,6 +41,33 @@ cask "warp"
 	}
 }
 
+func TestSourceScopedExtraBecomesProfileMismatchForAnyCategory(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "Brewfile.tmpl"), []byte(`{{- if has "work" .profiles }}
+cask "cursor-cli"
+{{- end }}
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	report := plan.Report{
+		Status: plan.StatusDrift,
+		Root:   root,
+		Items: []plan.Item{
+			{Provider: "brew", Kind: "cask", Name: "cursor-cli", Status: plan.StatusExtra, Live: true},
+		},
+	}
+	AnnotateProfileScopedExtras(&report, root)
+	if got := report.Items[0].Category; got != "work" {
+		t.Fatalf("expected work category, got %q in %#v", got, report.Items[0])
+	}
+	if !ItemHasProfileMismatch(report.Items[0]) {
+		t.Fatalf("expected profile mismatch detail, got %#v", report.Items[0])
+	}
+	if !strings.Contains(report.Items[0].Detail, "source deployment scope work") {
+		t.Fatalf("expected source/rendered mismatch wording, got %#v", report.Items[0])
+	}
+}
+
 func TestAnnotateMiseManifestIssues(t *testing.T) {
 	root := t.TempDir()
 	miseDir := filepath.Join(root, "dot_config", "mise")

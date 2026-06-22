@@ -131,7 +131,7 @@ func TestDefaultChezmoiSourceRootUsesHome(t *testing.T) {
 
 	want := filepath.Join(home, ".local", "share", "chezmoi")
 	if got := DefaultChezmoiSourceRoot(); got != want {
-		t.Fatalf("expected default chezmoi source root %q, got %q", want, got)
+		t.Fatalf("expected default source root %q, got %q", want, got)
 	}
 }
 

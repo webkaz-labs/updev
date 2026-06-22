@@ -21,6 +21,17 @@ type TrustTarget struct {
 	Source           string   `json:"source,omitempty"`
 }
 
+type TrustGroup struct {
+	Tap              string        `json:"tap"`
+	Trusted          bool          `json:"trusted"`
+	TrustedCount     int           `json:"trusted_count"`
+	UntrustedCount   int           `json:"untrusted_count"`
+	TargetCount      int           `json:"target_count"`
+	TrustCommand     string        `json:"trust_command,omitempty"`
+	TrustCommandArgv []string      `json:"trust_command_argv,omitempty"`
+	Targets          []TrustTarget `json:"targets,omitempty"`
+}
+
 type TrustState struct {
 	Taps     []string `json:"taps"`
 	Formulae []string `json:"formulae"`
@@ -154,6 +165,65 @@ func TrustTargetCounts(targets []TrustTarget) (int, int) {
 	return trusted, untrusted
 }
 
+func TrustGroupsByTap(targets []TrustTarget) []TrustGroup {
+	byTap := map[string][]TrustTarget{}
+	for _, target := range targets {
+		tap := strings.TrimSpace(target.Tap)
+		if tap == "" {
+			tap = strings.TrimSpace(target.Name)
+		}
+		if tap == "" {
+			continue
+		}
+		byTap[tap] = append(byTap[tap], target)
+	}
+	taps := make([]string, 0, len(byTap))
+	for tap := range byTap {
+		taps = append(taps, tap)
+	}
+	sort.Strings(taps)
+	groups := make([]TrustGroup, 0, len(taps))
+	for _, tap := range taps {
+		targets := append([]TrustTarget(nil), byTap[tap]...)
+		sort.Slice(targets, func(i, j int) bool {
+			if targets[i].Kind != targets[j].Kind {
+				return targets[i].Kind < targets[j].Kind
+			}
+			return targets[i].Name < targets[j].Name
+		})
+		group := TrustGroup{
+			Tap:              tap,
+			TrustCommand:     JoinCommand(TrustCommandArgv("tap", tap)),
+			TrustCommandArgv: TrustCommandArgv("tap", tap),
+			Targets:          targets,
+			TargetCount:      len(targets),
+		}
+		for _, target := range targets {
+			if target.Trusted {
+				group.TrustedCount++
+			} else {
+				group.UntrustedCount++
+			}
+		}
+		group.Trusted = group.UntrustedCount == 0
+		groups = append(groups, group)
+	}
+	return groups
+}
+
+func TrustGroupCounts(groups []TrustGroup) (int, int) {
+	trusted := 0
+	untrusted := 0
+	for _, group := range groups {
+		if group.Trusted {
+			trusted++
+		} else {
+			untrusted++
+		}
+	}
+	return trusted, untrusted
+}
+
 func UntrustedTargetNames(targets []TrustTarget, limit int) []string {
 	names := []string{}
 	for _, target := range targets {
@@ -177,10 +247,33 @@ func UntrustedTargetNames(targets []TrustTarget, limit int) []string {
 	return names
 }
 
-func FirstUntrustedTrustCommand(targets []TrustTarget) string {
-	for _, target := range targets {
-		if !target.Trusted && strings.TrimSpace(target.TrustCommand) != "" {
-			return target.TrustCommand
+func UntrustedGroupNames(groups []TrustGroup, limit int) []string {
+	names := []string{}
+	for _, group := range groups {
+		if group.Trusted {
+			continue
+		}
+		names = append(names, fmt.Sprintf("%s (%d untrusted/%d targets)", group.Tap, group.UntrustedCount, group.TargetCount))
+		if limit > 0 && len(names) == limit {
+			break
+		}
+	}
+	remaining := 0
+	for _, group := range groups {
+		if !group.Trusted {
+			remaining++
+		}
+	}
+	if limit > 0 && remaining > len(names) {
+		names = append(names, fmt.Sprintf("...%d more", remaining-len(names)))
+	}
+	return names
+}
+
+func FirstUntrustedTrustCommand(groups []TrustGroup) string {
+	for _, group := range groups {
+		if !group.Trusted && strings.TrimSpace(group.TrustCommand) != "" {
+			return group.TrustCommand
 		}
 	}
 	return ""

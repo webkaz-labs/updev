@@ -137,6 +137,46 @@ func TestBrewUpdateSafetyUsesGreedyOutdatedCandidates(t *testing.T) {
 	}
 }
 
+func TestHomebrewTrustStateAllowsTrustedNonOfficialTapCandidates(t *testing.T) {
+	findings := []safetyFinding{
+		{
+			Provider:    "brew",
+			Kind:        "cask",
+			Name:        "cmux-intel",
+			Tap:         "webkaz/tap",
+			Decision:    "review",
+			Reason:      "non-official Homebrew tap needs provenance review before update",
+			ReasonCode:  securityreason.HomebrewNonOfficialTap,
+			TrustTarget: "webkaz/tap/cmux-intel",
+		},
+		{
+			Provider:    "brew",
+			Kind:        "cask",
+			Name:        "muxy",
+			Tap:         "muxy-app/tap",
+			Decision:    "review",
+			Reason:      "non-official Homebrew tap needs provenance review before update",
+			ReasonCode:  securityreason.HomebrewNonOfficialTap,
+			TrustTarget: "muxy-app/tap/muxy",
+		},
+	}
+	fake := &fakeCommandRunner{results: map[string]runner.Result{
+		strings.Join([]string{"env", "HOMEBREW_NO_INSTALL_FROM_API=1", "brew", "trust", "--json=v1"}, "\x00"): {
+			Stdout: `{"taps":[],"formulae":[],"casks":["webkaz/tap/cmux-intel"],"commands":[]}`,
+		},
+	}}
+	got, warnings := applyHomebrewTrustStateToBrewFindings(context.Background(), fake, findings)
+	if len(warnings) != 0 {
+		t.Fatalf("expected no trust warnings, got %#v", warnings)
+	}
+	if got[0].Decision != "allow" || got[0].TrustStatus != "trusted" || !containsString(got[0].Evidence, "Homebrew trust state: cask webkaz/tap/cmux-intel") {
+		t.Fatalf("expected trusted cask to be allowed, got %#v", got[0])
+	}
+	if got[1].Decision != "review" || got[1].TrustStatus == "trusted" {
+		t.Fatalf("expected untrusted cask to remain review, got %#v", got[1])
+	}
+}
+
 func TestBuildSecurityGateReportRunsAllSafety(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	root := t.TempDir()

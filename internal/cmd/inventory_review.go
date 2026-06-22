@@ -59,7 +59,7 @@ func parseInventoryReviewOptions(args []string) (inventoryReviewOptions, error) 
 	fs.IntVar(&opts.limit, "limit", opts.limit, "maximum candidates for batch actions; 0 means default")
 	fs.StringVar(&opts.provider, "provider", opts.provider, "inventory provider to review")
 	fs.StringVar(&opts.query, "query", opts.query, "case-insensitive candidate filter")
-	fs.StringVar(&opts.root, "root", opts.root, "chezmoi source root")
+	fs.StringVar(&opts.root, "root", opts.root, "desired source root")
 	if err := fs.Parse(args); err != nil {
 		return opts, err
 	}

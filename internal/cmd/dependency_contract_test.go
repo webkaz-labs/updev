@@ -38,7 +38,7 @@ func TestDependencyContractReportChecksRequiredJSONContracts(t *testing.T) {
 		},
 		results: addMiseMinimumReleaseAgeFakeResults(map[string]runner.Result{
 			"brew\x00--version": {Stdout: "Homebrew 4.5.0"},
-			"env\x00HOMEBREW_NO_INSTALL_FROM_API=1\x00brew\x00outdated\x00--json=v2": {Stdout: `{"formulae":[],"casks":[]}`},
+			"env\x00HOMEBREW_NO_AUTO_UPDATE=1\x00HOMEBREW_NO_INSTALL_FROM_API=1\x00brew\x00outdated\x00--json=v2": {Stdout: `{"formulae":[],"casks":[]}`},
 			"mise\x00--version":                 {Stdout: "2026.5.18"},
 			"mise\x00ls\x00--current\x00--json": {Stdout: `{}`},
 		}),
@@ -57,6 +57,19 @@ func TestDependencyContractReportChecksRequiredJSONContracts(t *testing.T) {
 		if check.Required && check.Status != plan.StatusOK {
 			t.Fatalf("expected required checks to pass, got %#v", check)
 		}
+	}
+	foundBrewJSON := false
+	for _, check := range report.Checks {
+		if check.Tool == "brew" && check.Feature == "outdated-json-v2" {
+			foundBrewJSON = true
+			joined := strings.Join(check.Command, "\x00")
+			if !strings.Contains(joined, "HOMEBREW_NO_AUTO_UPDATE=1") || !strings.Contains(joined, "HOMEBREW_NO_INSTALL_FROM_API=1") {
+				t.Fatalf("expected Homebrew JSON contract command to suppress auto-update and install-from-api, got %#v", check.Command)
+			}
+		}
+	}
+	if !foundBrewJSON {
+		t.Fatalf("expected Homebrew JSON contract check, got %#v", report.Checks)
 	}
 	foundPolicy := false
 	for _, check := range report.Checks {
@@ -125,6 +138,88 @@ func TestDependencyContractTextShowsSupportLabel(t *testing.T) {
 	}
 }
 
+func TestDependencyContractReportIncludesBrewWrapperDiagnostics(t *testing.T) {
+	t.Setenv("UPDEV_BREW_WRAPPER", "")
+	t.Setenv("UPDEV_CONFIG", filepath.Join(t.TempDir(), "missing-updev.toml"))
+	fake := &fakeCommandRunner{
+		paths: map[string]error{
+			"brew":        nil,
+			"mise":        nil,
+			"osv-scanner": fmt.Errorf("missing"),
+			"gitleaks":    fmt.Errorf("missing"),
+			"zizmor":      fmt.Errorf("missing"),
+			"trivy":       fmt.Errorf("missing"),
+			"grype":       fmt.Errorf("missing"),
+		},
+		results: addMiseMinimumReleaseAgeFakeResults(map[string]runner.Result{
+			"brew\x00--version": {Stdout: "Homebrew 6.0.0"},
+			"env\x00HOMEBREW_NO_AUTO_UPDATE=1\x00HOMEBREW_NO_INSTALL_FROM_API=1\x00brew\x00outdated\x00--json=v2": {Stdout: `{"formulae":[],"casks":[]}`},
+			"mise\x00--version":                 {Stdout: "2026.5.18"},
+			"mise\x00ls\x00--current\x00--json": {Stdout: `{}`},
+		}),
+	}
+	report := buildDependencyContractReport(context.Background(), dependencyOptions{command: "dependencies", root: "/repo"}, fake)
+	if report.Status != plan.StatusOK {
+		t.Fatalf("expected optional inactive wrapper diagnostics to keep report ok, got %#v", report)
+	}
+	foundWrapper := false
+	foundWriteBoundary := false
+	for _, check := range report.Checks {
+		switch {
+		case check.Tool == "brew" && check.Feature == "shell-wrapper":
+			foundWrapper = true
+			if check.Status != plan.StatusUnavailable || check.Active == nil || *check.Active {
+				t.Fatalf("expected inactive optional shell wrapper diagnostic, got %#v", check)
+			}
+		case check.Tool == "brewfile" && check.Feature == "write-boundary":
+			foundWriteBoundary = true
+			if check.Status != plan.StatusUnavailable || check.Value != "disabled" || check.Active == nil || *check.Active {
+				t.Fatalf("expected disabled optional Brewfile write boundary diagnostic, got %#v", check)
+			}
+		}
+	}
+	if !foundWrapper || !foundWriteBoundary {
+		t.Fatalf("expected wrapper and write-boundary diagnostics, got %#v", report.Checks)
+	}
+}
+
+func TestDependencyContractReportShowsActiveBrewWrapperAndWriteBoundary(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("UPDEV_BREW_WRAPPER", "1")
+	enableBrewfileWriteMode(t, root, "template")
+	fake := &fakeCommandRunner{
+		paths: map[string]error{
+			"brew":        nil,
+			"mise":        nil,
+			"osv-scanner": fmt.Errorf("missing"),
+			"gitleaks":    fmt.Errorf("missing"),
+			"zizmor":      fmt.Errorf("missing"),
+			"trivy":       fmt.Errorf("missing"),
+			"grype":       fmt.Errorf("missing"),
+		},
+		results: addMiseMinimumReleaseAgeFakeResults(map[string]runner.Result{
+			"brew\x00--version": {Stdout: "Homebrew 6.0.0"},
+			"env\x00HOMEBREW_NO_AUTO_UPDATE=1\x00HOMEBREW_NO_INSTALL_FROM_API=1\x00brew\x00outdated\x00--json=v2": {Stdout: `{"formulae":[],"casks":[]}`},
+			"mise\x00--version":                                            {Stdout: "2026.5.18"},
+			"mise\x00ls\x00--current\x00--json":                            {Stdout: `{}`},
+			"mise\x00settings\x00ls\x00--json-extended\x00--cd\x00" + root: {Stdout: `{}`},
+		}),
+	}
+	report := buildDependencyContractReport(context.Background(), dependencyOptions{command: "dependencies", root: root}, fake)
+	for _, check := range report.Checks {
+		switch {
+		case check.Tool == "brew" && check.Feature == "shell-wrapper":
+			if check.Status != plan.StatusOK || check.Active == nil || !*check.Active || check.Value != "1" {
+				t.Fatalf("expected active shell wrapper diagnostic, got %#v", check)
+			}
+		case check.Tool == "brewfile" && check.Feature == "write-boundary":
+			if check.Status != plan.StatusOK || check.Active == nil || !*check.Active || check.Value != "template" {
+				t.Fatalf("expected active Brewfile write boundary diagnostic, got %#v", check)
+			}
+		}
+	}
+}
+
 func TestWriteDependencyCompatibilityLedger(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "compatibility-ledger.json")
 	ledger := dependencyCompatibilityLedger{SchemaVersion: 1, GeneratedAt: "2026-06-14T01:02:03Z", Root: "/repo", Entries: []dependencyCompatibilityEntry{{Tool: "mise", Feature: "current-json", Status: plan.StatusOK, Supported: true}}}
@@ -162,7 +257,7 @@ func TestWriteDependencyCompatibilityLedger(t *testing.T) {
 func TestDependencyContractReportAllowsInactiveMiseMinimumReleaseAge(t *testing.T) {
 	results := addMiseMinimumReleaseAgeFakeResults(map[string]runner.Result{
 		"brew\x00--version": {Stdout: "Homebrew 4.5.0"},
-		"env\x00HOMEBREW_NO_INSTALL_FROM_API=1\x00brew\x00outdated\x00--json=v2": {Stdout: `{"formulae":[],"casks":[]}`},
+		"env\x00HOMEBREW_NO_AUTO_UPDATE=1\x00HOMEBREW_NO_INSTALL_FROM_API=1\x00brew\x00outdated\x00--json=v2": {Stdout: `{"formulae":[],"casks":[]}`},
 		"mise\x00--version":                 {Stdout: "2026.5.18"},
 		"mise\x00ls\x00--current\x00--json": {Stdout: `{}`},
 	})
@@ -206,8 +301,8 @@ tap "homebrew/core"
 	}
 	results := addMiseMinimumReleaseAgeFakeResults(map[string]runner.Result{
 		"brew\x00--version": {Stdout: "Homebrew 6.0.0"},
-		"env\x00HOMEBREW_NO_INSTALL_FROM_API=1\x00brew\x00outdated\x00--json=v2": {Stdout: `{"formulae":[],"casks":[]}`},
-		"env\x00HOMEBREW_NO_INSTALL_FROM_API=1\x00brew\x00trust\x00--json=v1":    {Stdout: `{"taps":[],"formulae":["vendor/tap/tool"],"casks":[],"commands":[]}`},
+		"env\x00HOMEBREW_NO_AUTO_UPDATE=1\x00HOMEBREW_NO_INSTALL_FROM_API=1\x00brew\x00outdated\x00--json=v2": {Stdout: `{"formulae":[],"casks":[]}`},
+		"env\x00HOMEBREW_NO_INSTALL_FROM_API=1\x00brew\x00trust\x00--json=v1":                                 {Stdout: `{"taps":[],"formulae":["vendor/tap/tool"],"casks":[],"commands":[]}`},
 		"mise\x00--version":                                            {Stdout: "2026.5.18"},
 		"mise\x00ls\x00--current\x00--json":                            {Stdout: `{}`},
 		"mise\x00settings\x00ls\x00--json-extended\x00--cd\x00" + root: {Stdout: `{}`},
@@ -230,14 +325,17 @@ tap "homebrew/core"
 	}
 	for _, check := range report.Checks {
 		if check.Tool == "brew" && check.Feature == "tap-trust" {
-			if check.Status != plan.StatusDrift || !strings.Contains(check.Value, "1 trusted, 2 untrusted, 3 targets") {
+			if check.Status != plan.StatusDrift || !strings.Contains(check.Value, "0 trusted taps, 1 untrusted taps, 3 targets (1 trusted, 2 untrusted)") {
 				t.Fatalf("expected trust summary drift, got %#v", check)
 			}
-			if !strings.Contains(check.Reason, "cask vendor/tap/app") || !strings.Contains(check.Reason, "tap vendor/tap") {
-				t.Fatalf("expected untrusted targets in reason, got %#v", check)
+			if !strings.Contains(check.Reason, "vendor/tap (2 untrusted/3 targets)") {
+				t.Fatalf("expected untrusted tap group in reason, got %#v", check)
 			}
-			if !strings.Contains(check.Remediation, "item-scoped brew trust") {
-				t.Fatalf("expected item-scoped remediation, got %#v", check)
+			if !strings.Contains(check.Remediation, "brew trust --tap vendor/tap") {
+				t.Fatalf("expected tap-scoped remediation, got %#v", check)
+			}
+			if len(check.TrustGroups) != 1 || check.TrustGroups[0].Tap != "vendor/tap" || check.TrustGroups[0].Trusted {
+				t.Fatalf("expected untrusted tap group, got %#v", check.TrustGroups)
 			}
 			return
 		}
@@ -281,7 +379,7 @@ func TestDependencyContractReportLeavesMiseAgePolicyUnknownOnProbeDrift(t *testi
 		},
 		results: map[string]runner.Result{
 			"brew\x00--version": {Stdout: "Homebrew 4.5.0"},
-			"env\x00HOMEBREW_NO_INSTALL_FROM_API=1\x00brew\x00outdated\x00--json=v2": {Stdout: `{"formulae":[],"casks":[]}`},
+			"env\x00HOMEBREW_NO_AUTO_UPDATE=1\x00HOMEBREW_NO_INSTALL_FROM_API=1\x00brew\x00outdated\x00--json=v2": {Stdout: `{"formulae":[],"casks":[]}`},
 			"mise\x00--version":                 {Stdout: "2026.5.18"},
 			"mise\x00ls\x00--current\x00--json": {Stdout: `{}`},
 			"mise\x00latest\x00--help":          {Code: 1, Err: fmt.Errorf("boom")},
@@ -315,7 +413,7 @@ func TestDependencyContractReportDetectsBrewJSONDrift(t *testing.T) {
 		},
 		results: addMiseMinimumReleaseAgeFakeResults(map[string]runner.Result{
 			"brew\x00--version": {Stdout: "Homebrew 4.5.0"},
-			"env\x00HOMEBREW_NO_INSTALL_FROM_API=1\x00brew\x00outdated\x00--json=v2": {Stdout: `{"formulae":[]}`},
+			"env\x00HOMEBREW_NO_AUTO_UPDATE=1\x00HOMEBREW_NO_INSTALL_FROM_API=1\x00brew\x00outdated\x00--json=v2": {Stdout: `{"formulae":[]}`},
 			"mise\x00--version":                 {Stdout: "2026.5.18"},
 			"mise\x00ls\x00--current\x00--json": {Stdout: `{}`},
 		}),
@@ -351,7 +449,7 @@ func TestDependencyContractReportDetectsMiseJSONRootDrift(t *testing.T) {
 		},
 		results: addMiseMinimumReleaseAgeFakeResults(map[string]runner.Result{
 			"brew\x00--version": {Stdout: "Homebrew 4.5.0"},
-			"env\x00HOMEBREW_NO_INSTALL_FROM_API=1\x00brew\x00outdated\x00--json=v2": {Stdout: `{"formulae":[],"casks":[]}`},
+			"env\x00HOMEBREW_NO_AUTO_UPDATE=1\x00HOMEBREW_NO_INSTALL_FROM_API=1\x00brew\x00outdated\x00--json=v2": {Stdout: `{"formulae":[],"casks":[]}`},
 			"mise\x00--version":                 {Stdout: "2026.5.18"},
 			"mise\x00ls\x00--current\x00--json": {Stdout: `[]`},
 		}),

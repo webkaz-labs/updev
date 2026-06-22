@@ -13,6 +13,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/webkaz-labs/updev/internal/brew"
+	"github.com/webkaz-labs/updev/internal/brewfile"
 	"github.com/webkaz-labs/updev/internal/i18n"
 	"github.com/webkaz-labs/updev/internal/inventoryannotate"
 	"github.com/webkaz-labs/updev/internal/legacycache"
@@ -89,7 +91,7 @@ func parseListOptions(args []string) (listOptions, error) {
 	fs := flag.NewFlagSet("list", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	fs.StringVar(&opts.format, "format", opts.format, "output format: text or json")
-	fs.StringVar(&opts.root, "root", opts.root, "chezmoi source root")
+	fs.StringVar(&opts.root, "root", opts.root, "desired source root")
 	fs.StringVar(&opts.provider, "provider", "", "provider filter")
 	fs.StringVar(&opts.kind, "kind", "", "kind filter")
 	fs.StringVar(&opts.category, "category", "", "category filter")
@@ -595,7 +597,7 @@ func listTextDisplayItems(report listReport) []plan.Item {
 }
 
 func listTextDisplaySections(report listReport) []toolSection {
-	return enrichToolSectionsWithEvidence(listDisplaySections(report), report.Evidence)
+	return enrichToolSectionsWithEvidence(report.Root, listDisplaySections(report), report.Evidence)
 }
 
 func enrichListItemsWithEvidence(items []plan.Item, evidence plan.EvidenceIndex) []plan.Item {
@@ -685,6 +687,7 @@ const (
 	listHubActionBackends  = "backends"
 	listHubActionUpdates   = "updates"
 	listHubActionSecurity  = "security"
+	listHubActionApply     = "apply-brewfile"
 	listHubActionSupport   = "support"
 	listHubActionLimited   = "limited"
 	listHubActionDetails   = "details"
@@ -761,6 +764,9 @@ func runListHub(report listReport, selectorHub bool) {
 						report.Evidence = addBackendListEvidence(report.Evidence, backendPlan)
 					}
 					backendLoading = false
+				}
+				if result.ReportUpdated {
+					report = result.Report
 				}
 				nextAction, exit := handleListHubRouterResult(report.Root, result, &backendPlan, &lastUpdate.Report, &hasLastUpdate)
 				if exit {
@@ -1161,7 +1167,7 @@ func listHubChoices(report listReport, backendPlan backendPlanReport, backendLoa
 			choices,
 			updevChoice{Value: listHubActionProvider, Label: tr("Provider filter", "provider filter"), Description: tr("Choose a provider; rich rows expand with Enter or Space.", "provider を選びます。詳細行は Enter / Space で展開できます。")},
 			updevChoice{Value: listHubActionKind, Label: tr("Kind filter", "kind filter"), Description: tr("Choose brew, cask, vscode, tap, or tool rows.", "brew / cask / vscode / tap / tool で絞り込みます。")},
-			updevChoice{Value: listHubActionCategory, Label: tr("Category filter", "category filter"), Description: tr("Choose work, personal, runtime, core, npm, or another group.", "work / personal / runtime / core / npm などで絞り込みます。")},
+			updevChoice{Value: listHubActionCategory, Label: tr("Category filter", "category filter"), Description: tr("Choose manifest, runtime, core, npm, or another provider-defined group.", "manifest / runtime / core / npm など provider 定義の group で絞り込みます。")},
 			updevChoice{Value: listHubActionStatus, Label: tr("Status filter", "status filter"), Description: tr("Choose attention, active, inactive, missing, extra, drift, unavailable, or ok.", "attention / active / inactive / missing / extra / drift / unavailable / ok を選びます。")},
 			updevChoice{Value: listHubActionQuery, Label: tr("Query filter", "query filter"), Description: tr("Search row names, versions, and descriptions.", "name / version / description を検索します。")},
 		)
@@ -1409,8 +1415,8 @@ func listBrowserStateKey(report listReport) string {
 }
 
 func listTableSections(report listReport) []toolSection {
-	sections := itemToolSections(displayListItems(report.Items, report.Sections), report.Evidence)
-	sections = append(sections, enrichToolSectionsWithEvidence(listDisplaySections(report), report.Evidence)...)
+	sections := itemToolSections(report.Root, displayListItems(report.Items, report.Sections), report.Evidence)
+	sections = append(sections, enrichToolSectionsWithEvidence(report.Root, listDisplaySections(report), report.Evidence)...)
 	return sections
 }
 
@@ -1427,7 +1433,7 @@ func listReportIsManualOnly(report listReport) bool {
 		strings.EqualFold(report.Filters["category"], manualProviderName)
 }
 
-func enrichToolSectionsWithEvidence(sections []toolSection, evidence plan.EvidenceIndex) []toolSection {
+func enrichToolSectionsWithEvidence(root string, sections []toolSection, evidence plan.EvidenceIndex) []toolSection {
 	out := make([]toolSection, 0, len(sections))
 	for _, section := range sections {
 		section.Rows = append([]toolRow{}, section.Rows...)
@@ -1437,7 +1443,7 @@ func enrichToolSectionsWithEvidence(sections []toolSection, evidence plan.Eviden
 			actions := row.Actions
 			for _, item := range items {
 				itemEvidence = mergeListItemEvidence(itemEvidence, itemListEvidence(item, evidence))
-				actions = reviewui.MergeActions(actions, itemToolRowActions(item, evidence))
+				actions = reviewui.MergeActions(actions, itemToolRowActions(root, item, evidence))
 			}
 			if listItemEvidenceSummary(itemEvidence) != "" {
 				row.Detail = itemDetailWithEvidence(row.Detail, itemEvidence)
@@ -1489,7 +1495,7 @@ func mergeListItemEvidence(left plan.ItemEvidence, right plan.ItemEvidence) plan
 	return plan.MergeItemEvidence(left, right)
 }
 
-func itemToolSections(items []plan.Item, evidence plan.EvidenceIndex) []toolSection {
+func itemToolSections(root string, items []plan.Item, evidence plan.EvidenceIndex) []toolSection {
 	grouped := map[string][]toolRow{}
 	order := []string{}
 	for _, item := range items {
@@ -1497,7 +1503,7 @@ func itemToolSections(items []plan.Item, evidence plan.EvidenceIndex) []toolSect
 		if _, ok := grouped[key]; !ok {
 			order = append(order, key)
 		}
-		grouped[key] = append(grouped[key], itemToolRow(item, evidence))
+		grouped[key] = append(grouped[key], itemToolRow(root, item, evidence))
 	}
 	sections := make([]toolSection, 0, len(order))
 	for _, name := range order {
@@ -1518,9 +1524,9 @@ func itemToolSectionTitle(name string) string {
 	return strings.ReplaceAll(name, "/", " / ")
 }
 
-func itemToolRow(item plan.Item, evidence plan.EvidenceIndex) toolRow {
+func itemToolRow(root string, item plan.Item, evidence plan.EvidenceIndex) toolRow {
 	itemEvidence := itemListEvidence(item, evidence)
-	actions := itemToolRowActions(item, evidence)
+	actions := itemToolRowActions(root, item, evidence)
 	return toolRow{
 		Name:    item.Name,
 		Version: item.Version,
@@ -1530,12 +1536,21 @@ func itemToolRow(item plan.Item, evidence plan.EvidenceIndex) toolRow {
 	}
 }
 
-func itemToolRowActions(item plan.Item, evidence plan.EvidenceIndex) []reviewui.Action {
+func itemToolRowActions(root string, item plan.Item, evidence plan.EvidenceIndex) []reviewui.Action {
 	actions := []reviewui.Action{}
 	if item.Provider == manualProviderName {
 		actions = append(actions, manualReviewRouteAction(item))
 	}
-	actions = append(actions, brewDriftReviewActions(item)...)
+	if brewfileApplyItemCanRoute(item) {
+		actions = append(actions, reviewui.Action{
+			Value:       listRouteActionValue(listHubActionApply, item),
+			Label:       tr("open apply candidate", "apply 候補を開く"),
+			Description: tr("review the focused missing Brewfile desired item before safe Homebrew install", "不足している Brewfile desired item を安全な Homebrew install 前に確認します"),
+			Badge:       "fix",
+			BadgeStatus: string(plan.StatusMissing),
+		})
+	}
+	actions = append(actions, brewDriftReviewActions(root, item)...)
 	itemEvidence := itemListEvidence(item, evidence)
 	if len(itemEvidence.Backends) > 0 {
 		actions = append(actions, reviewui.Action{
@@ -1567,7 +1582,19 @@ func itemToolRowActions(item plan.Item, evidence plan.EvidenceIndex) []reviewui.
 	return actions
 }
 
-func brewDriftReviewActions(item plan.Item) []reviewui.Action {
+func brewfileApplyItemCanRoute(item plan.Item) bool {
+	if item.Provider != "brew" || item.Status != plan.StatusMissing || !item.Desired || item.Live {
+		return false
+	}
+	switch item.Kind {
+	case "brew", "cask", "tap":
+		return true
+	default:
+		return false
+	}
+}
+
+func brewDriftReviewActions(root string, item plan.Item) []reviewui.Action {
 	if !syncreport.HomebrewExtraAdoptable(item) {
 		return nil
 	}
@@ -1576,21 +1603,36 @@ func brewDriftReviewActions(item plan.Item) []reviewui.Action {
 	if kind == "" || name == "" {
 		return nil
 	}
-	return []reviewui.Action{
-		{
-			Value:       brewDriftActionValue("adopt", kind, name, "work"),
-			Label:       tr("add to Brewfile (work)", "Brewfile に追加(work)"),
-			Description: fmt.Sprintf(tr("adopt %s %q into the work category", "%s %q を work category に採用します"), kind, name),
+	categories := brewfile.Categories(root)
+	if len(categories) == 0 {
+		if !brewfile.SourceExists(root) {
+			return nil
+		}
+		categories = []string{""}
+	}
+	actions := make([]reviewui.Action, 0, len(categories))
+	for _, category := range categories {
+		actions = append(actions, brewDriftReviewAction(kind, name, category))
+	}
+	return actions
+}
+
+func brewDriftReviewAction(kind string, name string, category string) reviewui.Action {
+	if strings.TrimSpace(category) == "" {
+		return reviewui.Action{
+			Value:       brewDriftActionValue("adopt", kind, name, ""),
+			Label:       tr("add to Brewfile", "Brewfile に追加"),
+			Description: fmt.Sprintf(tr("adopt %s %q into the Brewfile desired state", "%s %q を Brewfile desired state に採用します"), kind, name),
 			Badge:       "fix",
 			BadgeStatus: string(plan.StatusDrift),
-		},
-		{
-			Value:       brewDriftActionValue("adopt", kind, name, "personal"),
-			Label:       tr("add to Brewfile (personal)", "Brewfile に追加(personal)"),
-			Description: fmt.Sprintf(tr("adopt %s %q into the personal category", "%s %q を personal category に採用します"), kind, name),
-			Badge:       "fix",
-			BadgeStatus: string(plan.StatusDrift),
-		},
+		}
+	}
+	return reviewui.Action{
+		Value:       brewDriftActionValue("adopt", kind, name, category),
+		Label:       fmt.Sprintf(tr("add to Brewfile (%s)", "Brewfile に追加(%s)"), category),
+		Description: fmt.Sprintf(tr("adopt %s %q into the %s category", "%s %q を %s category に採用します"), kind, name, category),
+		Badge:       "fix",
+		BadgeStatus: string(plan.StatusDrift),
 	}
 }
 
@@ -1661,6 +1703,8 @@ func runListRouteDetail(options listRouteDetailOptions) listRouteDetailOutcome {
 	case listHubActionManual:
 		manualPlan := buildInventoryPlanReport(inventoryPlanOptions{root: options.Root, provider: manualProviderName, query: route.Name})
 		rows = manualPlanDetailRows(manualPlan)
+	case listHubActionApply:
+		rows = brewfileApplyRouteRows(options.Root, route)
 	case listHubActionBackends:
 		rows = backendDetailRowsForListRoute(options.BackendPlan, route)
 	case listHubActionUpdates:
@@ -2130,10 +2174,31 @@ func compactKnownListEvidenceText(value string) string {
 	if text := compactReleaseAgeHoldSummary(raw); text != "" {
 		return text
 	}
+	if text := compactHomebrewMostRecentNotInstalledSummary(raw); text != "" {
+		return text
+	}
 	if text := compactBackendCandidateSummary(raw); text != "" {
 		return text
 	}
 	return ""
+}
+
+func compactHomebrewMostRecentNotInstalledSummary(value string) string {
+	lower := strings.ToLower(value)
+	const prefix = "most recent version "
+	start := strings.Index(lower, prefix)
+	if start < 0 || !strings.Contains(lower[start:], " not installed") {
+		return ""
+	}
+	versionStart := start + len(prefix)
+	version := strings.TrimSpace(value[versionStart:])
+	if before, _, ok := strings.Cut(version, " not installed"); ok {
+		version = strings.TrimSpace(before)
+	}
+	if version == "" {
+		return ""
+	}
+	return fmt.Sprintf(tr("latest %s not installed", "最新版 %s は未インストール"), version)
 }
 
 func compactStrictSafetySummary(value string) string {
@@ -2568,9 +2633,9 @@ func displayListItems(items []plan.Item, sections []toolSection) []plan.Item {
 func listDetailRows(report listReport) []detailBrowserRow {
 	rows := []detailBrowserRow{}
 	for _, item := range displayListItems(report.Items, report.Sections) {
-		rows = append(rows, itemDetailRow(item, report.Evidence))
+		rows = append(rows, itemDetailRow(report.Root, item, report.Evidence))
 	}
-	for _, section := range enrichToolSectionsWithEvidence(listDisplaySections(report), report.Evidence) {
+	for _, section := range enrichToolSectionsWithEvidence(report.Root, listDisplaySections(report), report.Evidence) {
 		for _, row := range limitedToolRows(section.Rows, report.Limit) {
 			rows = append(rows, toolDetailRow(section, row))
 		}
@@ -2578,7 +2643,7 @@ func listDetailRows(report listReport) []detailBrowserRow {
 	return rows
 }
 
-func itemDetailRow(item plan.Item, evidence plan.EvidenceIndex) detailBrowserRow {
+func itemDetailRow(root string, item plan.Item, evidence plan.EvidenceIndex) detailBrowserRow {
 	metadata := []string{
 		"status: " + inventoryannotate.ItemStatusLabel(item),
 		"provider: " + item.Provider,
@@ -2595,7 +2660,7 @@ func itemDetailRow(item plan.Item, evidence plan.EvidenceIndex) detailBrowserRow
 	}
 	itemEvidence := itemListEvidence(item, evidence)
 	metadata = append(metadata, listItemEvidenceMetadata(itemEvidence)...)
-	actions := detailActionsFromReviewActions(itemToolRowActions(item, evidence))
+	actions := detailActionsFromReviewActions(itemToolRowActions(root, item, evidence))
 	metadata = append(metadata, actionRouteEvidence(actions)...)
 	return detailBrowserRow{
 		Title:    item.Provider + "/" + item.Kind + " " + item.Name,
@@ -2625,6 +2690,65 @@ func toolDetailRow(section toolSection, row toolRow) detailBrowserRow {
 		Detail:   row.Detail,
 		Metadata: metadata,
 		Actions:  actions,
+	}
+}
+
+func brewfileApplyRouteRows(root string, route listRouteAction) []detailBrowserRow {
+	report := buildBrewfileApplyReport(context.Background(), applyOptions{
+		target:   "brewfile",
+		format:   "text",
+		root:     root,
+		dryRun:   true,
+		safeOnly: true,
+		policy:   securityPolicyPath(),
+	}, runner.Local{}, loadSecurityPolicyForReport())
+	rows := []detailBrowserRow{}
+	for _, candidate := range report.Candidates {
+		if !routeMatchesBrewfileApplyCandidate(route, candidate) {
+			continue
+		}
+		rows = append(rows, brewfileApplyCandidateDetailRow(candidate))
+	}
+	return rows
+}
+
+func routeMatchesBrewfileApplyCandidate(route listRouteAction, candidate brewfileApplyCandidate) bool {
+	if strings.TrimSpace(route.Provider) != "" && route.Provider != candidate.Provider {
+		return false
+	}
+	if strings.TrimSpace(route.Kind) != "" && route.Kind != candidate.Kind {
+		return false
+	}
+	if strings.TrimSpace(route.Name) != "" && route.Name != candidate.Name {
+		return false
+	}
+	return true
+}
+
+func brewfileApplyCandidateDetailRow(candidate brewfileApplyCandidate) detailBrowserRow {
+	metadata := []string{
+		"provider: " + candidate.Provider,
+		"kind: " + candidate.Kind,
+		"name: " + candidate.Name,
+		"decision: " + candidate.Decision,
+		"command: " + brew.JoinCommand(candidate.Command),
+	}
+	if candidate.Category != "" {
+		metadata = append(metadata, "category: "+candidate.Category)
+	}
+	for _, evidence := range candidate.Evidence {
+		metadata = append(metadata, "evidence: "+localizedListEvidenceText(evidence))
+	}
+	detail := strings.TrimSpace(candidate.Remediation)
+	if detail == "" {
+		detail = tr("Safe candidates can be applied with updev apply brewfile --safe-only.", "安全な候補は updev apply brewfile --safe-only で適用できます。")
+	}
+	return detailBrowserRow{
+		Title:    candidate.Provider + "/" + candidate.Kind + " " + candidate.Name,
+		Status:   candidate.Decision,
+		Summary:  candidate.Reason,
+		Detail:   detail,
+		Metadata: metadata,
 	}
 }
 
@@ -2821,7 +2945,7 @@ func categoryDescription(category string) string {
 	case "work":
 		return tr("baseline macOS desired state, also included by personal", "macOS 基本 desired state。personal にも含まれます")
 	case "personal":
-		return tr("personal-only additions on top of work", "work に追加される個人用 profile 専用")
+		return tr("personal deployment-scope additions on top of work", "work deployment scope に追加される個人用 scope")
 	case "linux":
 		return tr("Linux-only desired state", "Linux 専用")
 	case "runtime":
@@ -3052,11 +3176,13 @@ func itemStatusMatches(item plan.Item, filter string) bool {
 }
 
 type listHubRouterResult struct {
-	Action       string
-	ReturnAction string
-	FromRoute    bool
-	BackendPlan  backendPlanReport
-	BackendReady bool
+	Action        string
+	ReturnAction  string
+	FromRoute     bool
+	Report        listReport
+	ReportUpdated bool
+	BackendPlan   backendPlanReport
+	BackendReady  bool
 }
 
 type listHubBackendPlanMsg struct {
@@ -3093,11 +3219,12 @@ type listHubRouterModel struct {
 	width          int
 	height         int
 
-	screen       listHubRouterScreen
-	stateKey     string
-	returnAction string
-	finalAction  string
-	writeFlow    reviewui.WriteFlow
+	screen        listHubRouterScreen
+	stateKey      string
+	returnAction  string
+	finalAction   string
+	writeFlow     reviewui.WriteFlow
+	reportUpdated bool
 
 	detail  detailBrowserModel
 	table   toolTableBrowserModel
@@ -3124,11 +3251,13 @@ func runListHubRouter(options listHubRouterOptions) (listHubRouterResult, map[st
 	}
 	if result, ok := final.(listHubRouterModel); ok {
 		return listHubRouterResult{
-			Action:       result.finalAction,
-			ReturnAction: result.returnAction,
-			FromRoute:    strings.HasPrefix(result.stateKey, "route:"),
-			BackendPlan:  result.backendPlan,
-			BackendReady: !result.backendLoading,
+			Action:        result.finalAction,
+			ReturnAction:  result.returnAction,
+			FromRoute:     strings.HasPrefix(result.stateKey, "route:"),
+			Report:        result.report,
+			ReportUpdated: result.reportUpdated,
+			BackendPlan:   result.backendPlan,
+			BackendReady:  !result.backendLoading,
 		}, result.detailStates, nil
 	}
 	return listHubRouterResult{}, model.detailStates, nil
@@ -3252,6 +3381,10 @@ func (m listHubRouterModel) handleAction(action string) (tea.Model, tea.Cmd) {
 		m.finalAction = action
 		return m, tea.Quit
 	case updevActionBack:
+		if strings.HasPrefix(m.stateKey, "write-result:") && m.returnAction != "" {
+			m.showAction(m.returnAction, listHubActionFull)
+			return m, nil
+		}
 		if strings.HasPrefix(m.stateKey, "route:") && m.returnAction != "" {
 			m.showAction(m.returnAction, listHubActionFull)
 			return m, nil
@@ -3466,23 +3599,37 @@ func (m listHubRouterModel) handleConfirmAction(confirm confirmBrowserModel) (te
 		if m.hasLastUpdate {
 			report = &m.lastUpdate
 		}
-		_ = applyRoutedDetailWriteAction(m.report.Root, report, m.writeFlow.Action, m.writeFlow.Reason, m.writeFlow.Expires)
-		m.refreshAfterWriteAction()
-		m.showAction(m.writeFlow.ReturnAction, listHubActionFull)
+		result := applyRoutedDetailWriteActionResult(m.report.Root, report, m.writeFlow.Action, m.writeFlow.Reason, m.writeFlow.Expires)
+		if result.Applied {
+			m.refreshAfterWriteAction()
+		}
+		m.showWriteResult(result)
 		return m, nil
 	default:
 		return m, nil
 	}
 }
 
+func (m *listHubRouterModel) showWriteResult(result routedWriteResult) {
+	row := detailBrowserRow{
+		Title:    result.Title,
+		Status:   string(result.Status),
+		Summary:  result.Summary,
+		Detail:   result.Detail,
+		Metadata: result.Metadata,
+	}
+	m.showFocusedDetail(result.Title, []detailBrowserRow{row}, "write-result:"+m.writeFlow.Action, m.writeFlow.ReturnAction)
+}
+
 func (m *listHubRouterModel) refreshAfterWriteAction() {
 	if action, _, _, _, ok := parseBrewDriftAction(m.writeFlow.Action); ok && action == "adopt" {
-		result := collectInventory(context.Background(), m.report.Root, runner.Local{})
-		updated := buildListReport(inventoryResult{Report: result}, listOptions{root: m.report.Root})
+		result := collectInventoryCachedWithOptions(context.Background(), m.report.Root, true, inventoryCacheMaxAge, inventoryOptions{IncludeVSCode: includeVSCodeExtensionsByDefault()})
+		updated := buildListReport(result, listOptions{root: m.report.Root})
 		if !m.backendLoading {
 			updated.Evidence = addBackendListEvidence(updated.Evidence, m.backendPlan)
 		}
 		m.report = updated
+		m.reportUpdated = true
 	}
 	if action, _, _, ok := parseBackendDetailAction(m.writeFlow.Action); ok && backendDetailActionRequiresConfirmation(action) {
 		m.backendPlan = buildBackendPlanForHub(m.report.Root)
@@ -3693,6 +3840,8 @@ func (m listHubRouterModel) routeRows(route listRouteAction) []detailBrowserRow 
 	case listHubActionManual:
 		manualPlan := buildInventoryPlanReport(inventoryPlanOptions{root: m.report.Root, provider: manualProviderName, query: route.Name})
 		return manualPlanDetailRows(manualPlan)
+	case listHubActionApply:
+		return brewfileApplyRouteRows(m.report.Root, route)
 	case listHubActionBackends:
 		return backendDetailRowsForListRoute(m.backendPlan, route)
 	case listHubActionUpdates:
@@ -3919,12 +4068,16 @@ type detailWriteActionSpec = reviewui.WriteActionSpec
 
 func routedDetailWriteActionSpec(value string) (detailWriteActionSpec, bool) {
 	if action, kind, name, category, ok := parseBrewDriftAction(value); ok {
-		if action != "adopt" || (category != "work" && category != "personal") {
+		if action != "adopt" {
 			return detailWriteActionSpec{}, false
+		}
+		prompt := fmt.Sprintf(tr("Add %s %q to Brewfile?", "Brewfile に %s %q を追加しますか?"), kind, name)
+		if strings.TrimSpace(category) != "" {
+			prompt = fmt.Sprintf(tr("Add %s %q to Brewfile category %s?", "Brewfile に %s %q を category %s として追加しますか?"), kind, name, category)
 		}
 		return detailWriteActionSpec{
 			Title:       tr("Homebrew drift action", "Homebrew drift 操作"),
-			Prompt:      fmt.Sprintf(tr("Add %s %q to Brewfile category %s?", "Brewfile に %s %q を category %s として追加しますか?"), kind, name, category),
+			Prompt:      prompt,
 			Description: tr("This changes desired state only. It does not install or uninstall the Homebrew package. Brewfile writes require [brewfile].write_mode to allow mutation.", "desired state だけを変更します。Homebrew package の install/uninstall は行いません。Brewfile 書き込みには [brewfile].write_mode で mutation を許可している必要があります。"),
 		}, true
 	}
@@ -4008,10 +4161,23 @@ func routedDetailWriteActionSpec(value string) (detailWriteActionSpec, bool) {
 	return detailWriteActionSpec{}, false
 }
 
+type routedWriteResult struct {
+	Applied  bool
+	Status   plan.Status
+	Title    string
+	Summary  string
+	Detail   string
+	Metadata []string
+}
+
 func applyRoutedDetailWriteAction(root string, report *updateReport, value string, reason string, expires string) bool {
+	return applyRoutedDetailWriteActionResult(root, report, value, reason, expires).Applied
+}
+
+func applyRoutedDetailWriteActionResult(root string, report *updateReport, value string, reason string, expires string) routedWriteResult {
 	if action, kind, name, category, ok := parseBrewDriftAction(value); ok {
 		if action != "adopt" {
-			return false
+			return routedWriteResult{Applied: false, Status: plan.StatusError, Title: tr("Homebrew drift result", "Homebrew drift 結果"), Summary: tr("unsupported Homebrew drift action", "未対応の Homebrew drift 操作です"), Detail: value}
 		}
 		mutation := buildMutationReport(context.Background(), mutationOptions{
 			action:   "add",
@@ -4021,24 +4187,86 @@ func applyRoutedDetailWriteAction(root string, report *updateReport, value strin
 			name:     name,
 			category: category,
 		})
-		return mutation.Status == plan.StatusOK && mutation.Changed
+		return brewDriftMutationWriteResult(mutation, kind, name, category)
 	}
 	if action, target, ok := parseManualPlanDetailAction(value); ok {
-		return applyConfirmedManualPlanDetailAction(root, action, target)
+		applied := applyConfirmedManualPlanDetailAction(root, action, target)
+		return genericWriteResult(applied, tr("manual review result", "manual review 結果"), action+" "+target)
 	}
 	if action, current, recommended, ok := parseBackendDetailAction(value); ok {
-		return applyConfirmedBackendDetailAction(root, action, current, recommended)
+		applied := applyConfirmedBackendDetailAction(root, action, current, recommended)
+		return genericWriteResult(applied, tr("backend result", "backend 整理 結果"), action+" "+current+" -> "+recommended)
 	}
 	if action, provider, kind, name, ok := parseSecurityDetailAction(value); ok {
 		if !securityDetailActionRequiresCustomInput(action) {
 			_, defaultReason, defaultExpires, ok := defaultSecurityDetailActionInputs(action)
 			if !ok {
-				return false
+				return routedWriteResult{Applied: false, Status: plan.StatusError, Title: tr("security policy result", "security policy 結果"), Summary: tr("unsupported security action", "未対応の security 操作です"), Detail: action}
 			}
 			reason = defaultReason
 			expires = defaultExpires
 		}
-		return applyConfirmedSecurityDetailActionSilently(report, action, provider, kind, name, strings.TrimSpace(reason), strings.TrimSpace(expires))
+		applied := applyConfirmedSecurityDetailActionSilently(report, action, provider, kind, name, strings.TrimSpace(reason), strings.TrimSpace(expires))
+		return genericWriteResult(applied, tr("security policy result", "security policy 結果"), action+" "+provider+"/"+kind+" "+name)
 	}
-	return false
+	return routedWriteResult{Applied: false, Status: plan.StatusError, Title: tr("action result", "操作結果"), Summary: tr("unsupported action", "未対応の操作です"), Detail: value}
+}
+
+func brewDriftMutationWriteResult(report mutationReport, kind string, name string, category string) routedWriteResult {
+	title := tr("Homebrew drift result", "Homebrew drift 結果")
+	summary := fmt.Sprintf(tr("%s %q", "%s %q"), kind, name)
+	if strings.TrimSpace(category) != "" {
+		summary = fmt.Sprintf(tr("%s %q -> %s", "%s %q -> %s"), kind, name, category)
+	}
+	detailLines := []string{
+		fmt.Sprintf(tr("target: %s %q", "対象: %s %q"), kind, name),
+		fmt.Sprintf(tr("status: %s", "状態: %s"), report.Status),
+		fmt.Sprintf(tr("changed: %t", "変更: %t"), report.Changed),
+	}
+	if strings.TrimSpace(category) != "" {
+		detailLines = append(detailLines, fmt.Sprintf(tr("category: %s", "category: %s"), category))
+	}
+	if report.Reason != "" {
+		detailLines = append(detailLines, fmt.Sprintf(tr("reason: %s", "理由: %s"), report.Reason))
+	}
+	if len(report.ChangedFiles) > 0 {
+		detailLines = append(detailLines, tr("changed files:", "変更ファイル:"))
+		for _, file := range report.ChangedFiles {
+			detailLines = append(detailLines, "  "+file)
+		}
+	}
+	if report.Diff != "" {
+		detailLines = append(detailLines, "", "diff", report.Diff)
+	}
+	if report.RollbackCommand != "" {
+		detailLines = append(detailLines, "", fmt.Sprintf(tr("rollback: %s", "rollback: %s"), report.RollbackCommand))
+	}
+	metadata := []string{
+		fmt.Sprintf("provider: %s", report.Provider),
+		fmt.Sprintf("kind: %s", report.Kind),
+		fmt.Sprintf("name: %s", report.Name),
+		fmt.Sprintf("validation: %s", report.Validation.Status),
+	}
+	if report.Validation.Reason != "" {
+		metadata = append(metadata, "validation reason: "+report.Validation.Reason)
+	}
+	applied := report.Status == plan.StatusOK
+	return routedWriteResult{
+		Applied:  applied,
+		Status:   report.Status,
+		Title:    title,
+		Summary:  summary,
+		Detail:   strings.Join(detailLines, "\n"),
+		Metadata: metadata,
+	}
+}
+
+func genericWriteResult(applied bool, title string, detail string) routedWriteResult {
+	status := plan.StatusOK
+	summary := tr("applied", "適用しました")
+	if !applied {
+		status = plan.StatusError
+		summary = tr("not applied", "適用できませんでした")
+	}
+	return routedWriteResult{Applied: applied, Status: status, Title: title, Summary: summary, Detail: detail}
 }

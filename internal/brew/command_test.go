@@ -44,3 +44,24 @@ func TestTrustJSONCommandUsesLocalMetadata(t *testing.T) {
 		t.Fatalf("TrustJSONCommand = %#v, want %#v", got, want)
 	}
 }
+
+func TestInstallCommandIsItemScopedAndDisablesAutoUpdate(t *testing.T) {
+	tests := []struct {
+		kind string
+		name string
+		want []string
+	}{
+		{kind: "brew", name: "jq", want: []string{"env", "HOMEBREW_NO_AUTO_UPDATE=1", "brew", "install", "jq"}},
+		{kind: "cask", name: "firefox", want: []string{"env", "HOMEBREW_NO_AUTO_UPDATE=1", "brew", "install", "--cask", "firefox"}},
+		{kind: "tap", name: "webkaz/tap", want: []string{"env", "HOMEBREW_NO_AUTO_UPDATE=1", "brew", "tap", "webkaz/tap"}},
+	}
+	for _, tt := range tests {
+		got := InstallCommand(tt.kind, tt.name)
+		if !reflect.DeepEqual(got, tt.want) {
+			t.Fatalf("InstallCommand(%q, %q) = %#v, want %#v", tt.kind, tt.name, got, tt.want)
+		}
+	}
+	if got := InstallCommand("vscode", "x"); got != nil {
+		t.Fatalf("expected unsupported kind to return nil, got %#v", got)
+	}
+}

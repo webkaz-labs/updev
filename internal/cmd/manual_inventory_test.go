@@ -675,7 +675,7 @@ func TestSyncEntriesFromInventoryUsesProfileMismatchGuidance(t *testing.T) {
 		t.Fatalf("expected one sync entry, got %#v", entries)
 	}
 	entry := entries[0]
-	if entry.Reason != "profile-mismatch" || entry.Action != "switch-profile-or-remove" || entry.Category != "personal" {
+	if entry.Reason != "profile-mismatch" || entry.Action != "switch-scope-or-remove" || entry.Category != "personal" {
 		t.Fatalf("expected profile mismatch guidance, got %#v", entry)
 	}
 }

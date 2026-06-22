@@ -19,7 +19,7 @@ support files such as `mise.toml`. Implementation belongs under `internal/`.
     provider/   provider interfaces and comparison helpers
     brew/       Homebrew/Brewfile provider plus manifest parsing, metadata, outdated JSON, safety finding, and posture helpers
     githubrepo/ GitHub repository/release URL parsing, release/tag metadata, and posture helpers
-    inventoryannotate/ inventory report annotations that combine provider evidence with root/profile policy
+    inventoryannotate/ inventory report annotations that combine provider evidence with desired-source/deployment-scope policy
     inventoryrun/ inventory collection, cache, and sorting orchestration
     manualinventory/ manual app review/source model and source parsers
       platform/ macOS/Linux/Windows manual app platform scanners
@@ -66,7 +66,7 @@ Provider responsibilities:
 | Method | Purpose |
 |--------|---------|
 | `Name` | Stable provider id such as `brew`, `mise`, `npm`, `uv`, `cargo`, `apt`, `flatpak`, `external`. |
-| `Supported` | Whether the provider is available on the current OS/profile. |
+| `Supported` | Whether the provider is available on the current OS, architecture, and configured deployment scope. |
 | `ListLive` / `Live` | Read installed/live state. |
 | `ListDesired` / `Desired` | Read desired state from configured manifests. |
 | `Validate` | Validate desired definitions where implemented. |

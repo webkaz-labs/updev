@@ -318,6 +318,8 @@ func collectBrewUpdateSafetyWithPolicy(ctx context.Context, commandRunner comman
 			saveUpdateSafetyCache("brew", cacheKey, findings, nil)
 		}
 	}
+	findings, trustWarnings := applyHomebrewTrustStateToBrewFindings(ctx, commandRunner, findings)
+	gate.Warnings = append(gate.Warnings, trustWarnings...)
 	findings = applySecurityPolicyToSafetyFindings(policy, findings)
 	return applySafetyFindings(gate, findings)
 }
@@ -358,8 +360,90 @@ func collectBrewUpdateSafetyFreshWithPolicy(ctx context.Context, commandRunner c
 			saveUpdateSafetyCache("brew", cacheKey, findings, nil)
 		}
 	}
+	findings, trustWarnings := applyHomebrewTrustStateToBrewFindings(ctx, commandRunner, findings)
+	gate.Warnings = append(gate.Warnings, trustWarnings...)
 	findings = applySecurityPolicyToSafetyFindings(policy, findings)
 	return applySafetyFindings(gate, findings)
+}
+
+func applyHomebrewTrustStateToBrewFindings(ctx context.Context, commandRunner commandRunner, findings []safetyFinding) ([]safetyFinding, []string) {
+	if !brewFindingsNeedTrustState(findings) {
+		return findings, nil
+	}
+	command := brew.TrustJSONCommand()
+	if len(command) == 0 {
+		return findings, nil
+	}
+	result := commandRunner.Run(ctx, command[0], command[1:]...)
+	state, err := parseHomebrewTrustState(result.Stdout)
+	if err != nil {
+		return findings, []string{"Homebrew trust state unavailable; non-official tap candidates still require review: " + err.Error()}
+	}
+	out := append([]safetyFinding(nil), findings...)
+	for index := range out {
+		source, ok := homebrewTrustSourceForFinding(out[index], state)
+		if !ok || !brewFindingNeedsTrustReview(out[index]) {
+			continue
+		}
+		out[index].Decision = "allow"
+		out[index].Confidence = "medium"
+		out[index].TrustStatus = "trusted"
+		out[index].Remediation = ""
+		setSafetyFindingReason(&out[index], securityreason.HomebrewPostureReason(securityreason.HomebrewNonOfficialTap, out[index].Kind, out[index].Name, "Homebrew trust is already configured for this non-official tap candidate", map[string]string{"trust_source": source}))
+		out[index].Evidence = appendEvidence(out[index].Evidence, "Homebrew trust state: "+source)
+	}
+	return out, nil
+}
+
+func brewFindingsNeedTrustState(findings []safetyFinding) bool {
+	for _, finding := range findings {
+		if brewFindingNeedsTrustReview(finding) {
+			return true
+		}
+	}
+	return false
+}
+
+func brewFindingNeedsTrustReview(finding safetyFinding) bool {
+	if finding.Provider != "brew" || finding.Tap == "" || isOfficialBrewTap(finding.Tap) || !strings.EqualFold(strings.TrimSpace(finding.Decision), "review") {
+		return false
+	}
+	if finding.ReasonCode == securityreason.HomebrewNonOfficialTap {
+		return true
+	}
+	return strings.Contains(strings.ToLower(finding.Reason), "non-official homebrew tap")
+}
+
+func homebrewTrustSourceForFinding(finding safetyFinding, state homebrewTrustState) (string, bool) {
+	taps := stringBoolSet(state.Taps)
+	if taps[finding.Tap] {
+		return "tap " + finding.Tap, true
+	}
+	target := firstNonEmpty(finding.TrustTarget, finding.Name)
+	switch strings.ToLower(strings.TrimSpace(finding.Kind)) {
+	case "brew", "formula":
+		formulae := stringBoolSet(state.Formulae)
+		if formulae[target] || formulae[finding.Name] {
+			return "formula " + firstNonEmpty(target, finding.Name), true
+		}
+	case "cask":
+		casks := stringBoolSet(state.Casks)
+		if casks[target] || casks[finding.Name] {
+			return "cask " + firstNonEmpty(target, finding.Name), true
+		}
+	}
+	return "", false
+}
+
+func stringBoolSet(values []string) map[string]bool {
+	out := map[string]bool{}
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value != "" {
+			out[value] = true
+		}
+	}
+	return out
 }
 
 func brewOutdatedCachedErrorIsReusable(message string) bool {

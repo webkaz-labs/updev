@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
+	"github.com/webkaz-labs/updev/internal/plan"
 	"github.com/webkaz-labs/updev/internal/support"
 )
 
@@ -17,6 +19,81 @@ func TestParseUpdateOptions(t *testing.T) {
 	}
 	if !opts.dryRun || opts.format != "json" || opts.root != "/tmp/root" || opts.security != "strict" || opts.policy != "/tmp/policy.json" {
 		t.Fatalf("unexpected options: %+v", opts)
+	}
+}
+
+func TestParseApplyOptionsAcceptsBrewfileSurface(t *testing.T) {
+	opts, err := parseApplyOptions([]string{"brewfile", "--safe-only", "--dry-run", "--format", "json", "--root", "/repo"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if opts.target != "brewfile" || !opts.safeOnly || !opts.dryRun || opts.format != "json" || opts.root != "/repo" {
+		t.Fatalf("unexpected options: %#v", opts)
+	}
+	if _, err := parseApplyOptions([]string{"all"}); err == nil {
+		t.Fatal("expected unsupported apply target to fail")
+	}
+}
+
+func TestBrewfileApplyMissingItemsOnlyIncludesMissingHomebrewDesired(t *testing.T) {
+	items := []plan.Item{
+		{Provider: "brew", Kind: "brew", Name: "jq", Desired: true, Live: false, Status: plan.StatusMissing},
+		{Provider: "brew", Kind: "cask", Name: "firefox", Desired: true, Live: false, Status: plan.StatusMissing},
+		{Provider: "brew", Kind: "vscode", Name: "publisher.extension", Desired: true, Live: false, Status: plan.StatusMissing},
+		{Provider: "brew", Kind: "brew", Name: "git", Desired: true, Live: true, Status: plan.StatusOK},
+		{Provider: "mise", Kind: "tool", Name: "node", Desired: true, Live: false, Status: plan.StatusMissing},
+	}
+	got := brewfileApplyMissingItems(items)
+	names := []string{}
+	for _, item := range got {
+		names = append(names, item.Kind+":"+item.Name)
+	}
+	want := []string{"brew:jq", "cask:firefox"}
+	if !reflect.DeepEqual(names, want) {
+		t.Fatalf("missing items = %#v, want %#v", names, want)
+	}
+}
+
+func TestBrewfileApplyCandidatesUseItemScopedCommands(t *testing.T) {
+	items := []plan.Item{
+		{Provider: "brew", Kind: "brew", Name: "jq", Category: "dev", Desired: true, Status: plan.StatusMissing},
+		{Provider: "brew", Kind: "tap", Name: "webkaz/tap", Desired: true, Status: plan.StatusMissing},
+	}
+	findings := []safetyFinding{
+		{Provider: "brew", Kind: "brew", Name: "jq", Decision: "allow", Reason: "ok"},
+		{Provider: "brew", Kind: "tap", Name: "webkaz/tap", Decision: "review", Reason: "needs review"},
+	}
+	got := brewfileApplyCandidatesFromFindings(items, findings)
+	if len(got) != 2 {
+		t.Fatalf("expected 2 candidates, got %#v", got)
+	}
+	if got[0].Decision != "allow" || got[0].Status != plan.StatusDrift {
+		t.Fatalf("unexpected safe candidate: %#v", got[0])
+	}
+	wantCommand := []string{"env", "HOMEBREW_NO_AUTO_UPDATE=1", "brew", "install", "jq"}
+	if !reflect.DeepEqual(got[0].Command, wantCommand) {
+		t.Fatalf("safe command = %#v, want %#v", got[0].Command, wantCommand)
+	}
+	if got[1].Decision != "review" || got[1].Status != plan.StatusHeld {
+		t.Fatalf("unexpected review candidate: %#v", got[1])
+	}
+}
+
+func TestBrewfileApplyStatusDistinguishesDryRunAndHeld(t *testing.T) {
+	safe := []brewfileApplyCandidate{{Decision: "allow", Status: plan.StatusDrift}}
+	if got := brewfileApplyStatus(safe, true); got != plan.StatusDrift {
+		t.Fatalf("safe dry-run status = %s", got)
+	}
+	applied := []brewfileApplyCandidate{{Decision: "allow", Status: plan.StatusOK}}
+	if got := brewfileApplyStatus(applied, false); got != plan.StatusOK {
+		t.Fatalf("applied status = %s", got)
+	}
+	mixed := []brewfileApplyCandidate{
+		{Decision: "allow", Status: plan.StatusDrift},
+		{Decision: "review", Status: plan.StatusHeld},
+	}
+	if got := brewfileApplyStatus(mixed, true); got != plan.StatusHeld {
+		t.Fatalf("mixed status = %s", got)
 	}
 }
 
@@ -46,7 +123,7 @@ func TestBuildVersionReport(t *testing.T) {
 	if report.SchemaVersion != 1 || report.Tool != toolName || report.Version != toolVersion {
 		t.Fatalf("unexpected version report: %#v", report)
 	}
-	if report.Major != 0 || report.Minor != 7 || report.Patch != 14 || report.Contract != "pre_stable" {
+	if report.Major != 0 || report.Minor != 7 || report.Patch != 16 || report.Contract != "pre_stable" {
 		t.Fatalf("unexpected version semantics: %#v", report)
 	}
 }

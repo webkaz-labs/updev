@@ -156,7 +156,7 @@ func GuidanceForItem(reason string, item plan.Item, related map[string]plan.Item
 	case "extra":
 		return ExtraGuidance(item, lang)
 	case "profile-mismatch":
-		return Guidance{Action: "switch-profile-or-remove", Detail: i18n.Pick(lang, "installed entry is defined in another deployment scope; switch to that profile, remove it locally, or promote it into the active scope if it should be managed here", "インストール済み entry は別の deployment scope で定義されています。その profile に切り替えるか、ローカルから削除するか、この環境でも管理するなら active scope へ昇格してください")}
+		return Guidance{Action: "switch-scope-or-remove", Detail: i18n.Pick(lang, "installed entry is defined in source state for another deployment scope but is inactive in the rendered state; render that scope, remove it locally, or promote it into the active scope if it should be managed here", "インストール済み entry は source state の別 deployment scope にはありますが、現在の rendered state では有効ではありません。その scope を展開するか、ローカルから削除するか、この環境でも管理するなら active scope へ昇格してください")}
 	case "skipped":
 		return Guidance{Action: "manual-local-only", Detail: i18n.Pick(lang, "cask is documented in docs/apps.md manual inventory; no Brewfile action is needed unless Homebrew should own it", "cask は docs/apps.md の manual inventory に記録済みです。Homebrew 管理に移す場合以外、Brewfile 操作は不要です")}
 	case "unavailable":
@@ -206,6 +206,9 @@ func ExtraGuidance(item plan.Item, lang string) Guidance {
 
 func HomebrewExtraAdoptable(item plan.Item) bool {
 	if !strings.EqualFold(item.Provider, "brew") || item.Status != plan.StatusExtra || !item.Live {
+		return false
+	}
+	if inventoryannotate.ItemHasProfileMismatch(item) {
 		return false
 	}
 	switch strings.ToLower(strings.TrimSpace(item.Kind)) {
