@@ -173,6 +173,7 @@ func TestQueryOSVBatchBuildsHomebrewGitFindings(t *testing.T) {
   "id": "CVE-2026-9999",
   "affected": [{
     "package": {"ecosystem": "GIT", "name": "https://github.com/jqlang/jq.git"},
+    "versions": ["jq-1.8.1"],
     "ranges": [{"events": [{"introduced": "0"}, {"fixed": "jq-1.8.2"}]}]
   }]
 }`))
@@ -198,6 +199,66 @@ func TestQueryOSVBatchBuildsHomebrewGitFindings(t *testing.T) {
 	}
 	if len(findings[0].FixedVersions) != 1 || findings[0].FixedVersions[0] != "jq-1.8.2" {
 		t.Fatalf("expected Homebrew GIT fixed version evidence, got %#v", findings[0])
+	}
+	if findings[0].MatchType != AdvisoryMatchCandidateVersionAffected {
+		t.Fatalf("expected exact affected-version match, got %#v", findings[0])
+	}
+	if len(findings[0].AffectedVersions) != 1 || findings[0].AffectedVersions[0] != "jq-1.8.1" {
+		t.Fatalf("expected affected version evidence, got %#v", findings[0])
+	}
+}
+
+func TestQueryOSVBatchClassifiesHomebrewGitTagVersionAffected(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			_, _ = w.Write([]byte(`{
+  "id": "OSV-2024-jq",
+  "affected": [{
+    "package": {"ecosystem": "GIT", "name": "https://github.com/jqlang/jq.git"},
+    "versions": ["jq-1.8.2"],
+    "ranges": [{"type":"GIT","repo":"https://github.com/jqlang/jq","events": [{"introduced": "abc"}]}]
+  }]
+}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"results":[{"vulns":[{"id":"OSV-2024-jq"}]}]}`))
+	}))
+	defer server.Close()
+	packages := []Package{{Provider: "brew", Name: "jq", Package: "https://github.com/jqlang/jq.git", Version: "1.8.2", Ecosystem: "GIT", Confidence: "medium"}}
+	findings, err := QueryOSVBatch(context.Background(), server.Client(), server.URL, packages)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(findings) != 1 || findings[0].MatchType != AdvisoryMatchCandidateVersionAffected {
+		t.Fatalf("expected normalized tag affected-version match, got %#v", findings)
+	}
+}
+
+func TestQueryOSVBatchClassifiesHomebrewGitSourceRangeMatch(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			_, _ = w.Write([]byte(`{
+  "id": "OSV-2026-range",
+  "affected": [{
+    "package": {"ecosystem": "GIT", "name": "https://github.com/example/tool.git"},
+    "ranges": [{"type":"GIT","repo":"https://github.com/example/tool","events": [{"introduced": "abc"}, {"fixed": "v1.2.4"}]}]
+  }]
+}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"results":[{"vulns":[{"id":"OSV-2026-range"}]}]}`))
+	}))
+	defer server.Close()
+	packages := []Package{{Provider: "brew", Name: "tool", Package: "https://github.com/example/tool.git", Version: "v1.2.3", Ecosystem: "GIT", Confidence: "medium"}}
+	findings, err := QueryOSVBatch(context.Background(), server.Client(), server.URL, packages)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(findings) != 1 || findings[0].MatchType != AdvisoryMatchSourceRange {
+		t.Fatalf("expected source range match, got %#v", findings)
+	}
+	if len(findings[0].AffectedRanges) != 1 || !strings.Contains(findings[0].AffectedRanges[0], "introduced abc") || !strings.Contains(findings[0].AffectedRanges[0], "fixed v1.2.4") {
+		t.Fatalf("expected affected range evidence, got %#v", findings[0])
 	}
 }
 

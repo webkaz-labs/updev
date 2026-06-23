@@ -146,28 +146,55 @@ func fetchGitHubAdvisories(query githubAdvisoryQuery) ([]GitHubAdvisory, error) 
 
 func githubAdvisoryFinding(pkg Package, advisory GitHubAdvisory) Finding {
 	finding := Finding{
-		Provider:      pkg.Provider,
-		Name:          pkg.Name,
-		Version:       pkg.Version,
-		Ecosystem:     pkg.Ecosystem,
-		Package:       pkg.Package,
-		VulnID:        firstNonEmpty(advisory.GHSAID, advisory.CVEID),
-		Aliases:       githubAdvisoryAliases(advisory),
-		Modified:      advisory.UpdatedAt,
-		Severity:      strings.ToLower(strings.TrimSpace(advisory.Severity)),
-		FixedVersions: fixedVersionsFromGitHubAdvisory(advisory, pkg),
-		BinaryName:    pkg.BinaryName,
-		BinaryPath:    pkg.BinaryPath,
-		PathState:     pkg.PathState,
-		Exposure:      ExposureFromPackage(pkg),
-		Decision:      "hold",
-		Confidence:    pkg.Confidence,
-		Reason:        githubAdvisoryReason(advisory),
-		Status:        plan.StatusHeld,
-		URL:           advisory.HTMLURL,
+		Provider:       pkg.Provider,
+		Name:           pkg.Name,
+		Version:        pkg.Version,
+		Ecosystem:      pkg.Ecosystem,
+		Package:        pkg.Package,
+		VulnID:         firstNonEmpty(advisory.GHSAID, advisory.CVEID),
+		Aliases:        githubAdvisoryAliases(advisory),
+		Modified:       advisory.UpdatedAt,
+		Severity:       strings.ToLower(strings.TrimSpace(advisory.Severity)),
+		MatchType:      AdvisoryMatchCandidateVersionAffected,
+		AffectedRanges: githubAdvisoryAffectedRanges(advisory, pkg),
+		FixedVersions:  fixedVersionsFromGitHubAdvisory(advisory, pkg),
+		BinaryName:     pkg.BinaryName,
+		BinaryPath:     pkg.BinaryPath,
+		PathState:      pkg.PathState,
+		Exposure:       ExposureFromPackage(pkg),
+		Decision:       "hold",
+		Confidence:     pkg.Confidence,
+		Reason:         githubAdvisoryReason(advisory),
+		Status:         plan.StatusHeld,
+		URL:            advisory.HTMLURL,
 	}
 	finding.Remediation = Remediation(finding)
 	return finding
+}
+
+func githubAdvisoryAffectedRanges(advisory GitHubAdvisory, pkg Package) []string {
+	ecosystem, ok := githubAdvisoryEcosystem(pkg.Ecosystem)
+	if !ok {
+		return nil
+	}
+	seen := map[string]bool{}
+	ranges := []string{}
+	for _, vulnerability := range advisory.Vulnerabilities {
+		if vulnerability.Package.Name != "" && !strings.EqualFold(vulnerability.Package.Name, pkg.Package) {
+			continue
+		}
+		if vulnerability.Package.Ecosystem != "" && !strings.EqualFold(vulnerability.Package.Ecosystem, ecosystem) {
+			continue
+		}
+		value := strings.TrimSpace(vulnerability.VulnerableVersionRange)
+		if value == "" || seen[value] {
+			continue
+		}
+		seen[value] = true
+		ranges = append(ranges, value)
+	}
+	sort.Strings(ranges)
+	return ranges
 }
 
 func githubAdvisoryEcosystem(ecosystem string) (string, bool) {

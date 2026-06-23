@@ -66,24 +66,27 @@ func QueryOSVBatch(ctx context.Context, client *http.Client, apiURL string, pack
 				detail = OSVVulnDetail{}
 			}
 			finding := Finding{
-				Provider:      pkg.Provider,
-				Name:          pkg.Name,
-				Version:       pkg.Version,
-				Ecosystem:     pkg.Ecosystem,
-				Package:       pkg.Package,
-				VulnID:        vuln.ID,
-				Aliases:       detail.Aliases,
-				Modified:      vuln.Modified,
-				Severity:      PrimaryOSVSeverity(detail.Severity),
-				FixedVersions: FixedVersionsFromOSVDetail(detail, pkg),
-				BinaryName:    pkg.BinaryName,
-				BinaryPath:    pkg.BinaryPath,
-				PathState:     pkg.PathState,
-				Exposure:      ExposureFromPackage(pkg),
-				Decision:      "hold",
-				Confidence:    pkg.Confidence,
-				Status:        plan.StatusHeld,
-				URL:           OSVVulnerabilityPageURL(vuln.ID),
+				Provider:         pkg.Provider,
+				Name:             pkg.Name,
+				Version:          pkg.Version,
+				Ecosystem:        pkg.Ecosystem,
+				Package:          pkg.Package,
+				VulnID:           vuln.ID,
+				Aliases:          detail.Aliases,
+				Modified:         vuln.Modified,
+				Severity:         PrimaryOSVSeverity(detail.Severity),
+				MatchType:        OSVMatchType(detail, pkg),
+				AffectedVersions: OSVAffectedVersions(detail, pkg),
+				AffectedRanges:   OSVAffectedRanges(detail, pkg),
+				FixedVersions:    FixedVersionsFromOSVDetail(detail, pkg),
+				BinaryName:       pkg.BinaryName,
+				BinaryPath:       pkg.BinaryPath,
+				PathState:        pkg.PathState,
+				Exposure:         ExposureFromPackage(pkg),
+				Decision:         "hold",
+				Confidence:       pkg.Confidence,
+				Status:           plan.StatusHeld,
+				URL:              OSVVulnerabilityPageURL(vuln.ID),
 			}
 			finding.Remediation = Remediation(finding)
 			findings = append(findings, finding)
@@ -96,14 +99,144 @@ func OSVVulnerabilityPageURL(id string) string {
 	return osvVulnerabilityPageURLBase + id
 }
 
+const (
+	AdvisoryMatchCandidateVersionAffected = "candidate_version_affected"
+	AdvisoryMatchSourceRange              = "source_range_match"
+	AdvisoryMatchRelated                  = "advisory_related"
+)
+
+func OSVMatchType(detail OSVVulnDetail, pkg Package) string {
+	if osvDetailListsVersion(detail, pkg) {
+		return AdvisoryMatchCandidateVersionAffected
+	}
+	if len(OSVAffectedRanges(detail, pkg)) > 0 {
+		return AdvisoryMatchSourceRange
+	}
+	return AdvisoryMatchRelated
+}
+
+func OSVAffectedVersions(detail OSVVulnDetail, pkg Package) []string {
+	seen := map[string]bool{}
+	versions := []string{}
+	for _, affected := range detail.Affected {
+		if !osvAffectedPackageMatches(affected, pkg) {
+			continue
+		}
+		for _, version := range affected.Versions {
+			version = strings.TrimSpace(version)
+			if version == "" || seen[version] {
+				continue
+			}
+			seen[version] = true
+			versions = append(versions, version)
+		}
+	}
+	sort.Strings(versions)
+	return versions
+}
+
+func OSVAffectedRanges(detail OSVVulnDetail, pkg Package) []string {
+	seen := map[string]bool{}
+	ranges := []string{}
+	for _, affected := range detail.Affected {
+		if !osvAffectedPackageMatches(affected, pkg) {
+			continue
+		}
+		for _, versionRange := range affected.Ranges {
+			parts := []string{}
+			if versionRange.Type != "" {
+				parts = append(parts, versionRange.Type)
+			}
+			if versionRange.Repo != "" {
+				parts = append(parts, versionRange.Repo)
+			}
+			for _, event := range versionRange.Events {
+				switch {
+				case event.Introduced != "":
+					parts = append(parts, "introduced "+event.Introduced)
+				case event.Fixed != "":
+					parts = append(parts, "fixed "+event.Fixed)
+				case event.LastAffected != "":
+					parts = append(parts, "last_affected "+event.LastAffected)
+				case event.Limit != "":
+					parts = append(parts, "limit "+event.Limit)
+				}
+			}
+			value := strings.TrimSpace(strings.Join(parts, " "))
+			if value == "" || seen[value] {
+				continue
+			}
+			seen[value] = true
+			ranges = append(ranges, value)
+		}
+	}
+	sort.Strings(ranges)
+	return ranges
+}
+
+func osvDetailListsVersion(detail OSVVulnDetail, pkg Package) bool {
+	candidates := advisoryVersionCandidates(pkg)
+	if len(candidates) == 0 {
+		return false
+	}
+	for _, affectedVersion := range OSVAffectedVersions(detail, pkg) {
+		if candidates[normalizeAdvisoryVersion(affectedVersion)] {
+			return true
+		}
+	}
+	return false
+}
+
+func advisoryVersionCandidates(pkg Package) map[string]bool {
+	version := strings.TrimSpace(pkg.Version)
+	if version == "" {
+		return nil
+	}
+	candidates := map[string]bool{}
+	add := func(value string) {
+		value = normalizeAdvisoryVersion(value)
+		if value != "" {
+			candidates[value] = true
+		}
+	}
+	add(version)
+	unprefixed := trimAdvisoryVersionPrefix(version)
+	add(unprefixed)
+	name := strings.TrimSpace(pkg.Name)
+	if name != "" {
+		add(name + "-" + version)
+		add(name + "-" + unprefixed)
+	}
+	return candidates
+}
+
+func normalizeAdvisoryVersion(version string) string {
+	return strings.ToLower(strings.TrimSpace(version))
+}
+
+func trimAdvisoryVersionPrefix(version string) string {
+	version = strings.TrimSpace(version)
+	if len(version) > 0 && (version[0] == 'v' || version[0] == 'V') {
+		return version[1:]
+	}
+	return version
+}
+
+func osvAffectedPackageMatches(affected OSVAffected, pkg Package) bool {
+	if affected.Package.Name != "" && !strings.EqualFold(affected.Package.Name, pkg.Package) {
+		return false
+	}
+	if affected.Package.Ecosystem != "" && !strings.EqualFold(affected.Package.Ecosystem, pkg.Ecosystem) {
+		return false
+	}
+	return true
+}
+
 func FixedVersionsFromOSVDetail(detail OSVVulnDetail, pkg Package) []string {
 	seen := map[string]bool{}
 	versions := []string{}
 	for _, affected := range detail.Affected {
-		if affected.Package.Name != "" && !strings.EqualFold(affected.Package.Name, pkg.Package) {
-			continue
-		}
-		if affected.Package.Ecosystem != "" && !strings.EqualFold(affected.Package.Ecosystem, pkg.Ecosystem) {
+		if !osvAffectedPackageMatches(affected, pkg) {
 			continue
 		}
 		for _, versionRange := range affected.Ranges {

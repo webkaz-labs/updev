@@ -17,6 +17,7 @@ import (
 	"github.com/webkaz-labs/updev/internal/plan"
 	"github.com/webkaz-labs/updev/internal/registryaudit"
 	"github.com/webkaz-labs/updev/internal/runner"
+	"github.com/webkaz-labs/updev/internal/securityadvisory"
 	"github.com/webkaz-labs/updev/internal/securityreason"
 	"github.com/webkaz-labs/updev/internal/updatereason"
 )
@@ -841,6 +842,25 @@ func TestLocalizedUpdateStepReasonCoversStrictRefreshAndMiseBumpDrift(t *testing
 		if got := localizedUpdateStepReason(tt.reason); got != tt.want {
 			t.Fatalf("expected localized reason %q, got %q", tt.want, got)
 		}
+	}
+}
+
+func TestStrictGateFailedReasonSummarizesNPMDebugLogPointers(t *testing.T) {
+	raw := strings.Join([]string{
+		"npm error A complete log of this run can be found in: /tmp/npm/one-debug-0.log",
+		"npm error A complete log of this run can be found in: /tmp/npm/two-debug-0.log",
+	}, "\n")
+	reason := updatereason.StrictGateFailedReason(raw)
+	if strings.Contains(reason.Text, "/tmp/npm") || strings.Count(reason.Text, "complete log") > 0 {
+		t.Fatalf("expected summarized update reason text, got %#v", reason)
+	}
+	if reason.Args["error"] != raw {
+		t.Fatalf("expected raw error to remain in args, got %#v", reason)
+	}
+	withDefaultLanguageForTest(t, "ja")
+	localized := localizedUpdateStepReason(reason.Text)
+	if strings.Contains(localized, "/tmp/npm") || !strings.Contains(localized, "npm metadata probe failed") {
+		t.Fatalf("expected localized summary without raw log paths, got %q", localized)
 	}
 }
 
@@ -2515,6 +2535,41 @@ func TestHomebrewAdvisoryPackagesFromPosturesMapsGitHubFormulaTags(t *testing.T)
 	}
 	if packages[2].Provider != "brew" || packages[2].Name != "pnpm" || packages[2].Ecosystem != "npm" || packages[2].Package != "pnpm" || packages[2].Version != "11.4.0" || packages[2].Confidence != "medium" {
 		t.Fatalf("unexpected curated Homebrew advisory package mapping: %#v", packages[2])
+	}
+}
+
+func TestApplyBrewSafetyAdvisoryPreservesMatchEvidence(t *testing.T) {
+	withDefaultLanguageForTest(t, "ja")
+	finding := safetyFinding{
+		Provider:       "brew",
+		Kind:           "brew",
+		Name:           "jq",
+		CurrentVersion: "1.8.2",
+		Decision:       "allow",
+	}
+	got := applyBrewSafetyAdvisory(finding, securityFinding{
+		Provider:         "brew",
+		Name:             "jq",
+		Version:          "jq-1.8.2",
+		Ecosystem:        "GIT",
+		Package:          "https://github.com/jqlang/jq.git",
+		VulnID:           "OSV-2024-440",
+		Severity:         "MEDIUM",
+		MatchType:        securityadvisory.AdvisoryMatchCandidateVersionAffected,
+		AffectedVersions: []string{"jq-1.8.2"},
+		AffectedRanges:   []string{"GIT introduced abc"},
+	})
+	if got.Decision != "hold" || got.ReasonCode != securityreason.HomebrewAdvisoryMatch {
+		t.Fatalf("expected advisory hold, got %#v", got)
+	}
+	if got.AdvisorySource != "OSV" || got.AdvisoryMatchType != securityadvisory.AdvisoryMatchCandidateVersionAffected || got.AdvisorySeverity != "MEDIUM" {
+		t.Fatalf("expected advisory evidence fields, got %#v", got)
+	}
+	if localized := localizedSafetyFindingReason(got); !strings.Contains(localized, "更新候補 version 1.8.2 が affected") || !strings.Contains(localized, "OSV-2024-440") {
+		t.Fatalf("expected localized exact affected-version reason, got %q", localized)
+	}
+	if len(got.AffectedVersions) != 1 || got.AffectedVersions[0] != "jq-1.8.2" || len(got.AffectedRanges) != 1 {
+		t.Fatalf("expected affected evidence to be preserved, got %#v", got)
 	}
 }
 

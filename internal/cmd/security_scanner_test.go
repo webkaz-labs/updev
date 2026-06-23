@@ -383,10 +383,10 @@ func TestApplyBrewSafetyAdvisoryReportsCuratedMappingEvidence(t *testing.T) {
 		Ecosystem: "npm",
 		VulnID:    "GHSA-pnpm",
 	})
-	if finding.Decision != "hold" || !containsString(finding.Evidence, "osv-curated-homebrew-map") || !strings.Contains(finding.Reason, "curated Homebrew mapping") {
+	if finding.Decision != "hold" || !containsString(finding.Evidence, "osv-curated-homebrew-map") || !strings.Contains(finding.Reason, "OSV curated mapping") {
 		t.Fatalf("expected curated mapping advisory evidence, got %#v", finding)
 	}
-	if finding.ReasonCode != securityreason.HomebrewAdvisoryMatch || finding.ReasonArgs["advisory_ids"] != "GHSA-pnpm" || finding.ReasonArgs["advisory_source"] != "OSV curated mapping" {
+	if finding.ReasonCode != securityreason.HomebrewAdvisoryMatch || finding.ReasonArgs["advisory_ids"] != "GHSA-pnpm" || finding.ReasonArgs["advisory_source"] != "OSV" || finding.ReasonArgs["advisory_match_type"] != "advisory_related" {
 		t.Fatalf("expected advisory reason to replace stale release-age code, got %#v", finding)
 	}
 }

@@ -24,6 +24,7 @@ import (
 	"github.com/webkaz-labs/updev/internal/securitygate"
 	"github.com/webkaz-labs/updev/internal/securityreason"
 	"github.com/webkaz-labs/updev/internal/textui"
+	"github.com/webkaz-labs/updev/internal/updatereason"
 	"github.com/webkaz-labs/updev/internal/updevpath"
 )
 
@@ -708,13 +709,18 @@ func applyBrewSafetyAdvisory(finding safetyFinding, advisory securityFinding) sa
 		finding.Evidence = appendEvidence(finding.Evidence, "osv-curated-homebrew-map")
 	}
 	finding.AdvisoryIDs = appendUniqueString(finding.AdvisoryIDs, advisory.VulnID)
+	finding.AdvisorySource = homebrewAdvisorySource(advisory)
+	finding.AdvisoryMatchType = firstNonEmpty(advisory.MatchType, "advisory_related")
+	finding.AdvisorySeverity = advisory.Severity
+	finding.AffectedVersions = appendUniqueStrings(finding.AffectedVersions, advisory.AffectedVersions...)
+	finding.AffectedRanges = appendUniqueStrings(finding.AffectedRanges, advisory.AffectedRanges...)
 	switch {
 	case advisory.Ecosystem == "GIT":
-		setHomebrewAdvisoryReason(&finding, "OSV source tag", "OSV advisory match for Homebrew source tag")
+		setHomebrewAdvisoryReason(&finding, "OSV", homebrewAdvisoryReasonPrefix(finding.AdvisoryMatchType, "OSV source tag"))
 	case isGitHubAdvisoryFinding(advisory):
-		setHomebrewAdvisoryReason(&finding, "GitHub Advisory", "GitHub Advisory match for curated Homebrew mapping")
+		setHomebrewAdvisoryReason(&finding, "GitHub Advisory", homebrewAdvisoryReasonPrefix(finding.AdvisoryMatchType, "GitHub Advisory curated mapping"))
 	default:
-		setHomebrewAdvisoryReason(&finding, "OSV curated mapping", "OSV advisory match for curated Homebrew mapping")
+		setHomebrewAdvisoryReason(&finding, "OSV", homebrewAdvisoryReasonPrefix(finding.AdvisoryMatchType, "OSV curated mapping"))
 	}
 	for _, fixed := range advisory.FixedVersions {
 		finding.FixedVersions = appendUniqueString(finding.FixedVersions, fixed)
@@ -723,11 +729,36 @@ func applyBrewSafetyAdvisory(finding safetyFinding, advisory securityFinding) sa
 	return finding
 }
 
+func homebrewAdvisorySource(advisory securityFinding) string {
+	if isGitHubAdvisoryFinding(advisory) {
+		return "GitHub Advisory"
+	}
+	return "OSV"
+}
+
+func homebrewAdvisoryReasonPrefix(matchType string, source string) string {
+	source = strings.TrimSpace(source)
+	if source == "" {
+		source = "advisory"
+	}
+	switch strings.TrimSpace(matchType) {
+	case "candidate_version_affected":
+		return source + " reports the Homebrew update candidate version as affected"
+	case "source_range_match":
+		return source + " source range matches the Homebrew update candidate"
+	default:
+		return source + " evidence is related to the Homebrew update candidate"
+	}
+}
+
 func setHomebrewAdvisoryReason(finding *safetyFinding, source string, textPrefix string) {
 	ids := strings.Join(finding.AdvisoryIDs, ",")
 	setSafetyFindingReason(finding, securityreason.HomebrewPostureReason(securityreason.HomebrewAdvisoryMatch, finding.Kind, finding.Name, textPrefix+": "+ids, map[string]string{
-		"advisory_source": source,
-		"advisory_ids":    ids,
+		"advisory_source":     source,
+		"advisory_ids":        ids,
+		"advisory_match_type": finding.AdvisoryMatchType,
+		"advisory_severity":   finding.AdvisorySeverity,
+		"candidate_version":   firstNonEmpty(finding.CurrentVersion, finding.Version),
 	}))
 }
 
@@ -748,6 +779,13 @@ func appendUniqueString(values []string, value string) []string {
 		}
 	}
 	return append(values, value)
+}
+
+func appendUniqueStrings(values []string, additions ...string) []string {
+	for _, addition := range additions {
+		values = appendUniqueString(values, addition)
+	}
+	return values
 }
 
 func applyHomebrewReleaseAge(ctx context.Context, client *http.Client, apiBase string, finding safetyFinding, minAge time.Duration) safetyFinding {
@@ -953,7 +991,7 @@ func providerHeldBySafety(provider string, opts updateOptions, gates []safetyGat
 			continue
 		}
 		if gate.Status == plan.StatusError {
-			return "security=strict held update because safety gate failed: " + gate.Error
+			return updatereason.StrictGateFailedReason(gate.Error).Text
 		}
 		if gate.Status == plan.StatusHeld {
 			return "security=strict held update because safety gate requires review"

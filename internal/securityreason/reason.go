@@ -341,7 +341,20 @@ func LocalizeJapanese(reason Reason) string {
 		if source == "" {
 			source = "advisory"
 		}
-		return homebrewPrefix(reason) + source + " が Homebrew 更新候補に一致しました" + advisorySuffix(reason)
+		switch arg(reason, "advisory_match_type") {
+		case "candidate_version_affected":
+			version := arg(reason, "candidate_version")
+			if version != "" {
+				return homebrewPrefix(reason) + source + " では更新候補 version " + version + " が affected とされています" + advisorySuffix(reason)
+			}
+			return homebrewPrefix(reason) + source + " では更新候補 version が affected とされています" + advisorySuffix(reason)
+		case "source_range_match":
+			return homebrewPrefix(reason) + source + " の affected source range が Homebrew 更新候補に一致しました" + advisorySuffix(reason)
+		case "advisory_related":
+			return homebrewPrefix(reason) + source + " に関連する advisory evidence があるため確認が必要です" + advisorySuffix(reason)
+		default:
+			return homebrewPrefix(reason) + source + " が Homebrew 更新候補に一致しました" + advisorySuffix(reason)
+		}
 	case HomebrewURLBasedCask:
 		return homebrewPrefix(reason) + "URL 指定の Homebrew cask は配布元の確認が必要です"
 	case HomebrewNonOfficialTap:
@@ -602,10 +615,28 @@ func inferHomebrewPostureReason(text string) (Reason, bool) {
 		return HomebrewPostureReason(HomebrewReleaseUnavailable, "", "", text, map[string]string{"error": strings.TrimSpace(strings.TrimPrefix(text, "GitHub release date unavailable before update:"))}), true
 	case text == "official Homebrew formula metadata is available and not disabled or deprecated":
 		return HomebrewPostureReason(HomebrewOfficialFormula, "brew", "", text, nil), true
+	case strings.HasPrefix(text, "OSV source tag reports the Homebrew update candidate version as affected:"):
+		return HomebrewPostureReason(HomebrewAdvisoryMatch, "", "", text, map[string]string{"advisory_source": "OSV", "advisory_match_type": "candidate_version_affected", "advisory_ids": strings.TrimSpace(strings.TrimPrefix(text, "OSV source tag reports the Homebrew update candidate version as affected:"))}), true
+	case strings.HasPrefix(text, "OSV source tag source range matches the Homebrew update candidate:"):
+		return HomebrewPostureReason(HomebrewAdvisoryMatch, "", "", text, map[string]string{"advisory_source": "OSV", "advisory_match_type": "source_range_match", "advisory_ids": strings.TrimSpace(strings.TrimPrefix(text, "OSV source tag source range matches the Homebrew update candidate:"))}), true
+	case strings.HasPrefix(text, "OSV source tag evidence is related to the Homebrew update candidate:"):
+		return HomebrewPostureReason(HomebrewAdvisoryMatch, "", "", text, map[string]string{"advisory_source": "OSV", "advisory_match_type": "advisory_related", "advisory_ids": strings.TrimSpace(strings.TrimPrefix(text, "OSV source tag evidence is related to the Homebrew update candidate:"))}), true
 	case strings.HasPrefix(text, "OSV advisory match for Homebrew source tag:"):
 		return HomebrewPostureReason(HomebrewAdvisoryMatch, "", "", text, map[string]string{"advisory_source": "OSV source tag", "advisory_ids": strings.TrimSpace(strings.TrimPrefix(text, "OSV advisory match for Homebrew source tag:"))}), true
+	case strings.HasPrefix(text, "GitHub Advisory curated mapping reports the Homebrew update candidate version as affected:"):
+		return HomebrewPostureReason(HomebrewAdvisoryMatch, "", "", text, map[string]string{"advisory_source": "GitHub Advisory", "advisory_match_type": "candidate_version_affected", "advisory_ids": strings.TrimSpace(strings.TrimPrefix(text, "GitHub Advisory curated mapping reports the Homebrew update candidate version as affected:"))}), true
+	case strings.HasPrefix(text, "GitHub Advisory curated mapping source range matches the Homebrew update candidate:"):
+		return HomebrewPostureReason(HomebrewAdvisoryMatch, "", "", text, map[string]string{"advisory_source": "GitHub Advisory", "advisory_match_type": "source_range_match", "advisory_ids": strings.TrimSpace(strings.TrimPrefix(text, "GitHub Advisory curated mapping source range matches the Homebrew update candidate:"))}), true
+	case strings.HasPrefix(text, "GitHub Advisory curated mapping evidence is related to the Homebrew update candidate:"):
+		return HomebrewPostureReason(HomebrewAdvisoryMatch, "", "", text, map[string]string{"advisory_source": "GitHub Advisory", "advisory_match_type": "advisory_related", "advisory_ids": strings.TrimSpace(strings.TrimPrefix(text, "GitHub Advisory curated mapping evidence is related to the Homebrew update candidate:"))}), true
 	case strings.HasPrefix(text, "GitHub Advisory match for curated Homebrew mapping:"):
 		return HomebrewPostureReason(HomebrewAdvisoryMatch, "", "", text, map[string]string{"advisory_source": "GitHub Advisory", "advisory_ids": strings.TrimSpace(strings.TrimPrefix(text, "GitHub Advisory match for curated Homebrew mapping:"))}), true
+	case strings.HasPrefix(text, "OSV curated mapping reports the Homebrew update candidate version as affected:"):
+		return HomebrewPostureReason(HomebrewAdvisoryMatch, "", "", text, map[string]string{"advisory_source": "OSV", "advisory_match_type": "candidate_version_affected", "advisory_ids": strings.TrimSpace(strings.TrimPrefix(text, "OSV curated mapping reports the Homebrew update candidate version as affected:"))}), true
+	case strings.HasPrefix(text, "OSV curated mapping source range matches the Homebrew update candidate:"):
+		return HomebrewPostureReason(HomebrewAdvisoryMatch, "", "", text, map[string]string{"advisory_source": "OSV", "advisory_match_type": "source_range_match", "advisory_ids": strings.TrimSpace(strings.TrimPrefix(text, "OSV curated mapping source range matches the Homebrew update candidate:"))}), true
+	case strings.HasPrefix(text, "OSV curated mapping evidence is related to the Homebrew update candidate:"):
+		return HomebrewPostureReason(HomebrewAdvisoryMatch, "", "", text, map[string]string{"advisory_source": "OSV", "advisory_match_type": "advisory_related", "advisory_ids": strings.TrimSpace(strings.TrimPrefix(text, "OSV curated mapping evidence is related to the Homebrew update candidate:"))}), true
 	case strings.HasPrefix(text, "OSV advisory match for curated Homebrew mapping:"):
 		return HomebrewPostureReason(HomebrewAdvisoryMatch, "", "", text, map[string]string{"advisory_source": "OSV curated mapping", "advisory_ids": strings.TrimSpace(strings.TrimPrefix(text, "OSV advisory match for curated Homebrew mapping:"))}), true
 	case text == "release-age and provenance evidence are not available in the first Go safety slice":

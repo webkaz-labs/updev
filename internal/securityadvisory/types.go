@@ -17,28 +17,31 @@ type Package struct {
 }
 
 type Finding struct {
-	Provider      string       `json:"provider"`
-	Name          string       `json:"name"`
-	Version       string       `json:"version"`
-	Ecosystem     string       `json:"ecosystem"`
-	Package       string       `json:"package"`
-	VulnID        string       `json:"vuln_id"`
-	Aliases       []string     `json:"aliases,omitempty"`
-	Modified      string       `json:"modified,omitempty"`
-	Severity      string       `json:"severity,omitempty"`
-	KEV           *KEVFinding  `json:"kev,omitempty"`
-	EPSS          *EPSSFinding `json:"epss,omitempty"`
-	FixedVersions []string     `json:"fixed_versions,omitempty"`
-	BinaryName    string       `json:"binary_name,omitempty"`
-	BinaryPath    string       `json:"binary_path,omitempty"`
-	PathState     string       `json:"path_state,omitempty"`
-	Exposure      string       `json:"exposure,omitempty"`
-	Remediation   string       `json:"remediation,omitempty"`
-	Decision      string       `json:"decision"`
-	Confidence    string       `json:"confidence"`
-	Reason        string       `json:"reason,omitempty"`
-	Status        plan.Status  `json:"status"`
-	URL           string       `json:"url,omitempty"`
+	Provider         string       `json:"provider"`
+	Name             string       `json:"name"`
+	Version          string       `json:"version"`
+	Ecosystem        string       `json:"ecosystem"`
+	Package          string       `json:"package"`
+	VulnID           string       `json:"vuln_id"`
+	Aliases          []string     `json:"aliases,omitempty"`
+	Modified         string       `json:"modified,omitempty"`
+	Severity         string       `json:"severity,omitempty"`
+	MatchType        string       `json:"match_type,omitempty"`
+	AffectedVersions []string     `json:"affected_versions,omitempty"`
+	AffectedRanges   []string     `json:"affected_ranges,omitempty"`
+	KEV              *KEVFinding  `json:"kev,omitempty"`
+	EPSS             *EPSSFinding `json:"epss,omitempty"`
+	FixedVersions    []string     `json:"fixed_versions,omitempty"`
+	BinaryName       string       `json:"binary_name,omitempty"`
+	BinaryPath       string       `json:"binary_path,omitempty"`
+	PathState        string       `json:"path_state,omitempty"`
+	Exposure         string       `json:"exposure,omitempty"`
+	Remediation      string       `json:"remediation,omitempty"`
+	Decision         string       `json:"decision"`
+	Confidence       string       `json:"confidence"`
+	Reason           string       `json:"reason,omitempty"`
+	Status           plan.Status  `json:"status"`
+	URL              string       `json:"url,omitempty"`
 }
 
 type OSVBatchRequest struct {
@@ -81,16 +84,22 @@ type OSVSeverity struct {
 }
 
 type OSVAffected struct {
-	Package OSVPackage `json:"package"`
-	Ranges  []OSVRange `json:"ranges,omitempty"`
+	Package  OSVPackage `json:"package"`
+	Versions []string   `json:"versions,omitempty"`
+	Ranges   []OSVRange `json:"ranges,omitempty"`
 }
 
 type OSVRange struct {
+	Type   string          `json:"type,omitempty"`
+	Repo   string          `json:"repo,omitempty"`
 	Events []OSVRangeEvent `json:"events,omitempty"`
 }
 
 type OSVRangeEvent struct {
-	Fixed string `json:"fixed,omitempty"`
+	Introduced   string `json:"introduced,omitempty"`
+	Fixed        string `json:"fixed,omitempty"`
+	LastAffected string `json:"last_affected,omitempty"`
+	Limit        string `json:"limit,omitempty"`
 }
 
 type KEVCatalog struct {

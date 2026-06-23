@@ -52,7 +52,8 @@ func StrictGateReviewReason() Reason {
 }
 
 func StrictGateFailedReason(err string) Reason {
-	return New(StrictGateFailed, "security=strict held update because safety gate failed: "+err, map[string]string{"error": err})
+	summary := summarizeGateError(err)
+	return New(StrictGateFailed, "security=strict held update because safety gate failed: "+summary, map[string]string{"error": err, "summary": summary})
 }
 
 func StrictMiseNoSafeReason() Reason {
@@ -237,7 +238,11 @@ func LocalizeJapanese(reason Reason) string {
 	case StrictGateReview:
 		return "security=strict のため更新を保留しました: safety gate の確認が必要です"
 	case StrictGateFailed:
-		return "security=strict のため更新を保留しました: safety gate が失敗しました: " + arg(reason, "error")
+		summary := arg(reason, "summary")
+		if summary == "" {
+			summary = summarizeGateError(arg(reason, "error"))
+		}
+		return "security=strict のため更新を保留しました: safety gate が失敗しました: " + summary
 	case StrictBrewRefreshDone:
 		return "strict safety のため Homebrew metadata を更新し、package 候補を再確認しました"
 	case StrictBrewRefreshFailed:
@@ -318,6 +323,35 @@ func arg(reason Reason, key string) string {
 		return ""
 	}
 	return reason.Args[key]
+}
+
+func summarizeGateError(err string) string {
+	err = strings.TrimSpace(err)
+	if err == "" {
+		return "provider metadata check failed"
+	}
+	lower := strings.ToLower(err)
+	switch {
+	case strings.Contains(lower, "npm error a complete log of this run can be found in:"):
+		return "npm metadata probe failed; debug logs are available in expanded evidence"
+	case strings.Contains(lower, "crates.io"):
+		return firstLine(err)
+	case strings.Contains(lower, "pypi"):
+		return firstLine(err)
+	default:
+		return firstLine(err)
+	}
+}
+
+func firstLine(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	if line, _, ok := strings.Cut(value, "\n"); ok {
+		return strings.TrimSpace(line)
+	}
+	return value
 }
 
 func parseOneCount(text string, prefix string, suffix string) (int, bool) {
