@@ -68,6 +68,11 @@ type Finding struct {
 	ReleaseAgeDays    int               `json:"release_age_days,omitempty"`
 	MinReleaseAgeDays int               `json:"min_release_age_days,omitempty"`
 	AdvisoryIDs       []string          `json:"advisory_ids,omitempty"`
+	AdvisorySource    string            `json:"advisory_source,omitempty"`
+	AdvisoryMatchType string            `json:"advisory_match_type,omitempty"`
+	AdvisorySeverity  string            `json:"advisory_severity,omitempty"`
+	AffectedVersions  []string          `json:"affected_versions,omitempty"`
+	AffectedRanges    []string          `json:"affected_ranges,omitempty"`
 	FixedVersions     []string          `json:"fixed_versions,omitempty"`
 }
 

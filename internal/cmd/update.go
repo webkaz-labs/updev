@@ -631,6 +631,7 @@ func updateStepWithStrictSafety(step updateStep, opts updateOptions, gates []saf
 	}
 	if gate.Status == plan.StatusError {
 		reason := updatereason.StrictGateFailedReason(gate.Error)
+		setUpdateStepReason(&step, reason)
 		return step, reason.Text
 	}
 	safe, unsafe := splitUpdateSafetyFindings(gate.Findings)
@@ -4006,6 +4007,15 @@ func safetyFindingDetailRow(gate safetyGate, finding safetyFinding) detailBrowse
 	if len(finding.AdvisoryIDs) > 0 {
 		metadata = appendDetailMeta(metadata, "advisories", strings.Join(finding.AdvisoryIDs, ", "))
 	}
+	metadata = appendDetailMeta(metadata, "advisory source", finding.AdvisorySource)
+	metadata = appendDetailMeta(metadata, "advisory match", advisoryMatchTypeLabel(finding.AdvisoryMatchType))
+	metadata = appendDetailMeta(metadata, "advisory severity", finding.AdvisorySeverity)
+	if len(finding.AffectedVersions) > 0 {
+		metadata = appendDetailMeta(metadata, "affected versions", strings.Join(finding.AffectedVersions, ", "))
+	}
+	if len(finding.AffectedRanges) > 0 {
+		metadata = appendDetailMeta(metadata, "affected ranges", strings.Join(finding.AffectedRanges, "; "))
+	}
 	if len(finding.FixedVersions) > 0 {
 		metadata = appendDetailMeta(metadata, "fixed", strings.Join(finding.FixedVersions, ", "))
 	}
@@ -4314,6 +4324,15 @@ func printSafetyFindingDetails(w io.Writer, gates []safetyGate, color bool) {
 			if len(finding.AdvisoryIDs) > 0 {
 				printDetailLine(w, "advisories", strings.Join(finding.AdvisoryIDs, ", "), color)
 			}
+			printDetailLine(w, "advisory source", finding.AdvisorySource, color)
+			printDetailLine(w, "advisory match", advisoryMatchTypeLabel(finding.AdvisoryMatchType), color)
+			printDetailLine(w, "advisory severity", finding.AdvisorySeverity, color)
+			if len(finding.AffectedVersions) > 0 {
+				printDetailLine(w, "affected versions", strings.Join(finding.AffectedVersions, ", "), color)
+			}
+			if len(finding.AffectedRanges) > 0 {
+				printDetailLine(w, "affected ranges", strings.Join(finding.AffectedRanges, "; "), color)
+			}
 			if len(finding.FixedVersions) > 0 {
 				printDetailLine(w, "fixed", strings.Join(finding.FixedVersions, ", "), color)
 			}
@@ -4588,6 +4607,28 @@ func localizedSafetyReasonWithReleaseAge(finding safetyFinding) string {
 		return strings.TrimSpace(strings.Join(nonEmptyStrings(reason, wait), "。"))
 	}
 	return reason
+}
+
+func advisoryMatchTypeLabel(matchType string) string {
+	switch strings.TrimSpace(matchType) {
+	case "candidate_version_affected":
+		if defaultLanguage() == "ja" {
+			return "候補 version が affected"
+		}
+		return "candidate version affected"
+	case "source_range_match":
+		if defaultLanguage() == "ja" {
+			return "source range が一致"
+		}
+		return "source range match"
+	case "advisory_related":
+		if defaultLanguage() == "ja" {
+			return "関連 evidence"
+		}
+		return "advisory-related evidence"
+	default:
+		return ""
+	}
 }
 
 func miseNativeReleaseAgeHoldReason(finding safetyFinding) bool {

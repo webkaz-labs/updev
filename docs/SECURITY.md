@@ -144,6 +144,64 @@ provider-native age policy is detected as evidence, while updev-owned gates
 eventually decide `allow`, `hold`, `review`, or `block` consistently across
 Homebrew, mise, VS Code, and future providers.
 
+### Lightweight Provider Metadata Failures
+
+updev should not become a full npm, Cargo, PyPI, or vendor registry client.
+Registry-backed provider checks stay lightweight: bounded subprocess calls to
+provider-native tools or simple HTTP metadata endpoints, short timeouts,
+limited concurrency, and raw-evidence caching. The gate owns normalization and
+decision semantics, not a complete reimplementation of each ecosystem.
+
+When a metadata probe fails, the failure must remain reviewable without turning
+provider noise into the package identity:
+
+- keep the candidate identity separate from diagnostic text;
+- record provider, backend, package, version, command, exit status, stderr
+  summary, and at most a deduplicated debug-log path list as evidence;
+- never use messages such as `A complete log of this run can be found in ...`
+  as the row item, primary reason, or skipped package name;
+- normalize failures into a stable reason code such as
+  `provider_metadata_error` with a concise human reason like
+  `npm metadata probe failed for <package>`;
+- if the failed probe can be tied to specific candidates, hold only those
+  candidates in strict mode and still allow unrelated item-scoped safe
+  candidates to proceed;
+- if the failure cannot be tied to candidates, hold the provider mutation in
+  strict mode with a concise aggregate row and keep the raw provider/debug
+  output in expanded evidence only;
+- cache transient metadata errors briefly, then retry on the next gate run
+  without requiring a policy override.
+
+Debug logs are diagnostic evidence, not a source of truth for gate decisions.
+updev may point to them or show a short sanitized excerpt in detail views, but
+it should not parse npm debug logs as part of normal gate logic.
+
+### Advisory Evidence Precision
+
+Advisory matches should explain exactly what matched. A user should be able to
+tell whether the candidate itself is affected, whether only the upstream source
+range or tag is related, or whether the row is held only because the release is
+still too new.
+
+For OSV and similar advisory sources, gate evidence should distinguish:
+
+- `candidate_version_affected`: the advisory lists the exact package/version or
+  source tag being installed;
+- `source_range_match`: the candidate source falls inside an advisory source
+  range, but no exact provider version match is available;
+- `advisory_related`: repository, tag, or package evidence is related but not
+  strong enough to claim the candidate is affected;
+- `release_age_hold`: the candidate is held by age policy independently of
+  advisory evidence.
+
+TUI and text summaries should put the strongest fact first. For example, if OSV
+lists the exact candidate version as affected, the row should say that directly
+and then show release age as an additional hold reason. If the match is weaker,
+the row should avoid wording such as "vulnerability detected" and instead say
+that advisory-related evidence requires review. Expanded evidence should include
+advisory id, source, severity when present, affected versions or source ranges,
+candidate version, release date, and the remediation basis.
+
 Default update does not run project-native audits, OSV-Scanner, gitleaks, zizmor,
 Trivy, Grype, SBOM generation, cloud/SaaS posture checks, or agent-assisted web
 research. Those belong to explicit scan/review commands.
