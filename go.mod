@@ -5,7 +5,7 @@ go 1.26.4
 require (
 	charm.land/bubbletea/v2 v2.0.7
 	charm.land/huh/v2 v2.0.3
-	github.com/mattn/go-runewidth v0.0.23
+	github.com/mattn/go-runewidth v0.0.24
 )
 
 require (
