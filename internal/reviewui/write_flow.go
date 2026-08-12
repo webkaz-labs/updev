@@ -75,11 +75,11 @@ func (flow *WriteFlow) AcceptExpiry(value string, now time.Time, validate Expiry
 }
 
 func (flow WriteFlow) DefaultExpiry(now time.Time) string {
-	return DefaultWriteExpiry(flow.Expires, now)
+	return defaultWriteExpiry(flow.Expires, now)
 }
 
 func (flow WriteFlow) ConfirmDescription(spec WriteActionSpec, expiresLabel string, reasonLabel string) string {
-	return WriteConfirmDescription(spec.Description, flow.Expires, flow.Reason, expiresLabel, reasonLabel)
+	return writeConfirmDescription(spec.Description, flow.Expires, flow.Reason, expiresLabel, reasonLabel)
 }
 
 func IsWriteStateKey(key string) bool {
@@ -106,14 +106,14 @@ func WriteConfirmStateKey(action string) string {
 	return writeConfirmStatePrefix + action
 }
 
-func DefaultWriteExpiry(value string, now time.Time) string {
+func defaultWriteExpiry(value string, now time.Time) string {
 	if strings.TrimSpace(value) != "" {
 		return value
 	}
 	return now.AddDate(0, 0, 7).Format("2006-01-02")
 }
 
-func WriteConfirmDescription(description string, expires string, reason string, expiresLabel string, reasonLabel string) string {
+func writeConfirmDescription(description string, expires string, reason string, expiresLabel string, reasonLabel string) string {
 	description = strings.TrimSpace(description)
 	if strings.TrimSpace(expires) != "" {
 		description = appendLine(description, expiresLabel+expires)

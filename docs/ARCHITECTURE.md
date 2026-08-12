@@ -1,7 +1,7 @@
 # updev architecture
 
 This document holds implementation boundaries and provider structure. Product
-mission and completion criteria live in [DESIGN.md](DESIGN.md); command behavior
+mission and completion criteria live in [PRODUCT.md](PRODUCT.md); command behavior
 lives in [CLI.md](CLI.md); data shape lives in [DATA-MODEL.md](DATA-MODEL.md).
 
 ## Package Layout
@@ -25,14 +25,17 @@ support files such as `mise.toml`. Implementation belongs under `internal/`.
       platform/ macOS/Linux/Windows manual app platform scanners
     mise/       mise provider, manifest/outdated JSON helpers, safety finding, registry/provider metadata resolvers, and backend evidence helpers
     nativeaudit/ provider-native audit evidence model, target discovery, summaries, JSON schemas, and parsers
+    packagemetadata/ strict package metadata sidecar schema, canonical identities, and stale diagnostics
     registryaudit/ package-registry security metadata and posture helpers
     vscode/    VS Code Marketplace metadata and posture helpers
     plan/       updev-specific status/report model
-    runner/     subprocess runner and test seam
+    runner/     subprocess request execution, capability selection, and test seam
     snapshot/   manifest snapshots and rollback helpers
     textui/     table, width, color, and non-TTY rendering helpers
     reviewui/   reusable TTY review/detail browser
     syncreport/ read-only sync report construction, drift classification, and guidance helpers
+    updateplan/ provider-neutral update step selection and strict-safety command planning
+    updatereport/ provider-neutral update step/report model, status aggregation, normalization, filters, summaries, and section projections
     updatereason/ update-step reason codes, structured args, compatibility inference, and render-time labels
     updevconfig/ updev TOML config loading, environment overrides, validation, and config path resolution
     securityreason/ security finding reason codes, structured args, compatibility inference, and render-time labels
@@ -112,9 +115,24 @@ another user-initiated review command, then return to the same route/focus
 state. Do not use `ExecProcess` for routine provider execution where visible
 logs, caching, or typed parser ownership matter.
 
+`runner.Request` is the shared execution request for argv, optional environment,
+and optional stdout/stderr streaming. `runner.Execute` requires the exact
+requested capability: env+streaming, streaming, env, or plain execution. It
+returns an explicit error instead of silently dropping env or stream writers.
+`runner.Local` implements every capability; narrow fakes may implement only
+what their consumer needs. Provider packages own argv and environment key/value
+construction; command adapters may supply credentials from their existing
+config/CLI boundary. The request layer does not infer provider policy or parse
+command output.
+
+Inventory collection receives an injected `runner.Runner`, including cached
+refreshes and update-time inventory. Only CLI/TUI composition roots construct
+`runner.Local`; `inventoryrun` must not select the host runner internally.
+
 Use existing libraries and owner packages before adding one-off parsing:
-`encoding/json` for provider JSON, existing structured source helpers or a
-dedicated parser package for TOML/manifest data, provider packages such as
+`encoding/json` for provider JSON, `github.com/BurntSushi/toml` through the
+strict `packagemetadata` owner for the package sidecar, existing structured
+source helpers or a dedicated parser package for other TOML/manifest data, provider packages such as
 `brew`, `mise`, `vscode`, `registryaudit`, `nativeaudit`, `securityscanner`, and
 `manualinventory` for external tool formats, and `textui` for terminal width,
 color, and badge rendering.
@@ -144,6 +162,22 @@ Known direct subprocess exceptions:
 - `brewfile.runCommand` and `brewfile.runCommandQuiet` are compatibility wrapper
   internals and remain isolated from the primary Go provider path.
 
+Update ownership is split deliberately. `internal/updatereport` owns the
+provider-neutral step/report types, status reduction, cached outcome
+normalization, filters, summaries, and section projections. `internal/updateplan`
+owns the default Homebrew/mise step set and strict-safety projection from typed
+gate findings to item-scoped provider command plans. Provider packages still
+own exact argv construction and target normalization. `internal/cmd` continues
+to own argument parsing, policy/config adaptation, cache file I/O, localized
+finding summaries, terminal rendering, route dispatch, execution, and visible
+provider log streaming. This keeps JSON/text/TUI views over one typed report
+without moving provider execution into the alternate-screen TUI.
+
+Report mutation methods change typed state only. The command adapter explicitly
+calls the owner status recomputation once after a mutation batch, passing
+whether strict security gates participate. Do not add mutation helpers or
+independent status reducers back to `cmd`.
+
 `scripts/check-direct-subprocesses.sh`, called from `scripts/check-docs.sh`,
 keeps this exception list in sync with direct `exec.Command` /
 `exec.CommandContext` usage. Additions must be deliberate and documented before
@@ -155,6 +189,10 @@ the docs check passes.
 non-TTY-safe output. `internal/reviewui` owns reusable browser/detail behavior:
 keyboard focus, Back/Home/Exit, `/` filtering, expandable rows, scroll
 preservation, action consumption, route state caching, and opt-in mouse modes.
+Its exported surface is limited to command-consumed models, constructors,
+state helpers, and types present in those exported signatures. Default filling,
+filtering, row rendering, width calculations, and Bubble Tea messages that do
+not cross the package boundary remain private.
 
 Keep report builders independent from terminal interaction. TTY views consume
 reports; they should not be the only place where behavior is computed.
@@ -230,3 +268,13 @@ command trees, localized UI prose, or config schemas.
 Package managers such as Homebrew, mise, apt, Flatpak, winget, Scoop, and
 Chocolatey belong to `updev`. OS/system settings belong to adjacent OS settings
 tools. Shell/editor/terminal config files remain outside `updev`.
+
+Read-only package source parity belongs to `internal/packageparity`.
+Capability- and architecture-driven executor decisions belong to
+`internal/packageexecutor`; this owner consumes normalized desired and metadata
+evidence and must not run external commands. `cmd` supplies runtime capability
+facts and chooses text, JSON, or shared detail-browser rendering. Item-scoped
+command generation belongs to `internal/packageapply`; it consumes an executor
+decision and apply intent but neither collects security evidence nor runs the
+command. `cmd` joins that argv with existing safety findings and owns streaming
+execution only after an `allow` decision.

@@ -66,7 +66,7 @@ whole workstation or repository.
 Update order:
 
 1. discover pending update candidates with cheap provider-native sources, such
-   as `HOMEBREW_NO_INSTALL_FROM_API=1 brew outdated --json=v2 --greedy`;
+   as `HOMEBREW_NO_AUTO_UPDATE=1 brew outdated --json=v2 --greedy`;
 2. skip mutation gates for providers with no pending candidates;
 3. build candidate identities from provider, kind, name, installed version,
    candidate version, tap/source URL, repository, tag, and extension publisher
@@ -161,8 +161,11 @@ provider noise into the package identity:
 - never use messages such as `A complete log of this run can be found in ...`
   as the row item, primary reason, or skipped package name;
 - normalize failures into a stable reason code such as
-  `provider_metadata_error` with a concise human reason like
-  `npm metadata probe failed for <package>`;
+  `registry_metadata_unavailable` with a concise human reason like
+  `npm metadata requires registry authentication for <package>`;
+- private npm registry authentication failures (`401`, `403`, `E401`, or
+  missing-token messages) are item-scoped review findings when the package can
+  be extracted from the provider error, not provider-level scanner errors;
 - if the failed probe can be tied to specific candidates, hold only those
   candidates in strict mode and still allow unrelated item-scoped safe
   candidates to proceed;
@@ -385,11 +388,13 @@ Major-only and minor-only prefix selectors such as `node = "24"` or
 
 `auto` never disables mise native `minimum_release_age` and never applies rows
 whose updev decision is hold, review, block, unsupported, opaque, major-version,
-or otherwise uncertain. Automatic and safe-batch modes must run a scoped
-`mise upgrade --bump <tool...>` command after dry-run preflight; actual writes
-may add `--yes` after updev confirmation. Unscoped bump commands are not part
-of the trusted update path. Use `UPDEV_MISE_BUMP_MODE` for a one-off mode
-override.
+or otherwise uncertain. Automatic and safe-batch modes must run a
+version-scoped `mise upgrade --bump <tool@version...>` command after dry-run
+preflight; actual writes may add `--yes` after updev confirmation. Unscoped
+bump commands are not part of the trusted update path. If a newer candidate is
+reported after an older candidate has already passed release-age review, updev
+still applies the older reviewed version via the explicit `tool@version`
+target. Use `UPDEV_MISE_BUMP_MODE` for a one-off mode override.
 
 For scoped `npm:*` mise bumps, updev supplies a temporary npm user config that
 keeps registry/auth entries and removes npm `min-release-age` settings. npm's

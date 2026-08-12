@@ -427,6 +427,9 @@ func manualPlanDetailRow(item manualPlanItem, root string) detailBrowserRow {
 	if item.ReviewURL != "" {
 		metadata = append(metadata, "url: "+item.ReviewURL)
 	}
+	if next := manualPlanDisplayNextStep(item); next != "" {
+		metadata = append(metadata, tr("next step: ", "次の確認: ")+next)
+	}
 	if item.InstallHint != "" {
 		metadata = append(metadata, "hint: "+item.InstallHint)
 	}
@@ -442,13 +445,56 @@ func manualPlanDetailRow(item manualPlanItem, root string) detailBrowserRow {
 			metadata = append(metadata, "aliases: "+strings.Join(item.SuggestedOverride.Aliases, ", "))
 		}
 	}
+	actions := manualPlanDetailActions(item, root)
 	return detailBrowserRow{
 		Title:    item.Name,
 		Status:   item.Action,
-		Summary:  manualPlanDisplayNextStep(item),
+		Summary:  manualPlanCompactSummary(item),
 		Detail:   item.Detail,
 		Metadata: metadata,
-		Actions:  manualPlanDetailActions(item, root),
+		Actions:  actions,
+		Columns: []string{
+			item.Action,
+			item.Provider,
+			item.Name,
+			firstNonEmpty(item.SuggestedProvider, "-"),
+			firstNonEmpty(item.Confidence, "-"),
+			manualPlanCompactSummary(item),
+			detailActionCountText(actions),
+		},
+		ColumnHeaders: manualPlanDetailColumns(),
+	}
+}
+
+func manualPlanDetailColumns() []reviewui.DetailColumn {
+	return []reviewui.DetailColumn{
+		{Header: tr("type", "種別"), Min: 10, Max: 14},
+		{Header: "provider", Min: 6, Max: 10},
+		{Header: tr("name", "名前"), Min: 12, Max: 34},
+		{Header: tr("suggested", "候補"), Min: 6, Max: 12},
+		{Header: tr("confidence", "確度"), Min: 4, Max: 8},
+		{Header: tr("next", "次"), Min: 16, Max: 56},
+		{Header: tr("action", "実行"), Min: 4, Max: 6},
+	}
+}
+
+func manualPlanCompactSummary(item manualPlanItem) string {
+	switch item.Action {
+	case "adopt-brew":
+		if cask := manualinventory.DetailValue(item.Detail, "cask"); cask != "" {
+			return fmt.Sprintf(tr("Homebrew cask %s review", "Homebrew cask %s 確認"), cask)
+		}
+		return tr("Homebrew cask review", "Homebrew cask 確認")
+	case "adopt-mas":
+		return tr("Mac App Store review", "Mac App Store 確認")
+	case "open-vendor":
+		return tr("vendor source review", "vendor 入手元確認")
+	case "ignore-local":
+		return tr("local-only review", "local-only 確認")
+	case "needs-review":
+		return tr("ownership review", "所有元/更新方法 確認")
+	default:
+		return tr("keep manual", "manual 維持")
 	}
 }
 

@@ -9,7 +9,7 @@ import (
 
 func TestStartupProgressWritesAndClears(t *testing.T) {
 	var out bytes.Buffer
-	progress := NewStartupProgressWithDelay(true, &out, "読み込み中", 0)
+	progress := newStartupProgressWithDelay(true, &out, "読み込み中", 0)
 	progress.Start()
 	time.Sleep(10 * time.Millisecond)
 	progress.Done()

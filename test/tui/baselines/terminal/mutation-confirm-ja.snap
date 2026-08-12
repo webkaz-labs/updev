@@ -1,0 +1,10 @@
+security policy 操作
+Enter/a で適用、b/Esc で戻る、q で終了
+
+brew/brew jq を allow にしますか?
+
+2026-08-17 に期限切れになる local security policy rule を書き込みます。
+期限: 2026-08-17
+理由: accepted from updev detail browser after local review
+
+確認後に local state を書き込みます。

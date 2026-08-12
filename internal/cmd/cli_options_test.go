@@ -2,18 +2,24 @@ package cmd
 
 import (
 	"bytes"
+	"context"
+	"encoding/json"
+	"io"
 	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
 
+	"github.com/webkaz-labs/updev/internal/brew"
+	"github.com/webkaz-labs/updev/internal/packageexecutor"
 	"github.com/webkaz-labs/updev/internal/plan"
+	"github.com/webkaz-labs/updev/internal/runner"
 	"github.com/webkaz-labs/updev/internal/support"
 )
 
 func TestParseUpdateOptions(t *testing.T) {
-	opts, err := parseUpdateOptions([]string{"--dry-run", "--format", "json", "--root", "/tmp/root", "--security", "strict", "--policy", "/tmp/policy.json"})
+	opts, err := parseUpdateOptions([]string{"--dry-run", "--format", "json", "--root", "/tmp/root", "--security", " STRICT ", "--policy", "/tmp/policy.json"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -63,7 +69,17 @@ func TestBrewfileApplyCandidatesUseItemScopedCommands(t *testing.T) {
 		{Provider: "brew", Kind: "brew", Name: "jq", Decision: "allow", Reason: "ok"},
 		{Provider: "brew", Kind: "tap", Name: "webkaz/tap", Decision: "review", Reason: "needs review"},
 	}
-	got := brewfileApplyCandidatesFromFindings(items, findings)
+	executors := map[string]packageexecutor.Item{
+		"brew/formula/jq": {
+			Identity: "brew/formula/jq", Provider: "brew", Kind: "formula", Name: "jq",
+			DesiredSource: packageexecutor.SourceBrewfile, Executor: packageexecutor.ExecutorNative, Status: plan.StatusOK,
+		},
+		"brew/tap/webkaz/tap": {
+			Identity: "brew/tap/webkaz/tap", Provider: "brew", Kind: "tap", Name: "webkaz/tap",
+			DesiredSource: packageexecutor.SourceBrewfile, Executor: packageexecutor.ExecutorNative, Status: plan.StatusOK,
+		},
+	}
+	got := brewfileApplyCandidatesFromFindings("/repo", items, findings, executors)
 	if len(got) != 2 {
 		t.Fatalf("expected 2 candidates, got %#v", got)
 	}
@@ -76,6 +92,61 @@ func TestBrewfileApplyCandidatesUseItemScopedCommands(t *testing.T) {
 	}
 	if got[1].Decision != "review" || got[1].Status != plan.StatusHeld {
 		t.Fatalf("unexpected review candidate: %#v", got[1])
+	}
+	if got[1].Command != nil {
+		t.Fatalf("review candidate must not expose an executable command: %#v", got[1])
+	}
+}
+
+func TestBrewfileApplyCandidatesUseMiseAndFailClosedExecutors(t *testing.T) {
+	items := []plan.Item{
+		{Provider: "brew", Kind: "brew", Name: "jq", Desired: true, Status: plan.StatusMissing},
+		{Provider: "brew", Kind: "cask", Name: "firefox", Desired: true, Status: plan.StatusMissing},
+	}
+	findings := []safetyFinding{
+		{Provider: "brew", Kind: "brew", Name: "jq", Decision: "allow", Reason: "ok"},
+		{Provider: "brew", Kind: "cask", Name: "firefox", Decision: "allow", Reason: "ok"},
+	}
+	executors := map[string]packageexecutor.Item{
+		"brew/formula/jq": {
+			Identity: "brew/formula/jq", Provider: "brew", Kind: "formula", Name: "jq",
+			DesiredSource: packageexecutor.SourceBoth, Manager: "brew", ManagerPackage: "jq",
+			Executor: packageexecutor.ExecutorMise, Status: plan.StatusOK,
+		},
+		"brew/cask/firefox": {
+			Identity: "brew/cask/firefox", Provider: "brew", Kind: "cask", Name: "firefox",
+			DesiredSource: packageexecutor.SourceBoth, Executor: packageexecutor.ExecutorUnsupported,
+			Status: plan.StatusBlocked, ReasonCode: "intentional-duplicate-required", Reason: "duplicate",
+		},
+	}
+	got := brewfileApplyCandidatesFromFindings("/repo", items, findings, executors)
+	wantMise := []string{"mise", "bootstrap", "packages", "apply", "--yes", "--cd", "/repo", "brew:jq"}
+	if len(got) != 2 || got[0].Executor != packageexecutor.ExecutorMise || !reflect.DeepEqual(got[0].Command, wantMise) {
+		t.Fatalf("expected exact mise command, got %#v", got)
+	}
+	if got[1].Decision != "block" || got[1].Command != nil || got[1].ReasonCode != "intentional-duplicate-required" {
+		t.Fatalf("expected unsupported executor to fail closed, got %#v", got[1])
+	}
+}
+
+func TestBrewfileApplyMiseDesiredUsesSelectedNativeExecutor(t *testing.T) {
+	item := plan.Item{Provider: "brew", Kind: "brew", Name: "btop", Detail: brew.MiseBootstrapDesiredDetail, Desired: true, Status: plan.StatusMissing}
+	finding := brewfileApplyBaseFinding(item)
+	if finding.Source != "mise bootstrap package desired state" || !strings.Contains(strings.Join(finding.Evidence, " "), "resolved mise") {
+		t.Fatalf("expected mise desired evidence, got %#v", finding)
+	}
+	finding.Decision = "allow"
+	executors := map[string]packageexecutor.Item{
+		"brew/formula/btop": {
+			Identity: "brew/formula/btop", Provider: "brew", Kind: "formula", Name: "btop",
+			DesiredSource: packageexecutor.SourceMise, Manager: "brew", ManagerPackage: "btop",
+			Executor: packageexecutor.ExecutorNative, Status: plan.StatusOK,
+		},
+	}
+	candidates := brewfileApplyCandidatesFromFindings("/repo", []plan.Item{item}, []safetyFinding{finding}, executors)
+	want := []string{"env", "HOMEBREW_NO_AUTO_UPDATE=1", "brew", "install", "btop"}
+	if len(candidates) != 1 || candidates[0].DesiredSource != packageexecutor.SourceMise || candidates[0].Executor != packageexecutor.ExecutorNative || !reflect.DeepEqual(candidates[0].Command, want) {
+		t.Fatalf("unexpected migrated package candidate: %#v", candidates)
 	}
 }
 
@@ -94,6 +165,119 @@ func TestBrewfileApplyStatusDistinguishesDryRunAndHeld(t *testing.T) {
 	}
 	if got := brewfileApplyStatus(mixed, true); got != plan.StatusHeld {
 		t.Fatalf("mixed status = %s", got)
+	}
+}
+
+func TestApplyBrewfileSafeCandidatesRunsOnlyAllowedExactCommand(t *testing.T) {
+	runner := &fakeCommandRunner{}
+	report := brewfileApplyReport{Candidates: []brewfileApplyCandidate{
+		{
+			Identity: "brew/formula/jq", Provider: "brew", Kind: "brew", Name: "jq",
+			Executor: packageexecutor.ExecutorNative, Decision: "allow", Status: plan.StatusDrift,
+			Command: []string{"env", "HOMEBREW_NO_AUTO_UPDATE=1", "brew", "install", "jq"},
+		},
+		{
+			Identity: "brew/cask/firefox", Provider: "brew", Kind: "cask", Name: "firefox",
+			Executor: packageexecutor.ExecutorNative, Decision: "review", Status: plan.StatusHeld,
+		},
+	}}
+	got := applyBrewfileSafeCandidates(context.Background(), applyOptions{format: "json"}, runner, report)
+	if len(runner.calls) != 1 || !reflect.DeepEqual(runner.calls[0], report.Candidates[0].Command) {
+		t.Fatalf("expected only the exact allow command to run, calls=%#v", runner.calls)
+	}
+	if got.Candidates[0].Status != plan.StatusOK || got.Candidates[1].Status != plan.StatusHeld || got.Status != plan.StatusHeld {
+		t.Fatalf("unexpected apply result: %#v", got)
+	}
+}
+
+func TestRunBrewfileApplyCommandPreservesStreamingPath(t *testing.T) {
+	recording := &brewfileApplyStreamingRunner{}
+	command := []string{"mise", "bootstrap", "packages", "apply", "--yes", "--cd", "/repo", "brew:jq"}
+	result := runBrewfileApplyCommand(context.Background(), recording, command, true)
+	if result.Err != nil || recording.streamingCalls != 1 || len(recording.calls) != 1 || !reflect.DeepEqual(recording.calls[0], command) {
+		t.Fatalf("expected exact command through streaming runner, result=%#v calls=%#v streaming=%d", result, recording.calls, recording.streamingCalls)
+	}
+}
+
+type brewfileApplyStreamingRunner struct {
+	fakeCommandRunner
+	streamingCalls int
+}
+
+func (recording *brewfileApplyStreamingRunner) RunStreaming(ctx context.Context, _ io.Writer, _ io.Writer, name string, args ...string) runner.Result {
+	recording.streamingCalls++
+	return recording.fakeCommandRunner.Run(ctx, name, args...)
+}
+
+func TestBuildBrewfileApplyReportConsumesExecutorPlan(t *testing.T) {
+	root := t.TempDir()
+	configHome := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", configHome)
+	configPath := filepath.Join(configHome, "updev", "config.toml")
+	if err := os.MkdirAll(filepath.Dir(configPath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(configPath, []byte("[brewfile]\ndesired = \"root\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("UPDEV_CONFIG", configPath)
+	if err := os.WriteFile(filepath.Join(root, "Brewfile.tmpl"), []byte("tap \"homebrew/core\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	misePath := filepath.Join(root, "mise.toml")
+	if err := os.WriteFile(misePath, []byte("[bootstrap.packages]\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	sources, err := json.Marshal([]map[string]any{{"path": misePath, "tools": []string{}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	fake := &fakeCommandRunner{results: map[string]runner.Result{
+		strings.Join([]string{"mise", "config", "ls", "--json", "--cd", root}, "\x00"):        {Stdout: string(sources)},
+		strings.Join([]string{"mise", "bootstrap", "status", "--json", "--cd", root}, "\x00"): {Stdout: `{"packages":{},"tools":[]}`},
+	}}
+	report := buildBrewfileApplyReport(context.Background(), applyOptions{
+		target: "brewfile", format: "json", root: root, dryRun: true, safeOnly: true,
+	}, fake, securityPolicyLoadResult{})
+	if report.Status != plan.StatusDrift || len(report.Candidates) != 1 {
+		t.Fatalf("expected one safe missing candidate, got %#v", report)
+	}
+	candidate := report.Candidates[0]
+	wantCommand := []string{"env", "HOMEBREW_NO_AUTO_UPDATE=1", "brew", "tap", "homebrew/core"}
+	if candidate.Identity != "brew/tap/homebrew/core" || candidate.Executor != packageexecutor.ExecutorNative || candidate.Decision != "allow" || !reflect.DeepEqual(candidate.Command, wantCommand) {
+		t.Fatalf("unexpected executor-aware candidate: %#v", candidate)
+	}
+}
+
+func TestBuildBrewfileApplyReportUsesEmptyCandidateArray(t *testing.T) {
+	root := t.TempDir()
+	configPath := filepath.Join(t.TempDir(), "config.toml")
+	if err := os.WriteFile(configPath, []byte("[brewfile]\ndesired = \"root\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("UPDEV_CONFIG", configPath)
+	if err := os.WriteFile(filepath.Join(root, "Brewfile.tmpl"), []byte(""), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	misePath := filepath.Join(root, "mise.toml")
+	if err := os.WriteFile(misePath, []byte("[bootstrap.packages]\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	sources, err := json.Marshal([]map[string]any{{"path": misePath, "tools": []string{}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	fake := &fakeCommandRunner{results: map[string]runner.Result{
+		strings.Join([]string{"mise", "config", "ls", "--json", "--cd", root}, "\x00"):        {Stdout: string(sources)},
+		strings.Join([]string{"mise", "bootstrap", "status", "--json", "--cd", root}, "\x00"): {Stdout: `{"packages":{},"tools":[]}`},
+	}}
+	report := buildBrewfileApplyReport(context.Background(), applyOptions{root: root, dryRun: true}, fake, securityPolicyLoadResult{})
+	data, err := json.Marshal(report)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), `"candidates":[]`) {
+		t.Fatalf("expected deterministic empty candidate array: %s", data)
 	}
 }
 
@@ -123,7 +307,7 @@ func TestBuildVersionReport(t *testing.T) {
 	if report.SchemaVersion != 1 || report.Tool != toolName || report.Version != toolVersion {
 		t.Fatalf("unexpected version report: %#v", report)
 	}
-	if report.Major != 0 || report.Minor != 7 || report.Patch != 18 || report.Contract != "pre_stable" {
+	if report.Major != 0 || report.Minor != 7 || report.Patch != 19 || report.Contract != "pre_stable" {
 		t.Fatalf("unexpected version semantics: %#v", report)
 	}
 }
@@ -255,6 +439,123 @@ func TestUsageErrorsReturn64(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestRunConsumesValueFlagsBeforeDispatchError(t *testing.T) {
+	tests := []struct {
+		name       string
+		args       []string
+		wantStderr string
+	}{
+		{
+			name: "update",
+			args: []string{
+				"update",
+				"--format", "json",
+				"--root", "/tmp/update-root",
+				"--inventory", "fast",
+				"--security", "off",
+				"--policy", "/tmp/update-policy.json",
+				"--sentinel",
+			},
+			wantStderr: "unknown option: --sentinel",
+		},
+		{
+			name: "list",
+			args: []string{
+				"list",
+				"--format", "json",
+				"--root", "/tmp/list-root",
+				"--provider", "mise",
+				"--kind", "tool",
+				"--category", "runtime",
+				"--status", "active",
+				"--query", "node",
+				"--limit", "5",
+				"--sentinel",
+			},
+			wantStderr: "flag provided but not defined: -sentinel",
+		},
+		{
+			name: "last",
+			args: []string{
+				"last",
+				"--format", "json",
+				"--section", "inventory",
+				"--provider", "brew",
+				"--status", "attention",
+				"--query", "jq",
+				"--sentinel",
+			},
+			wantStderr: "unknown option: --sentinel",
+		},
+		{
+			name: "apply",
+			args: []string{
+				"apply", "brewfile",
+				"--format", "json",
+				"--root", "/tmp/apply-root",
+				"--policy", "/tmp/apply-policy.json",
+				"--sentinel",
+			},
+			wantStderr: "unknown option: --sentinel",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("UPDEV_CONFIG", filepath.Join(t.TempDir(), "missing-updev.toml"))
+			code, stderr := captureRunStderr(t, func() int { return Run(tt.args) })
+			if code != usageExitCode {
+				t.Fatalf("expected usage exit code %d, got %d", usageExitCode, code)
+			}
+			if !strings.Contains(stderr, tt.wantStderr) {
+				t.Fatalf("stderr = %q, want %q", stderr, tt.wantStderr)
+			}
+		})
+	}
+}
+
+func TestRunConsumesGlobalConfigValue(t *testing.T) {
+	t.Setenv("UPDEV_CONFIG", os.Getenv("UPDEV_CONFIG"))
+	configPath := filepath.Join(t.TempDir(), "updev.toml")
+	code, stderr := captureRunStderr(t, func() int {
+		return Run([]string{"--config", configPath, "update", "--sentinel"})
+	})
+	if code != usageExitCode || !strings.Contains(stderr, "unknown option: --sentinel") {
+		t.Fatalf("expected update parser sentinel after global option, code=%d stderr=%q", code, stderr)
+	}
+	if got := os.Getenv("UPDEV_CONFIG"); got != configPath {
+		t.Fatalf("global --config value was not consumed: got %q want %q", got, configPath)
+	}
+}
+
+func captureRunStderr(t *testing.T, run func() int) (int, string) {
+	t.Helper()
+	read, write, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	original := os.Stderr
+	os.Stderr = write
+	defer func() {
+		os.Stderr = original
+		_ = write.Close()
+		_ = read.Close()
+	}()
+	code := run()
+	os.Stderr = original
+	if err := write.Close(); err != nil {
+		t.Fatal(err)
+	}
+	output, err := io.ReadAll(read)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := read.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return code, string(output)
 }
 
 func TestPrimaryV1CommandsDoNotDelegateToLegacy(t *testing.T) {

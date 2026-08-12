@@ -28,20 +28,18 @@ type (
 	osvScannerGroup       = securityscanner.OSVGroup
 	gitleaksFinding       = securityscanner.GitleaksFinding
 	zizmorFinding         = securityscanner.ZizmorFinding
-	zizmorLocation        = securityscanner.ZizmorLocation
-	trivyReport           = securityscanner.TrivyReport
-	trivyResult           = securityscanner.TrivyResult
-	trivyVulnerability    = securityscanner.TrivyVulnerability
-	trivyMisconfiguration = securityscanner.TrivyMisconfig
-	trivyCauseMetadata    = securityscanner.TrivyCauseMetadata
-	trivySecret           = securityscanner.TrivySecret
-	grypeReport           = securityscanner.GrypeReport
-	grypeMatch            = securityscanner.GrypeMatch
-	grypeVulnerability    = securityscanner.GrypeVulnerability
-	grypeFix              = securityscanner.GrypeFix
-	grypeArtifact         = securityscanner.GrypeArtifact
-	grypeLocation         = securityscanner.GrypeLocation
-	grypeMatchDetail      = securityscanner.GrypeMatchDetail
+
+	trivyReport        = securityscanner.TrivyReport
+	trivyResult        = securityscanner.TrivyResult
+	trivyVulnerability = securityscanner.TrivyVulnerability
+
+	grypeReport        = securityscanner.GrypeReport
+	grypeMatch         = securityscanner.GrypeMatch
+	grypeVulnerability = securityscanner.GrypeVulnerability
+
+	grypeArtifact    = securityscanner.GrypeArtifact
+	grypeLocation    = securityscanner.GrypeLocation
+	grypeMatchDetail = securityscanner.GrypeMatchDetail
 )
 
 func scannerEvidenceFromOptions(ctx context.Context, commandRunner commandRunner, opts securityOptions, desired []securityPackage) []scannerEvidence {
@@ -93,14 +91,6 @@ func securityScannerTools(value string, root string) []string {
 
 func parseSecurityScannerNames(value string) ([]string, error) {
 	return securityscanner.ParseNames(value)
-}
-
-func normalizeSecurityScannerName(value string) string {
-	return securityscanner.NormalizeName(value)
-}
-
-func securityScannerNameAllowed(name string) bool {
-	return securityscanner.NameAllowed(name)
 }
 
 func runOSVScannerSourceScan(ctx context.Context, commandRunner commandRunner, root string, desired []securityPackage) scannerEvidence {
@@ -898,18 +888,6 @@ func parseScannerPURL(rawPURL string) osvScannerPackageInfo {
 	return securityscanner.ParsePURL(rawPURL)
 }
 
-func scannerPackageNameFromPURLPath(purlType string, path string) string {
-	return securityscanner.PackageNameFromPURLPath(purlType, path)
-}
-
-func scannerURLUnescape(value string) string {
-	return securityscanner.URLUnescape(value)
-}
-
-func scannerEcosystemFromType(value string) string {
-	return securityscanner.EcosystemFromType(value)
-}
-
 func grypeSourceCount(matches []grypeMatch) int {
 	seen := map[string]bool{}
 	for _, match := range matches {
@@ -965,10 +943,6 @@ func splitCommaFields(value string) []string {
 		}
 	}
 	return parts
-}
-
-func hasGitHubWorkflowFiles(root string) bool {
-	return securityscanner.HasGitHubWorkflowFiles(root)
 }
 
 func scannerCommandErrorStatus(result runner.Result) plan.Status {

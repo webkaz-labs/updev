@@ -1,0 +1,26 @@
+updev installed inventory [upd=0 sec=0 bak=2]
+↑↓/j/k 移動、PgUp/PgDn スクロール、Enter/Space 展開、a/1-9 action、/ filter、Tab 表示切替、m mouse、x 解除、? help、b/Ba
+5/5 行、offset 1 mouse=off
+
+
+brew / brew / work (2)
+  名前         version 状態   確認  詳細
+  jq                   ok           ok - desired かつ installed
+  ripgrep              ok     ▶bak  ok - desired かつ installed
+
+brew / cask / work (1)
+  名前         version 状態   確認  詳細
+  firefox              ok           ok - desired かつ installed
+
+mise / tool / core (1)
+  名前         version 状態   確認  詳細
+  ripgrep              ok     ▶bak  ok - desired かつ installed
+
+mise / tool / runtime (1)
+  名前         version 状態   確認  詳細
+> node                 ok           ok - desired かつ installed
+    詳細
+    概要: ok - desired かつ installed
+    状態: ok - desired かつ installed
+    管理: mise / tool / node
+    カテゴリ: runtime

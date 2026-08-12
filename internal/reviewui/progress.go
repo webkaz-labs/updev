@@ -23,10 +23,10 @@ type StartupProgress struct {
 }
 
 func NewStartupProgress(enabled bool, w io.Writer, message string) StartupProgress {
-	return NewStartupProgressWithDelay(enabled, w, message, defaultStartupProgressDelay)
+	return newStartupProgressWithDelay(enabled, w, message, defaultStartupProgressDelay)
 }
 
-func NewStartupProgressWithDelay(enabled bool, w io.Writer, message string, delay time.Duration) StartupProgress {
+func newStartupProgressWithDelay(enabled bool, w io.Writer, message string, delay time.Duration) StartupProgress {
 	return StartupProgress{
 		enabled: enabled,
 		w:       w,

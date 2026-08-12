@@ -96,21 +96,21 @@ func TestBuildSecurityGateReportRunsBrewSafetyOnly(t *testing.T) {
 	if len(report.Gates) != 1 || report.Gates[0].Provider != "brew" {
 		t.Fatalf("expected brew gate, got %#v", report.Gates)
 	}
-	if len(fake.calls) != 1 || !containsString(fake.calls[0], "HOMEBREW_NO_AUTO_UPDATE=1") || !containsString(fake.calls[0], "HOMEBREW_NO_INSTALL_FROM_API=1") || !containsString(fake.calls[0], "brew") || !containsString(fake.calls[0], "--greedy") {
+	if len(fake.calls) != 1 || !containsString(fake.calls[0], "HOMEBREW_NO_AUTO_UPDATE=1") || containsString(fake.calls[0], "HOMEBREW_NO_INSTALL_FROM_API=1") || !containsString(fake.calls[0], "brew") || !containsString(fake.calls[0], "--greedy") {
 		t.Fatalf("expected brew command, got %+v", fake.calls)
 	}
 }
 
-func TestRunBrewOutdatedAlwaysUsesLocalTapMetadata(t *testing.T) {
+func TestRunBrewOutdatedUsesHomebrewAPIForCompleteCaskCandidates(t *testing.T) {
 	fake := &fakeCommandRunner{results: map[string]runner.Result{
-		strings.Join([]string{"env", "HOMEBREW_NO_AUTO_UPDATE=1", "HOMEBREW_NO_INSTALL_FROM_API=1", "brew", "outdated", "--json=v2", "--greedy"}, "\x00"): {Stdout: `{"formulae":[],"casks":[]}`},
+		strings.Join([]string{"env", "HOMEBREW_NO_AUTO_UPDATE=1", "brew", "outdated", "--json=v2", "--greedy"}, "\x00"): {Stdout: `{"formulae":[],"casks":[]}`},
 	}}
 	result := runBrewOutdatedJSON(context.Background(), fake)
 	if result.Stdout == "" || len(fake.calls) != 1 {
-		t.Fatalf("expected no-install API command, result=%#v calls=%#v", result, fake.calls)
+		t.Fatalf("expected Homebrew API outdated command, result=%#v calls=%#v", result, fake.calls)
 	}
-	if !containsString(fake.calls[0], "HOMEBREW_NO_INSTALL_FROM_API=1") {
-		t.Fatalf("expected no-install API env, calls=%#v", fake.calls)
+	if containsString(fake.calls[0], "HOMEBREW_NO_INSTALL_FROM_API=1") {
+		t.Fatalf("brew outdated must not disable install-from-api because it hides cask candidates, calls=%#v", fake.calls)
 	}
 }
 
@@ -125,7 +125,7 @@ func TestBrewUpdateSafetyUsesGreedyOutdatedCandidates(t *testing.T) {
 	defer server.Close()
 	t.Setenv("UPDEV_HOMEBREW_API_URL", server.URL)
 	fake := &fakeCommandRunner{results: map[string]runner.Result{
-		strings.Join([]string{"env", "HOMEBREW_NO_AUTO_UPDATE=1", "HOMEBREW_NO_INSTALL_FROM_API=1", "brew", "outdated", "--json=v2", "--greedy"}, "\x00"): {
+		strings.Join([]string{"env", "HOMEBREW_NO_AUTO_UPDATE=1", "brew", "outdated", "--json=v2", "--greedy"}, "\x00"): {
 			Stdout: `{"formulae":[],"casks":[{"name":"wezterm@nightly","installed_versions":"latest","current_version":"latest"}]}`,
 		},
 	}}
@@ -1718,6 +1718,52 @@ func TestCollectMiseBumpSafetyHoldsRateLimitedDiscovery(t *testing.T) {
 	}
 }
 
+func TestCollectMiseSafetyReviewsNPMRegistryAuthFailure(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	root := t.TempDir()
+	fake := &fakeCommandRunner{result: runner.Result{
+		Code: 1,
+		Stderr: strings.Join([]string{
+			"npm error code E401",
+			"npm error 401 Unauthorized - GET https://npm.pkg.github.com/@webkaz-labs%2fxskills - authentication token not provided",
+		}, "\n"),
+	}}
+	gate := collectMiseUpdateSafetyWithPolicy(context.Background(), fake, root, securityPolicy{})
+	if gate.Status != plan.StatusHeld || gate.Error != "" {
+		t.Fatalf("expected npm auth failure to hold without provider error, got %#v", gate)
+	}
+	if len(gate.Findings) != 1 || gate.Findings[0].Provider != "mise" || gate.Findings[0].Kind != "npm" || gate.Findings[0].Name != "npm:@webkaz-labs/xskills" {
+		t.Fatalf("expected item-scoped npm finding, got %#v", gate.Findings)
+	}
+	if gate.Findings[0].ReasonCode != securityreason.RegistryMetadataUnavailable || !strings.Contains(gate.Findings[0].Reason, "authentication required") {
+		t.Fatalf("expected registry auth reason, got %#v", gate.Findings[0])
+	}
+}
+
+func TestCollectMiseBumpSafetyReviewsNPMRegistryAuthFailure(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	root := t.TempDir()
+	fake := &fakeCommandRunner{result: runner.Result{
+		Code: 1,
+		Stderr: strings.Join([]string{
+			"npm error code E401",
+			"npm error 401 Unauthorized - GET https://npm.pkg.github.com/@webkaz-labs%2fxskills - authentication token not provided",
+		}, "\n"),
+	}}
+	gate := collectMiseBumpSafetyWithPolicy(context.Background(), fake, root, securityPolicy{})
+	if gate.Status != plan.StatusHeld || gate.Error != "" {
+		t.Fatalf("expected npm auth failure to hold without provider error, got %#v", gate)
+	}
+	if len(gate.Findings) != 1 || gate.Findings[0].Provider != miseBumpProvider || gate.Findings[0].Kind != "npm" || gate.Findings[0].Name != "npm:@webkaz-labs/xskills" {
+		t.Fatalf("expected item-scoped npm bump finding, got %#v", gate.Findings)
+	}
+	if gate.Findings[0].ReasonCode != securityreason.RegistryMetadataUnavailable || !strings.Contains(gate.Findings[0].Reason, "authentication required") {
+		t.Fatalf("expected registry auth reason, got %#v", gate.Findings[0])
+	}
+}
+
 func TestParseMiseBumpOutdatedUsesMiseBumpField(t *testing.T) {
 	findings, err := parseMiseBumpOutdated(`{
   "node": {"requested":"lts","current":"24.16.0","bump":null,"latest":"26.3.0"},
@@ -2448,6 +2494,14 @@ cask "vendor/tap/custom-app"
   "url": "https://update.code.visualstudio.com/latest/darwin/stable",
   "version": "1.101.0"
 }`))
+		case "/cask/typeless.json":
+			_, _ = w.Write([]byte(`{
+  "token": "typeless",
+  "tap": "homebrew/cask",
+  "homepage": "https://typeless.com/",
+  "url": "https://typeless-static.com/desktop-release/Typeless-1.8.0-arm64.dmg",
+  "version": "1.8.0"
+}`))
 		default:
 			t.Fatalf("unexpected Homebrew API path: %s", r.URL.Path)
 		}
@@ -2456,6 +2510,7 @@ cask "vendor/tap/custom-app"
 	items := []plan.Item{
 		{Provider: "brew", Kind: "brew", Name: "jq"},
 		{Provider: "brew", Kind: "cask", Name: "visual-studio-code"},
+		{Provider: "brew", Kind: "cask", Name: "typeless"},
 		{Provider: "brew", Kind: "cask", Name: "custom-app"},
 		{Provider: "brew", Kind: "tap", Name: "vendor/tap"},
 		{Provider: "brew", Kind: "tap", Name: "homebrew/core"},
@@ -2464,18 +2519,23 @@ cask "vendor/tap/custom-app"
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(postures) != 5 {
-		t.Fatalf("expected five Homebrew posture entries, got %#v", postures)
+	if len(postures) != 6 {
+		t.Fatalf("expected six Homebrew posture entries, got %#v", postures)
 	}
 	reasons := map[string]string{}
+	decisions := map[string]string{}
 	for _, posture := range postures {
 		reasons[posture.Name] = posture.Reason
+		decisions[posture.Name] = posture.Decision
 	}
 	if reasons["jq"] != "use yq" {
 		t.Fatalf("expected deprecated formula reason, got %#v", postures)
 	}
-	if reasons["visual-studio-code"] != "Homebrew cask download host differs from homepage host; vendor provenance review required" {
-		t.Fatalf("expected cask review reason, got %#v", postures)
+	if reasons["visual-studio-code"] != "Homebrew cask download host is under the homepage host; vendor provenance verified from Homebrew metadata" || decisions["visual-studio-code"] != "allow" {
+		t.Fatalf("expected same-site cask allow reason, got %#v", postures)
+	}
+	if reasons["typeless"] != "Homebrew cask download host differs from homepage host; vendor provenance review required" {
+		t.Fatalf("expected cross-domain cask review reason, got %#v", postures)
 	}
 	if reasons["vendor/tap/custom-app"] != "non-official Homebrew tap needs provenance review" {
 		t.Fatalf("expected custom tap review reason, got %#v", postures)
@@ -2498,8 +2558,8 @@ cask "vendor/tap/custom-app"
 	for _, posture := range postures {
 		remediations[posture.Name] = posture.Remediation
 	}
-	if !strings.Contains(remediations["visual-studio-code"], "visualstudio.com") ||
-		!strings.Contains(remediations["visual-studio-code"], "update.code.visualstudio.com") ||
+	if remediations["visual-studio-code"] != "" ||
+		!strings.Contains(remediations["typeless"], "typeless-static.com") ||
 		!strings.Contains(remediations["vendor/tap"], "tap repository") {
 		t.Fatalf("expected Homebrew posture remediation, got %#v", postures)
 	}
@@ -2612,10 +2672,10 @@ func TestRunUpdateAutoMiseBumpRunsScopedSafeCandidates(t *testing.T) {
 	t.Setenv("UPDEV_MISE_MIN_RELEASE_AGE_DAYS", "0")
 	root := t.TempDir()
 	safeBumpJSON := `{"github:openai/codex":{"requested":"0.60.0","current":"0.60.0","bump":"0.60.1","latest":"0.60.1"}}`
-	preflightKey := strings.Join([]string{"mise", "upgrade", "--dry-run", "--bump", "--cd", root, "github:openai/codex"}, "\x00")
-	applyKey := strings.Join([]string{"mise", "upgrade", "--bump", "--yes", "--cd", root, "github:openai/codex"}, "\x00")
+	preflightKey := strings.Join([]string{"mise", "upgrade", "--dry-run", "--bump", "--cd", root, "github:openai/codex@0.60.1"}, "\x00")
+	applyKey := strings.Join([]string{"mise", "upgrade", "--bump", "--yes", "--cd", root, "github:openai/codex@0.60.1"}, "\x00")
 	fake := &fakeCommandRunner{results: map[string]runner.Result{
-		strings.Join([]string{"env", "HOMEBREW_NO_AUTO_UPDATE=1", "HOMEBREW_NO_INSTALL_FROM_API=1", "brew", "outdated", "--json=v2", "--greedy"}, "\x00"): {
+		strings.Join([]string{"env", "HOMEBREW_NO_AUTO_UPDATE=1", "brew", "outdated", "--json=v2", "--greedy"}, "\x00"): {
 			Stdout: `{"formulae":[],"casks":[]}`,
 		},
 		strings.Join([]string{"mise", "settings", "ls", "--json-extended", "--cd", root}, "\x00"): {
@@ -2673,8 +2733,8 @@ func TestRunUpdateAutoMiseBumpRunsScopedSafeCandidates(t *testing.T) {
 		t.Fatalf("expected successful bump step in report, got %#v", bumpStep)
 	}
 	if !updateStepHasCommands(bumpStep, [][]string{
-		{"mise", "upgrade", "--dry-run", "--bump", "--cd", root, "github:openai/codex"},
-		{"mise", "upgrade", "--bump", "--yes", "--cd", root, "github:openai/codex"},
+		{"mise", "upgrade", "--dry-run", "--bump", "--cd", root, "github:openai/codex@0.60.1"},
+		{"mise", "upgrade", "--bump", "--yes", "--cd", root, "github:openai/codex@0.60.1"},
 	}) {
 		t.Fatalf("expected bump report to include preflight and apply commands, got %#v", bumpStep.Commands)
 	}
@@ -2801,9 +2861,9 @@ func TestRunMiseBumpAutoSkipsDependencyBlockedCandidate(t *testing.T) {
 		Source:            miseBumpSource,
 	}
 	validateKey := strings.Join([]string{"mise", "outdated", "--json", "--bump", "--cd", root}, "\x00")
-	firstPreflightKey := strings.Join([]string{"mise", "upgrade", "--dry-run", "--bump", "--cd", root, "cargo:broot", "github:openai/codex"}, "\x00")
-	secondPreflightKey := strings.Join([]string{"mise", "upgrade", "--dry-run", "--bump", "--cd", root, "github:openai/codex"}, "\x00")
-	applyKey := strings.Join([]string{"mise", "upgrade", "--bump", "--yes", "--cd", root, "github:openai/codex"}, "\x00")
+	firstPreflightKey := strings.Join([]string{"mise", "upgrade", "--dry-run", "--bump", "--cd", root, "cargo:broot@1.57.0", "github:openai/codex@0.60.1"}, "\x00")
+	secondPreflightKey := strings.Join([]string{"mise", "upgrade", "--dry-run", "--bump", "--cd", root, "github:openai/codex@0.60.1"}, "\x00")
+	applyKey := strings.Join([]string{"mise", "upgrade", "--bump", "--yes", "--cd", root, "github:openai/codex@0.60.1"}, "\x00")
 	fake := &fakeCommandRunner{
 		results: map[string]runner.Result{
 			validateKey:        {Stdout: `{"cargo:broot":{"requested":"1.56.0","current":"1.56.0","bump":"1.57.0","latest":"1.57.0"},"github:openai/codex":{"requested":"0.60.0","current":"0.60.0","bump":"0.60.1","latest":"0.60.1"}}`},
@@ -2820,16 +2880,16 @@ func TestRunMiseBumpAutoSkipsDependencyBlockedCandidate(t *testing.T) {
 	if !ok || step.Status != plan.StatusHeld || len(step.Updated) != 1 || !strings.Contains(step.Updated[0], "github:openai/codex") || len(step.SkippedItems) != 1 || !strings.Contains(step.SkippedItems[0], "cargo:broot") {
 		t.Fatalf("expected dependency-blocked candidate to be skipped while remaining safe candidate applies, ok=%v step=%#v", ok, step)
 	}
-	if fakeCommandWasCalled(fake.calls, strings.Split(strings.Join([]string{"mise", "upgrade", "--bump", "--yes", "--cd", root, "cargo:broot", "github:openai/codex"}, "\x00"), "\x00")) {
+	if fakeCommandWasCalled(fake.calls, strings.Split(strings.Join([]string{"mise", "upgrade", "--bump", "--yes", "--cd", root, "cargo:broot@1.57.0", "github:openai/codex@0.60.1"}, "\x00"), "\x00")) {
 		t.Fatalf("dependency-blocked candidate must not be passed to apply command, calls=%#v", fake.calls)
 	}
 	if !fakeCommandWasCalled(fake.calls, strings.Split(applyKey, "\x00")) {
 		t.Fatalf("expected remaining safe candidate to be applied, calls=%#v", fake.calls)
 	}
 	if !updateStepHasCommands(step, [][]string{
-		{"mise", "upgrade", "--dry-run", "--bump", "--cd", root, "cargo:broot", "github:openai/codex"},
-		{"mise", "upgrade", "--dry-run", "--bump", "--cd", root, "github:openai/codex"},
-		{"mise", "upgrade", "--bump", "--yes", "--cd", root, "github:openai/codex"},
+		{"mise", "upgrade", "--dry-run", "--bump", "--cd", root, "cargo:broot@1.57.0", "github:openai/codex@0.60.1"},
+		{"mise", "upgrade", "--dry-run", "--bump", "--cd", root, "github:openai/codex@0.60.1"},
+		{"mise", "upgrade", "--bump", "--yes", "--cd", root, "github:openai/codex@0.60.1"},
 	}) {
 		t.Fatalf("expected dependency-blocked bump report to include both preflights and apply command, got %#v", step.Commands)
 	}
@@ -2847,7 +2907,7 @@ func TestRunMiseBumpAutoHoldsWhenAllCandidatesAreDependencyBlocked(t *testing.T)
 		Source:            miseBumpSource,
 	}
 	validateKey := strings.Join([]string{"mise", "outdated", "--json", "--bump", "--cd", root}, "\x00")
-	preflightKey := strings.Join([]string{"mise", "upgrade", "--dry-run", "--bump", "--cd", root, "cargo:broot"}, "\x00")
+	preflightKey := strings.Join([]string{"mise", "upgrade", "--dry-run", "--bump", "--cd", root, "cargo:broot@1.57.0"}, "\x00")
 	fake := &fakeCommandRunner{
 		results: map[string]runner.Result{
 			validateKey:  {Stdout: `{"cargo:broot":{"requested":"1.56.0","current":"1.56.0","bump":"1.57.0","latest":"1.57.0"}}`},
@@ -2863,7 +2923,7 @@ func TestRunMiseBumpAutoHoldsWhenAllCandidatesAreDependencyBlocked(t *testing.T)
 		t.Fatalf("expected dependency-blocked only candidates to hold, ok=%v step=%#v", ok, step)
 	}
 	if !updateStepHasCommands(step, [][]string{
-		{"mise", "upgrade", "--dry-run", "--bump", "--cd", root, "cargo:broot"},
+		{"mise", "upgrade", "--dry-run", "--bump", "--cd", root, "cargo:broot@1.57.0"},
 	}) {
 		t.Fatalf("expected only the executed preflight command in report, got %#v", step.Commands)
 	}
@@ -2972,7 +3032,7 @@ func TestRunMiseBumpAutoWrapsNPMBackendWithSanitizedUserConfig(t *testing.T) {
 		t.Fatalf("expected preflight and apply to use sanitized npm userconfig, calls=%#v", fake.calls)
 	}
 	for _, call := range envCalls {
-		if !containsString(call, "mise") || !containsString(call, "npm:agent-browser") {
+		if !containsString(call, "mise") || !containsString(call, "npm:agent-browser@0.27.1") {
 			t.Fatalf("expected sanitized npm env call to wrap scoped mise bump, got %#v", call)
 		}
 		if !containsString(call, "-u") || !containsString(call, "NPM_CONFIG_MIN_RELEASE_AGE") || !containsString(call, "npm_config_min_release_age") {
@@ -3006,8 +3066,8 @@ func TestRunMiseBumpAutoKeepsPartialUpdatesOnApplyError(t *testing.T) {
 		Source:            miseBumpSource,
 	}
 	validateKey := strings.Join([]string{"mise", "outdated", "--json", "--bump", "--cd", root}, "\x00")
-	preflightKey := strings.Join([]string{"mise", "upgrade", "--dry-run", "--bump", "--cd", root, "github:openai/codex"}, "\x00")
-	applyKey := strings.Join([]string{"mise", "upgrade", "--bump", "--yes", "--cd", root, "github:openai/codex"}, "\x00")
+	preflightKey := strings.Join([]string{"mise", "upgrade", "--dry-run", "--bump", "--cd", root, "github:openai/codex@0.60.1"}, "\x00")
+	applyKey := strings.Join([]string{"mise", "upgrade", "--bump", "--yes", "--cd", root, "github:openai/codex@0.60.1"}, "\x00")
 	fake := &fakeCommandRunner{results: map[string]runner.Result{
 		validateKey:  {Stdout: `{"github:openai/codex":{"requested":"0.60.0","current":"0.60.0","bump":"0.60.1","latest":"0.60.1"}}`},
 		preflightKey: {Stdout: "Would bump github:openai/codex"},
@@ -3023,7 +3083,7 @@ func TestRunMiseBumpAutoKeepsPartialUpdatesOnApplyError(t *testing.T) {
 	}
 }
 
-func TestRunMiseBumpAutoHoldsWhenCandidateChangesBeforeApply(t *testing.T) {
+func TestRunMiseBumpAutoPinsPlannedVersionWhenNewerCandidateAppears(t *testing.T) {
 	root := t.TempDir()
 	finding := safetyFinding{
 		Provider:          "mise",
@@ -3038,6 +3098,39 @@ func TestRunMiseBumpAutoHoldsWhenCandidateChangesBeforeApply(t *testing.T) {
 		strings.Join([]string{"mise", "outdated", "--json", "--bump", "--cd", root}, "\x00"): {
 			Stdout: `{"github:openai/codex":{"requested":"0.60.0","current":"0.60.0","bump":"0.60.2","latest":"0.60.2"}}`,
 		},
+		strings.Join([]string{"mise", "upgrade", "--dry-run", "--bump", "--cd", root, "github:openai/codex@0.60.1"}, "\x00"): {
+			Stdout: "Would bump github:openai/codex 0.60.0 -> 0.60.1",
+		},
+		strings.Join([]string{"mise", "upgrade", "--bump", "--yes", "--cd", root, "github:openai/codex@0.60.1"}, "\x00"): {
+			Stdout: "github:openai/codex 0.60.0 -> 0.60.1",
+		},
+	}}
+	step, ok := runMiseBumpUpdateStep(context.Background(), fake, updateOptions{root: root, security: "strict", miseBumpMode: "auto"}, []safetyGate{{
+		Provider: miseBumpProvider,
+		Status:   plan.StatusOK,
+		Findings: []safetyFinding{finding},
+	}}, false)
+	if !ok || step.Status != plan.StatusOK || len(step.Updated) != 1 || !strings.Contains(step.Updated[0], "github:openai/codex") {
+		t.Fatalf("expected planned version to apply even when a newer candidate appears, ok=%v step=%#v", ok, step)
+	}
+	if !fakeCommandWasCalled(fake.calls, []string{"mise", "upgrade", "--bump", "--yes", "--cd", root, "github:openai/codex@0.60.1"}) {
+		t.Fatalf("expected version-scoped apply command, calls=%#v", fake.calls)
+	}
+}
+
+func TestRunMiseBumpAutoHoldsWhenCandidateDisappearsBeforeApply(t *testing.T) {
+	root := t.TempDir()
+	finding := safetyFinding{
+		Provider:          "mise",
+		Kind:              "tool",
+		Name:              "github:openai/codex",
+		InstalledVersions: []string{"0.60.0"},
+		CurrentVersion:    "0.60.1",
+		Decision:          "allow",
+		Source:            miseBumpSource,
+	}
+	fake := &fakeCommandRunner{results: map[string]runner.Result{
+		strings.Join([]string{"mise", "outdated", "--json", "--bump", "--cd", root}, "\x00"): {Stdout: `{}`},
 	}}
 	step, ok := runMiseBumpUpdateStep(context.Background(), fake, updateOptions{root: root, security: "strict", miseBumpMode: "auto"}, []safetyGate{{
 		Provider: miseBumpProvider,
@@ -3045,15 +3138,89 @@ func TestRunMiseBumpAutoHoldsWhenCandidateChangesBeforeApply(t *testing.T) {
 		Findings: []safetyFinding{finding},
 	}}, false)
 	if !ok || step.Status != plan.StatusHeld || !strings.Contains(step.Reason, "candidate set changed") {
-		t.Fatalf("expected changed candidate set to hold auto bump, ok=%v step=%#v", ok, step)
+		t.Fatalf("expected disappeared candidate to hold auto bump, ok=%v step=%#v", ok, step)
 	}
 	if step.ReasonCode != updatereason.MiseBumpCandidateChangedApply || !strings.Contains(step.ReasonArgs["detail"], "github:openai/codex") {
 		t.Fatalf("expected structured candidate-change reason, got %#v", step)
 	}
 	for _, call := range fake.calls {
 		if len(call) >= 2 && call[0] == "mise" && call[1] == "upgrade" {
-			t.Fatalf("changed candidate set must not execute upgrade, calls=%#v", fake.calls)
+			t.Fatalf("disappeared candidate set must not execute upgrade, calls=%#v", fake.calls)
 		}
+	}
+}
+
+func TestRunMiseBumpAutoHoldsWhenInstalledVersionChangesBeforeApply(t *testing.T) {
+	root := t.TempDir()
+	finding := safetyFinding{
+		Provider:          "mise",
+		Kind:              "tool",
+		Name:              "github:openai/codex",
+		InstalledVersions: []string{"0.60.0"},
+		CurrentVersion:    "0.60.1",
+		Decision:          "allow",
+		Source:            miseBumpSource,
+	}
+	fake := &fakeCommandRunner{results: map[string]runner.Result{
+		strings.Join([]string{"mise", "outdated", "--json", "--bump", "--cd", root}, "\x00"): {
+			Stdout: `{"github:openai/codex":{"requested":"0.60.1","current":"0.60.1","bump":"0.60.2","latest":"0.60.2"}}`,
+		},
+	}}
+	step, ok := runMiseBumpUpdateStep(context.Background(), fake, updateOptions{root: root, security: "strict", miseBumpMode: "auto"}, []safetyGate{{
+		Provider: miseBumpProvider,
+		Status:   plan.StatusOK,
+		Findings: []safetyFinding{finding},
+	}}, false)
+	if !ok || step.Status != plan.StatusHeld || !strings.Contains(step.Reason, "installed version changed") {
+		t.Fatalf("expected installed-version drift to hold auto bump, ok=%v step=%#v", ok, step)
+	}
+	for _, call := range fake.calls {
+		if len(call) >= 2 && call[0] == "mise" && call[1] == "upgrade" {
+			t.Fatalf("installed-version drift must not execute upgrade, calls=%#v", fake.calls)
+		}
+	}
+}
+
+func TestRunMiseBumpAutoAppliesPlannedVersionsWhenAnotherCandidateChanges(t *testing.T) {
+	root := t.TempDir()
+	stable := safetyFinding{
+		Provider:          "mise",
+		Kind:              "tool",
+		Name:              "github:openai/codex",
+		InstalledVersions: []string{"0.60.0"},
+		CurrentVersion:    "0.60.1",
+		Decision:          "allow",
+		Source:            miseBumpSource,
+	}
+	changed := safetyFinding{
+		Provider:          "mise",
+		Kind:              "tool",
+		Name:              "github:ogulcancelik/herdr",
+		InstalledVersions: []string{"0.7.0"},
+		CurrentVersion:    "0.7.1",
+		Decision:          "allow",
+		Source:            miseBumpSource,
+	}
+	validateKey := strings.Join([]string{"mise", "outdated", "--json", "--bump", "--cd", root}, "\x00")
+	preflightKey := strings.Join([]string{"mise", "upgrade", "--dry-run", "--bump", "--cd", root, "github:ogulcancelik/herdr@0.7.1", "github:openai/codex@0.60.1"}, "\x00")
+	applyKey := strings.Join([]string{"mise", "upgrade", "--bump", "--yes", "--cd", root, "github:ogulcancelik/herdr@0.7.1", "github:openai/codex@0.60.1"}, "\x00")
+	fake := &fakeCommandRunner{results: map[string]runner.Result{
+		validateKey: {
+			Stdout: `{"github:openai/codex":{"requested":"0.60.0","current":"0.60.0","bump":"0.60.1","latest":"0.60.1"},"github:ogulcancelik/herdr":{"requested":"0.7.0","current":"0.7.0","bump":"0.7.2","latest":"0.7.2"}}`,
+		},
+		preflightKey: {Stdout: "Would bump github:openai/codex and github:ogulcancelik/herdr"},
+		applyKey:     {Stdout: "github:openai/codex 0.60.0 -> 0.60.1\ngithub:ogulcancelik/herdr 0.7.0 -> 0.7.1"},
+	}}
+	step, ok := runMiseBumpUpdateStep(context.Background(), fake, updateOptions{root: root, security: "strict", miseBumpMode: "auto"}, []safetyGate{{
+		Provider: miseBumpProvider,
+		Status:   plan.StatusOK,
+		Findings: []safetyFinding{stable, changed},
+	}}, false)
+	if !ok || step.Status != plan.StatusOK || len(step.Updated) != 2 || !strings.Contains(strings.Join(step.Updated, "\n"), "github:ogulcancelik/herdr") {
+		t.Fatalf("expected planned candidate versions to apply, ok=%v step=%#v", ok, step)
+	}
+	if !fakeCommandWasCalled(fake.calls, strings.Split(applyKey, "\x00")) {
+		t.Fatalf("expected version-scoped apply command, calls=%#v", fake.calls)
 	}
 }
 
@@ -3072,8 +3239,8 @@ func TestRunMiseBumpAutoAppliesPolicyAllowedNativeAgeHold(t *testing.T) {
 		Source:            miseNativeReleaseAgeSource,
 	}
 	validateKey := strings.Join([]string{"env", "MISE_MINIMUM_RELEASE_AGE=0d", "mise", "outdated", "--json", "--bump", "--cd", root}, "\x00")
-	preflightKey := strings.Join([]string{"env", "MISE_MINIMUM_RELEASE_AGE=0d", "mise", "upgrade", "--dry-run", "--bump", "--cd", root, "github:ogulcancelik/herdr"}, "\x00")
-	applyKey := strings.Join([]string{"env", "MISE_MINIMUM_RELEASE_AGE=0d", "mise", "upgrade", "--bump", "--yes", "--cd", root, "github:ogulcancelik/herdr"}, "\x00")
+	preflightKey := strings.Join([]string{"env", "MISE_MINIMUM_RELEASE_AGE=0d", "mise", "upgrade", "--dry-run", "--bump", "--cd", root, "github:ogulcancelik/herdr@0.6.9"}, "\x00")
+	applyKey := strings.Join([]string{"env", "MISE_MINIMUM_RELEASE_AGE=0d", "mise", "upgrade", "--bump", "--yes", "--cd", root, "github:ogulcancelik/herdr@0.6.9"}, "\x00")
 	fake := &fakeCommandRunner{results: map[string]runner.Result{
 		validateKey:  {Stdout: `{"github:ogulcancelik/herdr":{"requested":"0.6.8","current":"0.6.8","bump":"0.6.9","latest":"0.6.9"}}`},
 		preflightKey: {Stdout: "Would bump github:ogulcancelik/herdr"},
@@ -3095,8 +3262,8 @@ func TestRunMiseBumpAutoAppliesPolicyAllowedNativeAgeHold(t *testing.T) {
 		t.Fatalf("expected scoped age-disabled apply command, calls=%#v", fake.calls)
 	}
 	if !updateStepHasCommands(step, [][]string{
-		{"env", "MISE_MINIMUM_RELEASE_AGE=0d", "mise", "upgrade", "--dry-run", "--bump", "--cd", root, "github:ogulcancelik/herdr"},
-		{"env", "MISE_MINIMUM_RELEASE_AGE=0d", "mise", "upgrade", "--bump", "--yes", "--cd", root, "github:ogulcancelik/herdr"},
+		{"env", "MISE_MINIMUM_RELEASE_AGE=0d", "mise", "upgrade", "--dry-run", "--bump", "--cd", root, "github:ogulcancelik/herdr@0.6.9"},
+		{"env", "MISE_MINIMUM_RELEASE_AGE=0d", "mise", "upgrade", "--bump", "--yes", "--cd", root, "github:ogulcancelik/herdr@0.6.9"},
 	}) {
 		t.Fatalf("expected policy-allowed bump report to include age-disabled preflight/apply commands, got %#v", step.Commands)
 	}

@@ -223,6 +223,9 @@ func trimAdvisoryVersionPrefix(version string) string {
 }
 
 func osvAffectedPackageMatches(affected OSVAffected, pkg Package) bool {
+	if osvAffectedGitRepoMatches(affected, pkg) {
+		return true
+	}
 	if affected.Package.Name != "" && !strings.EqualFold(affected.Package.Name, pkg.Package) {
 		return false
 	}
@@ -230,6 +233,32 @@ func osvAffectedPackageMatches(affected OSVAffected, pkg Package) bool {
 		return false
 	}
 	return true
+}
+
+func osvAffectedGitRepoMatches(affected OSVAffected, pkg Package) bool {
+	if !strings.EqualFold(strings.TrimSpace(pkg.Ecosystem), "GIT") {
+		return false
+	}
+	target := normalizeOSVGitRepo(pkg.Package)
+	if target == "" {
+		return false
+	}
+	for _, versionRange := range affected.Ranges {
+		if !strings.EqualFold(strings.TrimSpace(versionRange.Type), "GIT") {
+			continue
+		}
+		if normalizeOSVGitRepo(versionRange.Repo) == target {
+			return true
+		}
+	}
+	return false
+}
+
+func normalizeOSVGitRepo(repo string) string {
+	repo = strings.ToLower(strings.TrimSpace(repo))
+	repo = strings.TrimSuffix(repo, "/")
+	repo = strings.TrimSuffix(repo, ".git")
+	return repo
 }
 
 func FixedVersionsFromOSVDetail(detail OSVVulnDetail, pkg Package) []string {

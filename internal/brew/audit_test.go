@@ -33,6 +33,22 @@ func TestPosturesFromItemsReportsMetadataRisks(t *testing.T) {
   "url": "https://update.code.visualstudio.com/latest/darwin/stable",
   "version": "1.101.0"
 }`))
+		case "/cask/typeless.json":
+			_, _ = w.Write([]byte(`{
+  "token": "typeless",
+  "tap": "homebrew/cask",
+  "homepage": "https://typeless.com/",
+  "url": "https://typeless-static.com/desktop-release/Typeless-1.8.0-arm64.dmg",
+  "version": "1.8.0"
+}`))
+		case "/cask/wezterm-nightly.json":
+			_, _ = w.Write([]byte(`{
+  "token": "wezterm-nightly",
+  "tap": "homebrew/cask",
+  "homepage": "https://wezterm.org/",
+  "url": "https://downloads.wezterm.org/nightly/WezTerm-macos-nightly.zip",
+  "version": "latest"
+}`))
 		default:
 			t.Fatalf("unexpected Homebrew API path: %s", r.URL.Path)
 		}
@@ -42,6 +58,8 @@ func TestPosturesFromItemsReportsMetadataRisks(t *testing.T) {
 	items := []plan.Item{
 		{Provider: "brew", Kind: "brew", Name: "jq"},
 		{Provider: "brew", Kind: "cask", Name: "visual-studio-code"},
+		{Provider: "brew", Kind: "cask", Name: "typeless"},
+		{Provider: "brew", Kind: "cask", Name: "wezterm-nightly"},
 		{Provider: "brew", Kind: "cask", Name: "custom-app"},
 		{Provider: "brew", Kind: "tap", Name: "vendor/tap"},
 		{Provider: "brew", Kind: "tap", Name: "homebrew/core"},
@@ -55,17 +73,19 @@ func TestPosturesFromItemsReportsMetadataRisks(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(postures) != 5 {
-		t.Fatalf("expected five Homebrew posture entries, got %#v", postures)
+	if len(postures) != 7 {
+		t.Fatalf("expected seven Homebrew posture entries, got %#v", postures)
 	}
 	reasons := map[string]string{}
 	reasonCodes := map[string]string{}
+	decisions := map[string]string{}
 	trustCommands := map[string]string{}
 	trustArgv := map[string][]string{}
 	remediations := map[string]string{}
 	for _, posture := range postures {
 		reasons[posture.Name] = posture.Reason
 		reasonCodes[posture.Name] = posture.ReasonCode
+		decisions[posture.Name] = posture.Decision
 		trustCommands[posture.Name] = posture.TrustCommand
 		trustArgv[posture.Name] = posture.TrustCommandArgv
 		remediations[posture.Name] = posture.Remediation
@@ -73,14 +93,25 @@ func TestPosturesFromItemsReportsMetadataRisks(t *testing.T) {
 	if reasons["jq"] != "use yq" {
 		t.Fatalf("expected deprecated formula reason, got %#v", postures)
 	}
-	if reasons["visual-studio-code"] != "Homebrew cask download host differs from homepage host; vendor provenance review required" {
-		t.Fatalf("expected cask review reason, got %#v", postures)
+	if reasons["visual-studio-code"] != "Homebrew cask download host is under the homepage host; vendor provenance verified from Homebrew metadata" {
+		t.Fatalf("expected same-site cask allow reason, got %#v", postures)
+	}
+	if decisions["visual-studio-code"] != "allow" {
+		t.Fatalf("expected same-site cask to be allowed, got %#v", postures)
+	}
+	if reasons["typeless"] != "Homebrew cask download host differs from homepage host; vendor provenance review required" {
+		t.Fatalf("expected cross-domain cask review reason, got %#v", postures)
+	}
+	if reasons["wezterm-nightly"] != "Homebrew cask update requires vendor provenance review" {
+		t.Fatalf("expected latest cask review reason, got %#v", postures)
 	}
 	if reasons["vendor/tap/custom-app"] != "non-official Homebrew tap needs provenance review" {
 		t.Fatalf("expected custom tap review reason, got %#v", postures)
 	}
 	if reasonCodes["jq"] != securityreason.HomebrewEntryDeprecated ||
-		reasonCodes["visual-studio-code"] != securityreason.HomebrewCaskHostMismatch ||
+		reasonCodes["visual-studio-code"] != securityreason.HomebrewCaskProvenanceOK ||
+		reasonCodes["typeless"] != securityreason.HomebrewCaskHostMismatch ||
+		reasonCodes["wezterm-nightly"] != securityreason.HomebrewCaskProvenanceReview ||
 		reasonCodes["vendor/tap/custom-app"] != securityreason.HomebrewNonOfficialTap ||
 		reasonCodes["vendor/tap"] != securityreason.HomebrewNonOfficialTap {
 		t.Fatalf("expected structured Homebrew reason codes, got %#v", postures)
@@ -93,8 +124,8 @@ func TestPosturesFromItemsReportsMetadataRisks(t *testing.T) {
 		strings.Join(trustArgv["vendor/tap"], "\x00") != "brew\x00trust\x00--tap\x00vendor/tap" {
 		t.Fatalf("expected structured Homebrew 6 trust argv on non-official entries, got %#v", postures)
 	}
-	if !strings.Contains(remediations["visual-studio-code"], "visualstudio.com") ||
-		!strings.Contains(remediations["visual-studio-code"], "update.code.visualstudio.com") ||
+	if remediations["visual-studio-code"] != "" ||
+		!strings.Contains(remediations["typeless"], "typeless-static.com") ||
 		!strings.Contains(remediations["vendor/tap"], "tap repository") {
 		t.Fatalf("expected Homebrew posture remediation, got %#v", postures)
 	}

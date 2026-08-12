@@ -5,6 +5,15 @@ import (
 	"testing"
 )
 
+func TestGitHubTokenEnv(t *testing.T) {
+	if got := GitHubTokenEnv(" token "); !reflect.DeepEqual(got, []string{"MISE_GITHUB_TOKEN=token"}) {
+		t.Fatalf("unexpected token env: %#v", got)
+	}
+	if got := GitHubTokenEnv(""); got != nil {
+		t.Fatalf("expected no token env, got %#v", got)
+	}
+}
+
 func TestUpgradeCommandUsesScopedToolsAndReleaseAge(t *testing.T) {
 	got := UpgradeCommand("/repo", []string{"node", " go ", "node"}, "3d")
 	want := []string{"mise", "upgrade", "--yes", "--minimum-release-age", "3d", "--cd", "/repo", "go", "node"}

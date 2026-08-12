@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/webkaz-labs/updev/internal/mise"
 	"github.com/webkaz-labs/updev/internal/plan"
 	"github.com/webkaz-labs/updev/internal/runner"
 )
@@ -25,10 +26,16 @@ func homebrewGitHubBackendRecommendation(name string, githubRepos map[string]str
 	return githubBackendCandidate(repo, []string{name}, "Homebrew formula upstream is a GitHub repository; verify release assets and ownership before moving the tool out of Homebrew", registry, commandRunner)
 }
 
-func genericHomebrewRecommendationNames(items []plan.Item, registry Registry) []string {
+func genericHomebrewRecommendationNames(items []plan.Item, registry Registry, miseRegistry map[string]mise.RegistryEntry) []string {
 	names := []string{}
 	for _, item := range items {
 		if item.Kind != "brew" {
+			continue
+		}
+		if registry.KeepsHomebrew(item.Kind, item.Name) {
+			continue
+		}
+		if _, ok := mise.RegistryEntryForTool(miseRegistry, item.Name); ok {
 			continue
 		}
 		if _, ok := explicitHomebrewBackendRecommendation(item.Name, registry); ok {
@@ -38,6 +45,23 @@ func genericHomebrewRecommendationNames(items []plan.Item, registry Registry) []
 	}
 	sort.Strings(names)
 	return names
+}
+
+func homebrewFormulaGitHubReposFromEvidence(names []string, evidence map[string]homebrewPackageEvidence) map[string]string {
+	repos := map[string]string{}
+	for _, name := range names {
+		item, ok := evidence[homebrewEvidenceKey("brew", name)]
+		if !ok {
+			continue
+		}
+		for _, rawURL := range item.FormulaURLs {
+			if repo, ok := backendGitHubRepoFromURL(rawURL); ok {
+				repos[name] = repo
+				break
+			}
+		}
+	}
+	return repos
 }
 
 func homebrewFormulaGitHubRepos(names []string, commandRunner runner.Runner) map[string]string {

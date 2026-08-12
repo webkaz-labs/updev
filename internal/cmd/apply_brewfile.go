@@ -6,15 +6,20 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"runtime"
 	"sort"
 	"strings"
 	"time"
 
 	"github.com/webkaz-labs/updev/internal/brew"
+	"github.com/webkaz-labs/updev/internal/packageapply"
+	"github.com/webkaz-labs/updev/internal/packageexecutor"
+	"github.com/webkaz-labs/updev/internal/packageparity"
 	"github.com/webkaz-labs/updev/internal/plan"
 	"github.com/webkaz-labs/updev/internal/runner"
 	"github.com/webkaz-labs/updev/internal/securityreason"
 	"github.com/webkaz-labs/updev/internal/textui"
+	"github.com/webkaz-labs/updev/internal/updevconfig"
 )
 
 type applyOptions struct {
@@ -48,19 +53,22 @@ type brewfileApplySummary struct {
 }
 
 type brewfileApplyCandidate struct {
-	Provider    string      `json:"provider"`
-	Kind        string      `json:"kind"`
-	Name        string      `json:"name"`
-	Category    string      `json:"category,omitempty"`
-	Status      plan.Status `json:"status"`
-	Decision    string      `json:"decision"`
-	Reason      string      `json:"reason"`
-	ReasonCode  string      `json:"reason_code,omitempty"`
-	Remediation string      `json:"remediation,omitempty"`
-	Command     []string    `json:"command,omitempty"`
-	Evidence    []string    `json:"evidence,omitempty"`
-	Stdout      string      `json:"stdout,omitempty"`
-	Stderr      string      `json:"stderr,omitempty"`
+	Identity      string      `json:"identity"`
+	Provider      string      `json:"provider"`
+	Kind          string      `json:"kind"`
+	Name          string      `json:"name"`
+	Category      string      `json:"category,omitempty"`
+	DesiredSource string      `json:"desired_source"`
+	Executor      string      `json:"executor"`
+	Status        plan.Status `json:"status"`
+	Decision      string      `json:"decision"`
+	Reason        string      `json:"reason"`
+	ReasonCode    string      `json:"reason_code,omitempty"`
+	Remediation   string      `json:"remediation,omitempty"`
+	Command       []string    `json:"command,omitempty"`
+	Evidence      []string    `json:"evidence,omitempty"`
+	Stdout        string      `json:"stdout,omitempty"`
+	Stderr        string      `json:"stderr,omitempty"`
 }
 
 func parseApplyOptions(args []string) (applyOptions, error) {
@@ -109,7 +117,7 @@ func parseApplyOptions(args []string) (applyOptions, error) {
 	return opts, nil
 }
 
-func runApply(opts applyOptions, commandRunner commandRunner) int {
+func runApply(opts applyOptions, commandRunner runner.Runner) int {
 	ctx := context.Background()
 	policyUse := loadSecurityPolicyForReportPath(opts.policy)
 	report := buildBrewfileApplyReport(ctx, opts, commandRunner, policyUse)
@@ -126,32 +134,52 @@ func runApply(opts applyOptions, commandRunner commandRunner) int {
 	return updateExitCode(report.Status)
 }
 
-func buildBrewfileApplyReport(ctx context.Context, opts applyOptions, commandRunner commandRunner, policyUse securityPolicyLoadResult) brewfileApplyReport {
+func buildBrewfileApplyReport(ctx context.Context, opts applyOptions, commandRunner runner.Runner, policyUse securityPolicyLoadResult) brewfileApplyReport {
 	report := brewfileApplyReport{
-		Status:   plan.StatusOK,
-		Root:     opts.root,
-		DryRun:   opts.dryRun,
-		SafeOnly: opts.safeOnly,
-		Policy:   policyUse.View(),
-		Warnings: append([]string(nil), policyUse.Warnings...),
+		Status:     plan.StatusOK,
+		Root:       opts.root,
+		DryRun:     opts.dryRun,
+		SafeOnly:   opts.safeOnly,
+		Policy:     policyUse.View(),
+		Candidates: []brewfileApplyCandidate{},
+		Warnings:   append([]string(nil), policyUse.Warnings...),
 	}
-	missing, err := brewfileApplyMissingDesired(ctx, opts.root)
+	brewfilePath := packageParityBrewfilePath(opts.root)
+	snapshot, err := packageparity.Read(ctx, opts.root, brewfilePath, commandRunner)
 	if err != nil {
 		report.Status = plan.StatusError
-		report.Warnings = append(report.Warnings, "Homebrew desired/live comparison failed: "+err.Error())
+		report.Warnings = append(report.Warnings, "resolved Homebrew desired state failed: "+err.Error())
+		return report
+	}
+	additionalDesired := brew.DesiredFromBootstrapPackages(snapshot.PackageSet, snapshot.Taps)
+	missing, err := brewfileApplyMissingDesired(ctx, opts.root, commandRunner, additionalDesired)
+	if err != nil {
+		report.Status = plan.StatusError
+		report.Warnings = append(report.Warnings, "resolved Homebrew desired/live comparison failed: "+err.Error())
+		return report
+	}
+	if len(missing) == 0 {
+		return report
+	}
+	metadataPath := updevconfig.PackageMetadataPath(loadUpdevConfig())
+	platform := packageexecutor.Platform{OS: runtime.GOOS, Arch: runtime.GOARCH}
+	executorReport, err := buildPackageExecutorReportFromSnapshot(snapshot, metadataPath, platform, localPackageExecutorCapabilities(commandRunner, platform))
+	if err != nil {
+		report.Status = plan.StatusError
+		report.Warnings = append(report.Warnings, "package executor plan failed: "+err.Error())
 		return report
 	}
 	findings, warnings := brewfileApplySafetyFindings(ctx, commandRunner, missing, policyUse.Policy)
 	report.Warnings = append(report.Warnings, warnings...)
-	candidates := brewfileApplyCandidatesFromFindings(missing, findings)
+	candidates := brewfileApplyCandidatesFromFindings(opts.root, missing, findings, packageExecutorItemsByIdentity(executorReport.Items))
 	report.Candidates = candidates
 	report.Summary = brewfileApplySummaryFromCandidates(candidates)
 	report.Status = brewfileApplyStatus(candidates, opts.dryRun)
 	return report
 }
 
-func brewfileApplyMissingDesired(ctx context.Context, root string) ([]plan.Item, error) {
-	provider := brew.Provider{Root: root, Runner: runner.Local{}, IncludeVSCode: false, UseHomeDesired: shouldUseHomeBrewfile(root)}
+func brewfileApplyMissingDesired(ctx context.Context, root string, commandRunner runner.Runner, additionalDesired []plan.Item) ([]plan.Item, error) {
+	provider := brew.Provider{Root: root, Runner: commandRunner, IncludeVSCode: false, UseHomeDesired: shouldUseHomeBrewfile(root), AdditionalDesired: additionalDesired}
 	desired, err := provider.Desired(ctx)
 	if err != nil {
 		return nil, err
@@ -233,15 +261,21 @@ func brewfileApplyBaseFinding(item plan.Item) safetyFinding {
 	if trustKind == "brew" {
 		trustKind = "formula"
 	}
+	source := "Brewfile desired state"
+	evidence := "rendered Brewfile missing desired item"
+	if brew.IsMiseBootstrapDesired(item) {
+		source = "mise bootstrap package desired state"
+		evidence = "resolved mise bootstrap package is missing from Homebrew"
+	}
 	finding := safetyFinding{
 		Provider:    "brew",
 		Kind:        item.Kind,
 		Name:        entry.Name,
 		Decision:    "review",
-		Source:      "Brewfile desired state",
+		Source:      source,
 		Tap:         entry.Tap,
 		Confidence:  "low",
-		Evidence:    []string{"rendered Brewfile missing desired item"},
+		Evidence:    []string{evidence},
 		TrustTarget: entry.RawName,
 	}
 	if entry.Tap != "" && !brew.IsOfficialTap(entry.Tap) {
@@ -288,7 +322,7 @@ func brewfileApplyPackageFinding(ctx context.Context, finding safetyFinding, min
 	return finding
 }
 
-func brewfileApplyCandidatesFromFindings(items []plan.Item, findings []safetyFinding) []brewfileApplyCandidate {
+func brewfileApplyCandidatesFromFindings(root string, items []plan.Item, findings []safetyFinding, executors map[string]packageexecutor.Item) []brewfileApplyCandidate {
 	findingsByKey := map[string]safetyFinding{}
 	for _, finding := range findings {
 		findingsByKey[finding.Kind+"\x00"+finding.Name] = finding
@@ -301,25 +335,68 @@ func brewfileApplyCandidatesFromFindings(items []plan.Item, findings []safetyFin
 		if decision == "" {
 			decision = "review"
 		}
+		identity, _, _, ok := packageparity.CanonicalBrewfileItem(item)
+		executorItem, executorFound := executors[identity]
+		reason := localizedSafetyFindingReason(finding)
+		reasonCode := finding.ReasonCode
+		remediation := finding.Remediation
+		executor := packageexecutor.ExecutorUnsupported
+		desiredSource := packageexecutor.SourceBrewfile
+		var command []string
+		if !ok || !executorFound {
+			decision = "block"
+			reasonCode = "package-executor-missing"
+			reason = tr("package executor decision is missing", "package executor の判定がありません")
+			remediation = tr("rerun package executor diagnostics before applying", "package executor 診断を再実行してから適用してください")
+		} else {
+			executor = executorItem.Executor
+			desiredSource = executorItem.DesiredSource
+			if executorItem.Status != plan.StatusOK || executor == packageexecutor.ExecutorUnsupported {
+				decision = "block"
+				reasonCode = executorItem.ReasonCode
+				reason = packageexecutor.ReasonText(executorItem, defaultLanguage())
+				remediation = tr("resolve the executor diagnostic before applying", "executor の診断を解消してから適用してください")
+			} else if decision == "allow" {
+				var commandErr error
+				command, commandErr = packageapply.InstallCommand(root, executorItem)
+				if commandErr != nil {
+					decision = "block"
+					reasonCode = "package-executor-command-unavailable"
+					reason = tr("selected executor cannot build an item-scoped command: ", "選択された executor で item-scoped command を生成できません: ") + commandErr.Error()
+					remediation = tr("repair the selected executor before applying", "選択された executor を修復してから適用してください")
+				}
+			}
+		}
 		status := plan.StatusHeld
 		if decision == "allow" {
 			status = plan.StatusDrift
 		}
 		candidates = append(candidates, brewfileApplyCandidate{
-			Provider:    "brew",
-			Kind:        item.Kind,
-			Name:        name,
-			Category:    item.Category,
-			Status:      status,
-			Decision:    decision,
-			Reason:      localizedSafetyFindingReason(finding),
-			ReasonCode:  finding.ReasonCode,
-			Remediation: finding.Remediation,
-			Command:     brew.InstallCommand(item.Kind, name),
-			Evidence:    append([]string(nil), finding.Evidence...),
+			Identity:      identity,
+			Provider:      "brew",
+			Kind:          item.Kind,
+			Name:          name,
+			Category:      item.Category,
+			DesiredSource: desiredSource,
+			Executor:      executor,
+			Status:        status,
+			Decision:      decision,
+			Reason:        reason,
+			ReasonCode:    reasonCode,
+			Remediation:   remediation,
+			Command:       command,
+			Evidence:      append([]string(nil), finding.Evidence...),
 		})
 	}
 	return candidates
+}
+
+func packageExecutorItemsByIdentity(items []packageexecutor.Item) map[string]packageexecutor.Item {
+	result := make(map[string]packageexecutor.Item, len(items))
+	for _, item := range items {
+		result[item.Identity] = item
+	}
+	return result
 }
 
 func brewfileApplySummaryFromCandidates(candidates []brewfileApplyCandidate) brewfileApplySummary {
@@ -378,7 +455,7 @@ func brewfileApplyStatus(candidates []brewfileApplyCandidate, dryRun bool) plan.
 	}
 }
 
-func applyBrewfileSafeCandidates(ctx context.Context, opts applyOptions, commandRunner commandRunner, report brewfileApplyReport) brewfileApplyReport {
+func applyBrewfileSafeCandidates(ctx context.Context, opts applyOptions, commandRunner runner.Runner, report brewfileApplyReport) brewfileApplyReport {
 	for index := range report.Candidates {
 		candidate := &report.Candidates[index]
 		if candidate.Decision != "allow" {
@@ -406,16 +483,16 @@ func applyBrewfileSafeCandidates(ctx context.Context, opts applyOptions, command
 	return report
 }
 
-func runBrewfileApplyCommand(ctx context.Context, commandRunner commandRunner, command []string, stream bool) runner.Result {
+func runBrewfileApplyCommand(ctx context.Context, commandRunner runner.Runner, command []string, stream bool) runner.Result {
 	if len(command) == 0 {
 		return runner.Result{}
 	}
+	request := runner.Request{Name: command[0], Args: command[1:]}
 	if stream {
-		if streaming, ok := commandRunner.(streamingCommandRunner); ok {
-			return streaming.RunStreaming(ctx, updateProviderStdoutWriter(), os.Stderr, command[0], command[1:]...)
-		}
+		request.Stdout = updateProviderStdoutWriter()
+		request.Stderr = os.Stderr
 	}
-	return commandRunner.Run(ctx, command[0], command[1:]...)
+	return runner.Execute(ctx, commandRunner, request)
 }
 
 func printBrewfileApplyText(w io.Writer, report brewfileApplyReport, color bool) {
@@ -443,6 +520,7 @@ func printBrewfileApplyText(w io.Writer, report brewfileApplyReport, color bool)
 		rows = append(rows, []string{
 			textui.StyleName(candidate.Name, color),
 			candidate.Kind,
+			candidate.Executor,
 			textui.StyleStatus(candidate.Decision, color),
 			textui.StyleStatus(string(candidate.Status), color),
 			textui.Truncate(candidate.Reason, 72),
@@ -451,6 +529,7 @@ func printBrewfileApplyText(w io.Writer, report brewfileApplyReport, color bool)
 	textui.PrintTable(w, []textui.Column{
 		{Header: tr("name", "名前"), Min: 12, Max: 32},
 		{Header: "kind", Min: 4, Max: 6},
+		{Header: "executor", Min: 8, Max: 11},
 		{Header: tr("decision", "判定"), Min: 7, Max: 8},
 		{Header: tr("status", "状態"), Min: 6, Max: 8},
 		{Header: tr("reason", "理由"), Min: 0, Max: 72},

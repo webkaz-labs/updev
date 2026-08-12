@@ -40,7 +40,7 @@ type options struct {
 const (
 	usageExitCode = 64
 	toolName      = "updev"
-	toolVersion   = "v0.7.18"
+	toolVersion   = "v0.7.19"
 )
 
 const (
@@ -71,22 +71,9 @@ type versionReport struct {
 type startupProgress = reviewui.StartupProgress
 
 type (
-	updevConfig                 = updevconfig.Config
-	updevSecurityConfig         = updevconfig.SecurityConfig
-	updevHomebrewSecurityConfig = updevconfig.HomebrewSecurityConfig
-	updevMiseSecurityConfig     = updevconfig.MiseSecurityConfig
-	updevVSCodeSecurityConfig   = updevconfig.VSCodeSecurityConfig
-	updevProvidersConfig        = updevconfig.ProvidersConfig
-	updevUpdateConfig           = updevconfig.UpdateConfig
-	updevMiseBumpUpdateConfig   = updevconfig.MiseBumpUpdateConfig
-	updevUIConfig               = updevconfig.UIConfig
-	updevSourcesConfig          = updevconfig.SourcesConfig
-	updevBrewfileConfig         = updevconfig.BrewfileConfig
-	updevInventoryConfig        = updevconfig.InventoryConfig
-	updevInventoryManualConfig  = updevconfig.InventoryManualConfig
-	updevInventoryAgentConfig   = updevconfig.InventoryAgentConfig
-	updevInventoryReportConfig  = updevconfig.InventoryReportConfig
-	updevBackendsConfig         = updevconfig.BackendsConfig
+	updevConfig         = updevconfig.Config
+	updevSourcesConfig  = updevconfig.SourcesConfig
+	updevBackendsConfig = updevconfig.BackendsConfig
 )
 
 func loadUpdevConfig() updevConfig {
@@ -101,10 +88,6 @@ func loadUpdevConfig() updevConfig {
 
 func updevConfigPath() string {
 	return updevconfig.ConfigPath()
-}
-
-func truthyEnv(name string) bool {
-	return updevconfig.TruthyEnv(name)
 }
 
 func boolEnv(name string) (bool, bool) {
@@ -139,24 +122,12 @@ func stripTOMLComment(line string) string {
 	return updevconfig.StripTOMLComment(line)
 }
 
-func validBrewfileDesiredMode(value string) bool {
-	return updevconfig.ValidBrewfileDesiredMode(value)
-}
-
-func validBrewfileWriteMode(value string) bool {
-	return updevconfig.ValidBrewfileWriteMode(value)
-}
-
 func validUpdateSecurityMode(value string) bool {
 	return updevconfig.ValidUpdateSecurityMode(value)
 }
 
 func validMiseBumpMode(value string) bool {
 	return updevconfig.ValidMiseBumpMode(value)
-}
-
-func validUIInteractiveMode(value string) bool {
-	return updevconfig.ValidUIInteractiveMode(value)
 }
 
 func defaultLanguage() string {
@@ -219,20 +190,20 @@ type (
 	supportReport       = support.Report
 )
 
-func collectInventory(ctx context.Context, root string, local runner.Local) plan.Report {
-	return collectInventoryWithOptions(ctx, root, local, inventoryOptions{IncludeVSCode: includeVSCodeExtensionsByDefault()})
+func collectInventory(ctx context.Context, root string, commandRunner runner.Runner) plan.Report {
+	return collectInventoryWithOptions(ctx, root, commandRunner, inventoryOptions{IncludeVSCode: includeVSCodeExtensionsByDefault()})
 }
 
-func collectInventoryWithOptions(ctx context.Context, root string, local runner.Local, opts inventoryOptions) plan.Report {
-	return inventoryrun.Collect(ctx, root, local, inventoryRunOptions(root, opts))
+func collectInventoryWithOptions(ctx context.Context, root string, commandRunner runner.Runner, opts inventoryOptions) plan.Report {
+	return inventoryrun.Collect(ctx, root, commandRunner, inventoryRunOptions(root, opts))
 }
 
-func collectInventoryCached(ctx context.Context, root string, refresh bool, maxAge time.Duration) inventoryResult {
-	return collectInventoryCachedWithOptions(ctx, root, refresh, maxAge, inventoryOptions{IncludeVSCode: includeVSCodeExtensionsByDefault()})
+func collectInventoryCached(ctx context.Context, root string, refresh bool, maxAge time.Duration, commandRunner runner.Runner) inventoryResult {
+	return collectInventoryCachedWithOptions(ctx, root, refresh, maxAge, commandRunner, inventoryOptions{IncludeVSCode: includeVSCodeExtensionsByDefault()})
 }
 
-func collectInventoryCachedWithOptions(ctx context.Context, root string, refresh bool, maxAge time.Duration, opts inventoryOptions) inventoryResult {
-	return inventoryrun.CollectCached(ctx, root, refresh, maxAge, inventoryRunOptions(root, opts))
+func collectInventoryCachedWithOptions(ctx context.Context, root string, refresh bool, maxAge time.Duration, commandRunner runner.Runner, opts inventoryOptions) inventoryResult {
+	return inventoryrun.CollectCached(ctx, root, refresh, maxAge, commandRunner, inventoryRunOptions(root, opts))
 }
 
 func loadInventoryCache(root string, maxAge time.Duration, opts inventoryOptions) (inventoryCacheEntry, bool) {
@@ -249,10 +220,11 @@ func inventoryCachePath(root string) string {
 
 func inventoryRunOptions(root string, opts inventoryOptions) inventoryrun.Options {
 	return inventoryrun.Options{
-		IncludeVSCode:        opts.IncludeVSCode,
-		UseHomeBrewfile:      shouldUseHomeBrewfile(root),
-		UseNativeMiseDesired: shouldUseNativeMiseDesired(root),
-		StateDir:             loadUpdevConfig().Inventory.StateDir,
+		IncludeVSCode:         opts.IncludeVSCode,
+		UseHomeBrewfile:       shouldUseHomeBrewfile(root),
+		UseNativeMiseDesired:  shouldUseNativeMiseDesired(root),
+		UseMisePackageDesired: true,
+		StateDir:              loadUpdevConfig().Inventory.StateDir,
 	}
 }
 
@@ -815,7 +787,7 @@ func runReadOnly(command string, opts options) int {
 		progress = newStartupProgress(os.Stdin, os.Stderr, opts.format, inventoryProgressMessage(defaultLanguage(), opts.refresh))
 	}
 	progress.Start()
-	result := collectInventoryCachedWithOptions(ctx, opts.root, opts.refresh, inventoryCacheMaxAge, inventoryOptions{IncludeVSCode: opts.includeVSCode || includeVSCodeExtensionsByDefault()})
+	result := collectInventoryCachedWithOptions(ctx, opts.root, opts.refresh, inventoryCacheMaxAge, runner.Local{}, inventoryOptions{IncludeVSCode: opts.includeVSCode || includeVSCodeExtensionsByDefault()})
 	progress.Done()
 	report := result.Report
 	sortReport(&report)
@@ -967,6 +939,8 @@ Commands:
   updev fix mise [--dry-run|--apply] [--format text|json]
   updev backends <doctor|plan> [--format text|json]
   updev doctor dependencies [--ledger file] [--format text|json]
+  updev doctor package-executors [--root path] [--interactive|--plain] [--format text|json]
+  updev doctor package-parity [--root path] [--format text|json]
   updev doctor support [--surface provider|command|report|inventory_source|all] [--label supported_preview|experimental|compatibility|deferred] [--format text|json]
   updev last [--section summary|updates|security|inventory|logs|full] [--details] [--interactive|--no-interactive|--plain] [--format text|json]
   updev hub [inventory/list options]  # review-domain switcher for list views
@@ -993,7 +967,7 @@ Commands:
   updev support [--surface provider|command|report|inventory_source|all] [--label supported_preview|experimental|compatibility|deferred] [--format text|json]
   updev skill [--full]
   updev help agent
-  updev brewfile [--root path] <add|remove|has|check|sync> ...
+  updev brewfile [--root path] <add|remove|has|desired-source|check|sync> ...
 
 Notes:
   TTY text output may open an interactive dashboard/browser unless --plain or --no-interactive is set.
@@ -1043,12 +1017,6 @@ func configuredRoot(config updevConfig) string {
 	}
 	return updevpath.ResolveConfigRelative(root, updevConfigPath())
 }
-
-func resolveSourceRootConfigPath(path string) string {
-	return updevpath.ResolveConfigRelative(path, updevConfigPath())
-}
-
-const syncReportSchemaVersion = syncreport.SchemaVersion
 
 type syncOptions struct {
 	format  string
@@ -1112,7 +1080,7 @@ func runSync(opts syncOptions) int {
 }
 
 func buildSyncReport(ctx context.Context, opts syncOptions) syncReport {
-	result := collectInventoryCached(ctx, opts.root, opts.refresh, inventoryCacheMaxAge)
+	result := collectInventoryCached(ctx, opts.root, opts.refresh, inventoryCacheMaxAge, runner.Local{})
 	return syncreport.Build(result.Report, result.Cached, result.CreatedAt, manualLocalOnlyCaskFunc(manualAppIndex(opts.root)), defaultLanguage())
 }
 
@@ -1124,40 +1092,16 @@ func syncReportStatus(inventory plan.Report, entries []syncEntry) plan.Status {
 	return syncreport.Status(inventory, entries)
 }
 
-func syncReasonForItem(item plan.Item, related map[string]plan.Item) string {
-	return syncreport.ReasonForItem(item, related, nil)
-}
-
 func syncReasonForItemWithManual(item plan.Item, related map[string]plan.Item, manualIndex map[string]toolRow) string {
 	return syncreport.ReasonForItem(item, related, manualLocalOnlyCaskFunc(manualIndex))
-}
-
-func enrichSyncEntry(entry *syncEntry, item plan.Item, related map[string]plan.Item) {
-	syncreport.EnrichEntry(entry, item, related, defaultLanguage())
 }
 
 func syncGuidanceForItem(reason string, item plan.Item, related map[string]plan.Item) syncGuidance {
 	return syncreport.GuidanceForItem(reason, item, related, defaultLanguage())
 }
 
-func missingSyncGuidance(item plan.Item) syncGuidance {
-	return syncreport.MissingGuidance(item, defaultLanguage())
-}
-
-func extraSyncGuidance(item plan.Item) syncGuidance {
-	return syncreport.ExtraGuidance(item, defaultLanguage())
-}
-
 func syncProviderMismatchIndex(items []plan.Item) map[string]plan.Item {
 	return syncreport.ProviderMismatchIndex(items)
-}
-
-func syncEntryKey(item plan.Item) string {
-	return syncreport.EntryKey(item)
-}
-
-func syncIdentityKey(item plan.Item) string {
-	return syncreport.IdentityKey(item)
 }
 
 func manualLocalOnlyCaskFunc(manualIndex map[string]toolRow) syncreport.ManualLocalOnlyFunc {

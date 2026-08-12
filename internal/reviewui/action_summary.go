@@ -87,17 +87,6 @@ func NewActionSummaryModel(options ActionSummaryOptions) ActionSummaryModel {
 	return model
 }
 
-func RunActionSummaryModel(model ActionSummaryModel) (State, error) {
-	final, err := tea.NewProgram(model).Run()
-	if err != nil {
-		return model.State, err
-	}
-	if result, ok := final.(ActionSummaryModel); ok {
-		return result.State, nil
-	}
-	return model.State, nil
-}
-
 func (m ActionSummaryModel) Init() tea.Cmd {
 	return nil
 }

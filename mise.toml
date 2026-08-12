@@ -1,5 +1,5 @@
 [tools]
-go = "1.26.4"
+go = "1.26.5"
 goreleaser = "2.16.0"
 shellcheck = "0.11.0"
 
@@ -27,6 +27,22 @@ run = "GOCACHE=${GOCACHE:-${TMPDIR:-/tmp}/updev-gocache} /usr/bin/time -p go tes
 description = "Alias for test-e2e-fast"
 depends = ["test-e2e-fast"]
 
+[tasks.test-tui-semantic]
+description = "Run pinned shell-use built-binary semantic TUI journeys"
+run = "scripts/test-tui-shell-use.sh semantic"
+
+[tasks.test-tui-visual]
+description = "Run pinned shell-use visual baselines through resvg and ODiff"
+run = "scripts/test-tui-shell-use.sh visual"
+
+[tasks.test-tui]
+description = "Run semantic and visual shell-use TUI release gates"
+run = "scripts/test-tui-shell-use.sh all"
+
+[tasks.test-tui-update-baselines]
+description = "Explicitly update reviewed shell-use terminal and visual baselines"
+run = "UPDEV_UPDATE_TUI_GOLDENS=1 scripts/test-tui-shell-use.sh all"
+
 [tasks.vet]
 description = "Run updev Go vet"
 run = "GOCACHE=${GOCACHE:-${TMPDIR:-/tmp}/updev-gocache} go vet ./..."
@@ -36,12 +52,16 @@ description = "Check Go formatting"
 run = "scripts/check-go-format.sh"
 
 [tasks.staticcheck]
-description = "Run bug-class Staticcheck analyzers"
+description = "Run Staticcheck SA* correctness and U1000 dead-code analyzers"
 run = "scripts/check-staticcheck.sh"
 
 [tasks.golangci-lint]
 description = "Run curated golangci-lint checks"
 run = "scripts/check-golangci-lint.sh"
+
+[tasks.go-tool-cache-test]
+description = "Test Go analyzer cache validation and targeted recovery"
+run = "scripts/test-go-tool-cache.sh"
 
 [tasks.vuln]
 description = "Run Go vulnerability audit"
@@ -57,7 +77,7 @@ run = "scripts/check-agent-quality.sh"
 
 [tasks.shellcheck]
 description = "Run ShellCheck on updev scripts"
-run = "shellcheck -S warning scripts/*.sh"
+run = "shellcheck -S warning scripts/*.sh scripts/lib/*.sh"
 
 [tasks.lint]
 description = "Run agent-friendly lint checks"
@@ -83,9 +103,17 @@ run = "GOCACHE=${GOCACHE:-${TMPDIR:-/tmp}/updev-gocache} goreleaser release --sn
 description = "Check high-value documentation source-of-truth mirrors"
 run = "scripts/check-docs.sh"
 
+[tasks.validation-check]
+description = "Execute machine-checkable VALIDATION.md assertions"
+run = "scripts/check-validation-blocks.sh && scripts/test-validation-blocks.sh"
+
+[tasks.mise-contract]
+description = "Check the portable mise v2026.8.2 bootstrap/config contract"
+run = "scripts/check-mise-contract.sh"
+
 [tasks.check]
 description = "Run the standard updev local validation suite"
-depends = ["lint", "test", "vet", "mod-verify", "build"]
+depends = ["lint", "test", "vet", "mod-verify", "build", "mise-contract", "go-tool-cache-test"]
 
 [tasks.audit]
 description = "Run slower release/scheduled audit checks"

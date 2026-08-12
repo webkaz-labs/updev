@@ -22,8 +22,61 @@ type ResultDetailOption struct {
 }
 
 type Runner interface {
+	CommandRunner
 	LookPath(name string) (string, error)
+}
+
+type CommandRunner interface {
 	Run(ctx context.Context, name string, args ...string) Result
+}
+
+type StreamingRunner interface {
+	RunStreaming(ctx context.Context, stdout io.Writer, stderr io.Writer, name string, args ...string) Result
+}
+
+type EnvRunner interface {
+	RunWithEnv(ctx context.Context, env []string, name string, args ...string) Result
+}
+
+type EnvStreamingRunner interface {
+	RunStreamingWithEnv(ctx context.Context, env []string, stdout io.Writer, stderr io.Writer, name string, args ...string) Result
+}
+
+type Request struct {
+	Name   string
+	Args   []string
+	Env    []string
+	Stdout io.Writer
+	Stderr io.Writer
+}
+
+func Execute(ctx context.Context, commandRunner CommandRunner, request Request) Result {
+	streaming := request.Stdout != nil || request.Stderr != nil
+	hasEnv := len(request.Env) > 0
+	if streaming && hasEnv {
+		if envStreaming, ok := commandRunner.(EnvStreamingRunner); ok {
+			return envStreaming.RunStreamingWithEnv(ctx, request.Env, request.Stdout, request.Stderr, request.Name, request.Args...)
+		}
+		return unsupportedRequest(request, "environment and streaming")
+	}
+	if streaming {
+		if streaming, ok := commandRunner.(StreamingRunner); ok {
+			return streaming.RunStreaming(ctx, request.Stdout, request.Stderr, request.Name, request.Args...)
+		}
+		return unsupportedRequest(request, "streaming")
+	}
+	if hasEnv {
+		if envRunner, ok := commandRunner.(EnvRunner); ok {
+			return envRunner.RunWithEnv(ctx, request.Env, request.Name, request.Args...)
+		}
+		return unsupportedRequest(request, "environment")
+	}
+	return commandRunner.Run(ctx, request.Name, request.Args...)
+}
+
+func unsupportedRequest(request Request, capability string) Result {
+	err := fmt.Errorf("runner does not support requested %s execution for %s", capability, strings.TrimSpace(request.Name))
+	return Result{Code: 1, Err: err, Stderr: err.Error()}
 }
 
 type Local struct{}

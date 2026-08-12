@@ -5,18 +5,26 @@ import (
 )
 
 type DetailRow struct {
-	Title    string
-	Status   string
-	Summary  string
-	Detail   string
-	Metadata []string
-	Actions  []DetailAction
+	Title         string
+	Status        string
+	Summary       string
+	Detail        string
+	Metadata      []string
+	Actions       []DetailAction
+	Columns       []string
+	ColumnHeaders []DetailColumn
 }
 
 type DetailAction struct {
 	Value       string
 	Label       string
 	Description string
+}
+
+type DetailColumn struct {
+	Header string
+	Min    int
+	Max    int
 }
 
 type DetailRowGroupFunc func(DetailRow) (string, string)
@@ -55,18 +63,18 @@ func DetailRowToRow(row DetailRow) Row {
 	return Row{
 		Name:    row.Title,
 		State:   firstNonEmpty(row.Status, "ok"),
-		Detail:  DetailRowText(row),
+		Detail:  detailRowText(row),
 		Actions: actions,
 	}
 }
 
-func DetailRowText(row DetailRow) string {
+func detailRowText(row DetailRow) string {
 	lines := []string{}
 	if strings.TrimSpace(row.Summary) != "" {
 		lines = append(lines, "summary: "+strings.TrimSpace(row.Summary))
 	}
 	if strings.TrimSpace(row.Detail) != "" {
-		lines = append(lines, DetailTextLines(row.Detail)...)
+		lines = append(lines, detailTextLines(row.Detail)...)
 	}
 	for _, meta := range row.Metadata {
 		if strings.TrimSpace(meta) != "" {
@@ -76,7 +84,7 @@ func DetailRowText(row DetailRow) string {
 	return strings.Join(lines, "\n")
 }
 
-func DetailTextLines(detail string) []string {
+func detailTextLines(detail string) []string {
 	lines := []string{}
 	for _, line := range strings.Split(strings.ReplaceAll(detail, "\r\n", "\n"), "\n") {
 		line = strings.TrimSpace(line)

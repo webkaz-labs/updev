@@ -75,6 +75,13 @@ func InventoryOverridesFile() string {
 	return ""
 }
 
+func PackageMetadataFile() string {
+	if base := ConfigHome(); base != "" {
+		return filepath.Join(base, ToolName, "package-metadata.toml")
+	}
+	return ""
+}
+
 func CacheDir() string {
 	if base := CacheHome(); base != "" {
 		return filepath.Join(base, ToolName)

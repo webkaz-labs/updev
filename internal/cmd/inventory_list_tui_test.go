@@ -15,6 +15,10 @@ import (
 	"github.com/webkaz-labs/updev/internal/reviewui"
 )
 
+func newToolTableBrowserModel(title string, sections []toolSection, state detailBrowserState, color bool) toolTableBrowserModel {
+	return reviewui.NewTableBrowserModel(title, sections, state, tableBrowserLabels(), tableBrowserActions(), color)
+}
+
 func TestJoinCommandQuotesShellFragments(t *testing.T) {
 	got := joinCommand([]string{"bash", "-lc", "brew update && brew upgrade"})
 	want := `bash -lc "brew update && brew upgrade"`
@@ -186,6 +190,60 @@ func TestBrewDriftAdoptActionWritesBrewfileThroughMutationBoundary(t *testing.T)
 	}
 	if !strings.Contains(string(data), `cask "cursor-cli"`) {
 		t.Fatalf("expected adopted cask in Brewfile:\n%s", data)
+	}
+}
+
+func TestBackendAdoptMiseActionWritesPinnedDesiredEntryOnly(t *testing.T) {
+	root := t.TempDir()
+	miseDir := filepath.Join(root, "dot_config", "mise")
+	if err := os.MkdirAll(miseDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	configPath := filepath.Join(miseDir, "config.toml")
+	if err := os.WriteFile(configPath, []byte("[tools]\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	brewfilePath := filepath.Join(root, "Brewfile.tmpl")
+	brewfileBefore := []byte("brew \"btop\"\n")
+	if err := os.WriteFile(brewfilePath, brewfileBefore, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	finding := backendFinding{
+		Type:               "homebrew-to-mise",
+		Kind:               "brew",
+		Name:               "btop",
+		CurrentSpec:        "1.4.7",
+		RecommendedName:    "btop",
+		RecommendationKind: "recommendation",
+		ReleaseAssetStatus: "compatible",
+	}
+	actions := backendDetailActions(finding)
+	if len(actions) != 1 {
+		t.Fatalf("expected focused mise adoption action, got %#v", actions)
+	}
+	action, current, recommended, ok := parseBackendDetailAction(actions[0].Value)
+	if !ok || action != "adopt-mise" || current != "brew:btop" || recommended != "btop@1.4.7" {
+		t.Fatalf("unexpected adoption action: action=%q current=%q recommended=%q ok=%v", action, current, recommended, ok)
+	}
+	if _, ok := routedDetailWriteActionSpec(actions[0].Value); !ok {
+		t.Fatal("expected adoption action to use the in-TUI confirmation flow")
+	}
+	if !applyRoutedDetailWriteAction(root, &updateReport{}, actions[0].Value, "", "") {
+		t.Fatal("expected pinned mise entry to be written")
+	}
+	config, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(config), `btop = "1.4.7"`) {
+		t.Fatalf("expected pinned mise desired entry:\n%s", config)
+	}
+	brewfileAfter, err := os.ReadFile(brewfilePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(brewfileAfter) != string(brewfileBefore) {
+		t.Fatalf("expected Brewfile ownership to remain unchanged:\n%s", brewfileAfter)
 	}
 }
 
@@ -449,13 +507,22 @@ func TestListDetailRowsIncludeItemsAndToolSections(t *testing.T) {
 	if !strings.Contains(strings.Join(rows[1].Metadata, " "), "wanted: lts") {
 		t.Fatalf("expected mise wanted version metadata, got %#v", rows[1])
 	}
+	if len(rows[0].Columns) != 7 || rows[0].Columns[0] != "ok" || rows[0].Columns[1] != "brew/brew" || rows[0].Columns[2] != "jq" {
+		t.Fatalf("expected inventory item detail row columns, got %#v", rows[0].Columns)
+	}
+	if len(rows[1].Columns) != 7 || rows[1].Columns[1] != "mise/runtime" || rows[1].Columns[2] != "node" || rows[1].Columns[4] != "lts" {
+		t.Fatalf("expected tool detail row columns, got %#v", rows[1].Columns)
+	}
 	if !strings.Contains(rows[0].Detail, "description: JSON processor") || !strings.Contains(rows[0].Detail, "managed by: brew / brew / jq") || !strings.Contains(rows[0].Detail, "status: ok - desired and installed") {
 		t.Fatalf("expected inventory item detail to explain status and management state, got %#v", rows[0])
 	}
 	if !strings.Contains(strings.Join(rows[0].Metadata, " "), "name: jq") {
 		t.Fatalf("expected inventory item metadata to include item identity, got %#v", rows[0])
 	}
-	renderedInventoryDetail := strings.Join(detailBrowserExpandedLinesStyled(rows[0], 80, true), "\n")
+	model := newDetailBrowserModel("inventory", rows, detailBrowserState{Expanded: map[int]bool{0: true}}, true)
+	model.Width = 80
+	model.Height = 40
+	renderedInventoryDetail := model.View().Content
 	for _, want := range []string{"\033[1m\033[35mdetails", "\033[36mdescription:", "\033[36mmanaged by:", "\033[36mstatus:", "\033[1m\033[35mevidence", "\033[36mprovider:"} {
 		if !strings.Contains(renderedInventoryDetail, want) {
 			t.Fatalf("expected rendered inventory detail to contain %q:\n%q", want, renderedInventoryDetail)
@@ -463,6 +530,29 @@ func TestListDetailRowsIncludeItemsAndToolSections(t *testing.T) {
 	}
 	if len(rows[0].Actions) != 0 {
 		t.Fatalf("did not expect backend route without backend evidence, got %#v", rows[0].Actions)
+	}
+}
+
+func TestListDetailRowsPreferCompactEvidenceSummaries(t *testing.T) {
+	evidence := plan.NewEvidenceIndex()
+	plan.AddEvidence(evidence.Security, plan.EvidenceExactKey("brew", "brew", "mise"), "brew/brew mise: hold: 候補リリースが新しすぎます: 経過 1日、最小 3日。リリース日: 2026-06-15。解除目安は 2026-06-18（あと約2日）です; release age: 経過 1日 / 最小 3日; cache: brew 3h 経過")
+	row := itemDetailRow("/repo", plan.Item{
+		Provider: "brew",
+		Kind:     "brew",
+		Name:     "mise",
+		Status:   plan.StatusOK,
+		Desired:  true,
+		Live:     true,
+		Detail:   "複数言語対応ランタイムマネージャー（asdfのRust製クローン）",
+	}, evidence)
+	if !strings.Contains(row.Summary, "security evidence") || strings.Contains(row.Summary, "ランタイムマネージャー") {
+		t.Fatalf("expected compact evidence summary before long description, got %#v", row)
+	}
+	if len(row.Columns) != 7 || !strings.Contains(row.Columns[5], "sec") {
+		t.Fatalf("expected compact evidence action badge in inventory columns, got %#v", row.Columns)
+	}
+	if !strings.Contains(row.Detail, "複数言語対応ランタイムマネージャー") || (!strings.Contains(row.Detail, "リリース待ち") && !strings.Contains(row.Detail, "release-age hold")) {
+		t.Fatalf("expected expanded detail to keep description and compact evidence, got %#v", row.Detail)
 	}
 }
 
@@ -752,26 +842,16 @@ func TestListFilteredDetailBrowserRequiresRows(t *testing.T) {
 	}
 }
 
-func TestDetailBrowserActionKeyIndex(t *testing.T) {
-	if index, ok := detailBrowserActionKeyIndex("1"); !ok || index != 0 {
-		t.Fatalf("expected key 1 to map to first action, got index=%d ok=%v", index, ok)
-	}
-	if _, ok := detailBrowserActionKeyIndex("0"); ok {
-		t.Fatal("did not expect key 0 to map to an action")
-	}
-	if _, ok := detailBrowserActionKeyIndex("a"); ok {
-		t.Fatal("did not expect key a to map through numeric action helper")
-	}
-}
-
 func TestDetailBrowserPreservesPreformattedDetailLines(t *testing.T) {
-	lines := detailBrowserExpandedLinesWithWidth(detailBrowserRow{
+	model := newDetailBrowserModel("details", []detailBrowserRow{{
 		Detail: "stdout line one\nstdout line two",
 		Metadata: []string{
 			"stderr: warning one\nwarning two",
 		},
-	}, 80)
-	joined := strings.Join(lines, "\n")
+	}}, detailBrowserState{Expanded: map[int]bool{0: true}}, false)
+	model.Width = 80
+	model.Height = 40
+	joined := model.View().Content
 	for _, want := range []string{
 		"detail: stdout line one",
 		"stdout line two",
@@ -779,7 +859,7 @@ func TestDetailBrowserPreservesPreformattedDetailLines(t *testing.T) {
 		"warning two",
 	} {
 		if !strings.Contains(joined, want) {
-			t.Fatalf("expected expanded detail to preserve %q in %#v", want, lines)
+			t.Fatalf("expected expanded detail to preserve %q in %q", want, joined)
 		}
 	}
 }
@@ -834,11 +914,14 @@ func TestToolTableBrowserPreservesGroupedTableAndExpandsDetail(t *testing.T) {
 	if click == nil {
 		t.Fatal("expected row click to map to table row")
 	}
-	msg, ok := click().(toolTableMouseMsg)
-	if !ok || msg.Index != 0 {
-		t.Fatalf("expected row click to target index 0, got %#v", msg)
+	updated, _ := model.Update(click())
+	model = updated.(toolTableBrowserModel)
+	release := model.View().OnMouse(tea.MouseReleaseMsg(tea.Mouse{X: 2, Y: 7, Button: tea.MouseLeft}))
+	if release == nil {
+		t.Fatal("expected row release to map to table row")
 	}
-	model.ToggleSelected()
+	updated, _ = model.Update(release())
+	model = updated.(toolTableBrowserModel)
 	view = model.View().Content
 	if !strings.Contains(view, "detail: A deliberately long Node.js runtime description") {
 		t.Fatalf("expected expanded detail under table row:\n%s", view)
@@ -1285,10 +1368,6 @@ func TestInventoryItemDetailLocalizesJapaneseEvidenceAndActions(t *testing.T) {
 			t.Fatalf("expected compact detail to avoid %q:\n%s", unwanted, row.Detail)
 		}
 	}
-	expanded := strings.Join(reviewui.ExpandedLines(row, reviewLabels()), "\n")
-	if strings.Contains(expanded, "note:") {
-		t.Fatalf("did not expect localized key-value detail to fall back to note lines:\n%s", expanded)
-	}
 }
 
 func TestToolTableBrowserScrollsBySelectedRow(t *testing.T) {
@@ -1345,9 +1424,6 @@ func TestToolTableBrowserKeepsSelectedRowVisibleAcrossManySections(t *testing.T)
 	model := newToolTableBrowserModel("updev list mise", sections, detailBrowserState{}, false)
 	model.Height = 10
 	model.Move(20)
-	if !toolTableVisibleRows(model.VisibleSections(), model.State.Offset, model.VisibleBodyLines(), model.State.Expanded)[model.State.Selected] {
-		t.Fatalf("expected selected row to be visible, selected=%d offset=%d\n%s", model.State.Selected, model.State.Offset, model.View().Content)
-	}
 	if !strings.Contains(model.View().Content, "tool-6-2") {
 		t.Fatalf("expected visible content around selected row:\n%s", model.View().Content)
 	}

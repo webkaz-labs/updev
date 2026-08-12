@@ -1,16 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+source "$(dirname "$0")/lib/go-tool-cache.sh"
+
 gofumpt_version="v0.9.2"
 goimports_version="v0.46.0"
-cache_base="${UPDEV_LINT_CACHE_DIR:-${TMPDIR:-/tmp}/updev-lint}"
-cache_root="$cache_base/fmt"
-mkdir -p "$cache_root"
-
-export GOPATH="$cache_root/gopath"
-export GOCACHE="$cache_root/gocache"
-export GOMODCACHE="$cache_root/gomodcache"
-
 module_path="$(
   awk '$1 == "module" { print $2; exit }' go.mod
 )"
@@ -29,11 +23,14 @@ if (( ${#files[@]} == 0 )); then
   exit 0
 fi
 
+gofumpt="$(updev_go_tool gofumpt mvdan.cc/gofumpt "$gofumpt_version")"
+goimports="$(updev_go_tool goimports golang.org/x/tools/cmd/goimports "$goimports_version")"
+
 gofumpt_files="$(
-  go run "mvdan.cc/gofumpt@${gofumpt_version}" -l "${files[@]}"
+  "$gofumpt" -l "${files[@]}"
 )"
 goimports_files="$(
-  go run "golang.org/x/tools/cmd/goimports@${goimports_version}" -local "$module_path" -l "${files[@]}"
+  "$goimports" -local "$module_path" -l "${files[@]}"
 )"
 
 failed=0

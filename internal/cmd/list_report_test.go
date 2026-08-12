@@ -15,6 +15,7 @@ import (
 
 	"github.com/webkaz-labs/updev/internal/inventoryannotate"
 	"github.com/webkaz-labs/updev/internal/legacycache"
+	"github.com/webkaz-labs/updev/internal/packageexecutor"
 	"github.com/webkaz-labs/updev/internal/plan"
 	"github.com/webkaz-labs/updev/internal/reviewui"
 	"github.com/webkaz-labs/updev/internal/runner"
@@ -260,9 +261,10 @@ func TestListUsesStaleInventoryCacheForFastInitialDisplay(t *testing.T) {
 	t.Setenv("UPDEV_CONFIG", filepath.Join(t.TempDir(), "missing-updev.toml"))
 	root := t.TempDir()
 	entry := inventoryCacheEntry{
-		Version:   inventoryCacheVersion,
-		Root:      root,
-		CreatedAt: time.Now().Add(-24 * time.Hour),
+		Version:               inventoryCacheVersion,
+		Root:                  root,
+		UseMisePackageDesired: true,
+		CreatedAt:             time.Now().Add(-24 * time.Hour),
 		Report: plan.Report{
 			Status: plan.StatusOK,
 			Root:   root,
@@ -275,7 +277,7 @@ func TestListUsesStaleInventoryCacheForFastInitialDisplay(t *testing.T) {
 		},
 	}
 	saveInventoryCache(entry)
-	result := collectInventoryCachedWithOptions(context.Background(), root, false, 0, inventoryOptions{})
+	result := collectInventoryCachedWithOptions(context.Background(), root, false, 0, &fakeCommandRunner{}, inventoryOptions{})
 	if !result.Cached {
 		t.Fatal("expected stale inventory cache to be reused for list initial display")
 	}
@@ -722,7 +724,7 @@ func TestListHubRouterOpensSupportCatalogWithoutSubprogram(t *testing.T) {
 		t.Fatalf("expected support catalog detail view, screen=%q state=%q", model.screen, model.stateKey)
 	}
 	view := model.View().Content
-	for _, want := range []string{"updev support catalog", "provider/homebrew", "experimental"} {
+	for _, want := range []string{"updev support catalog", "command/doctor package-parity", "experimental"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("expected support catalog view to include %q:\n%s", want, view)
 		}
@@ -1566,6 +1568,52 @@ func TestBackendDetailRowsForListRouteFocusesMatchingItem(t *testing.T) {
 	}
 }
 
+func TestBackendDetailRowsUseCompactSummaries(t *testing.T) {
+	row := backendFindingDetailRow(backendFinding{
+		Name:                "mise",
+		Kind:                "brew",
+		Provider:            "brew",
+		RecommendedProvider: "mise",
+		RecommendedName:     "github:jdx/mise",
+		Reason:              "Homebrew formula upstream is a GitHub repository; verify release assets and ownership before moving the tool out of Homebrew",
+		Status:              plan.StatusDrift,
+	})
+	if (!strings.Contains(row.Summary, "候補:") && !strings.Contains(row.Summary, "candidate:")) || strings.Contains(row.Summary, "Homebrew formula") || strings.Contains(row.Summary, "release asset") {
+		t.Fatalf("expected compact backend summary, got %#v", row)
+	}
+	if len(row.Columns) != 7 || row.Columns[0] != "drift" || row.Columns[2] != "brew/brew" || row.Columns[3] != "mise" || !strings.Contains(row.Columns[4], "github:jdx/mise") {
+		t.Fatalf("expected backend detail columns, got %#v", row.Columns)
+	}
+	metadata := strings.Join(row.Metadata, " ")
+	if !strings.Contains(metadata, "Homebrew formula") && !strings.Contains(metadata, "release asset") {
+		t.Fatalf("expected full backend reason to remain in metadata, got %#v", row.Metadata)
+	}
+}
+
+func TestBrewfileApplyCandidateDetailRowUsesCompactSummary(t *testing.T) {
+	reason := "brew/brew mise: hold: 候補リリースが新しすぎます: 経過 1日、最小 3日。リリース日: 2026-06-15。解除目安は 2026-06-18（あと約2日）です; source: /Users/example/Brewfile; tap: homebrew/core"
+	row := brewfileApplyCandidateDetailRow(brewfileApplyCandidate{
+		Identity:      "brew/formula/mise",
+		Provider:      "brew",
+		Kind:          "brew",
+		Name:          "mise",
+		DesiredSource: packageexecutor.SourceBrewfile,
+		Executor:      packageexecutor.ExecutorNative,
+		Decision:      "hold",
+		Reason:        reason,
+	})
+	if (!strings.Contains(row.Summary, "リリース待ち") && !strings.Contains(row.Summary, "release-age hold")) || strings.Contains(row.Summary, "source:") {
+		t.Fatalf("expected compact brewfile apply summary, got %#v", row)
+	}
+	if len(row.Columns) != 6 || row.Columns[0] != "hold" || row.Columns[1] != "brew/brew" || row.Columns[2] != "mise" || row.Columns[3] != packageexecutor.ExecutorNative || !strings.Contains(row.Columns[4], "release-age") && !strings.Contains(row.Columns[4], "リリース待ち") {
+		t.Fatalf("expected brewfile apply detail columns, got %#v", row.Columns)
+	}
+	metadata := strings.Join(row.Metadata, " ")
+	if !strings.Contains(metadata, "source: /Users/example/Brewfile") || !strings.Contains(metadata, "identity: brew/formula/mise") || !strings.Contains(metadata, "executor: native") || strings.Contains(metadata, "command:") {
+		t.Fatalf("expected full apply reason to remain in metadata, got %#v", row.Metadata)
+	}
+}
+
 func toolRowHasRouteAction(row toolRow, domain string) bool {
 	for _, action := range row.Actions {
 		if route, ok := parseListRouteAction(action.Value); ok && route.Domain == domain {
@@ -1602,6 +1650,7 @@ func TestBackendPlanReportsReadOnlyConvergenceFindings(t *testing.T) {
 	compatibleAsset := testBackendCompatibleAssetName("demo")
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
 	if err := os.WriteFile(filepath.Join(home, "Brewfile"), []byte(`brew "git"
 `), 0o600); err != nil {
 		t.Fatal(err)
@@ -1641,7 +1690,15 @@ ripgrep = "15.1.0"
 			"demo-cli":    nil,
 		},
 		results: map[string]runner.Result{
-			"brew\x00info\x00--json=v2\x00git\x00rtk":                                          {Stdout: `{"formulae":[{"name":"rtk","urls":{"stable":{"url":"https://github.com/rtk-ai/rtk/archive/refs/tags/v0.42.1.tar.gz"},"head":{"url":"https://github.com/rtk-ai/rtk.git"}}}],"casks":[]}`},
+			"mise\x00registry\x00--json": {Stdout: `[
+  {"short":"ripgrep","aliases":["rg"],"backends":["aqua:BurntSushi/ripgrep"]},
+  {"short":"rtk","backends":["aqua:rtk-ai/rtk","github:rtk-ai/rtk"]}
+]`},
+			"brew\x00info\x00--json=v2\x00git\x00ripgrep\x00rtk": {Stdout: `{"formulae":[
+  {"name":"ripgrep","full_name":"ripgrep","installed":[{"version":"15.1.0"}]},
+  {"name":"rtk","full_name":"rtk","installed":[{"version":"0.42.1"}]},
+  {"name":"git","full_name":"git","installed":[{"version":"2.54.0"}]}
+],"casks":[]}`},
 			"cargo\x00info\x00demo-tool":                                                       {Stdout: "demo-tool # CLI\nrepository: https://github.com/example/demo-tool\n"},
 			"cargo\x00info\x00local-build":                                                     {Stdout: "local-build # CLI\nrepository: https://github.com/example/local-build\n"},
 			"npm\x00view\x00@scope/demo-cli\x00repository\x00homepage\x00--json":               {Stdout: `{"repository":{"url":"git+https://github.com/example/demo-cli.git"},"homepage":"https://example.com"}`},
@@ -1661,12 +1718,12 @@ ripgrep = "15.1.0"
 		types[finding.Type] = true
 		switch finding.Name {
 		case "ripgrep":
-			if finding.CommandStatus != "on-path" || !containsString(finding.CommandNames, "rg") || finding.RecommendedTier != "mise/core" || finding.PreferenceRank != 1 {
+			if finding.CommandStatus != "on-path" || !containsString(finding.CommandNames, "rg") || finding.RecommendedTier != "mise/aqua" || finding.PreferenceRank != 2 {
 				t.Fatalf("expected ripgrep command verification, got %#v", finding)
 			}
 		case "rtk":
-			if finding.Type != "homebrew-to-mise-candidate" || finding.RecommendedName != "github:rtk-ai/rtk" || finding.RecommendedTier != "mise/github" || finding.PreferenceRank != 3 || finding.CommandStatus != "on-path" || finding.RecommendationKind != "candidate" || finding.ReleaseAssetStatus != "compatible" {
-				t.Fatalf("expected rtk GitHub backend candidate from Homebrew metadata with platform evidence, got %#v", finding)
+			if finding.Type != "homebrew-to-mise" || finding.RecommendedName != "rtk" || finding.RecommendedTier != "mise/aqua" || finding.PreferenceRank != 2 || finding.CommandStatus != "on-path" || finding.RecommendationKind != "recommendation" || finding.ReleaseAssetStatus != "compatible" || finding.CurrentSpec != "0.42.1" {
+				t.Fatalf("expected rtk registry-backed Aqua recommendation with platform evidence, got %#v", finding)
 			}
 		case "cargo:fd-find":
 			if finding.CommandStatus != "missing" || !containsString(finding.CurrentOS, "macos/x64") || !containsString(finding.RecommendedOS, "macos/arm64") || finding.RecommendedTier != "mise/aqua" || finding.PreferenceRank != 2 {
@@ -1694,7 +1751,7 @@ ripgrep = "15.1.0"
 			}
 		}
 	}
-	if !types["homebrew-to-mise"] || !types["homebrew-to-mise-candidate"] || !types["mise-backend-rewrite"] || !types["mise-backend-candidate"] {
+	if !types["homebrew-to-mise"] || !types["mise-backend-rewrite"] || !types["mise-backend-candidate"] {
 		t.Fatalf("expected brew and mise convergence findings, got %#v", report.Findings)
 	}
 	rows := backendDetailRows(report)
@@ -1722,7 +1779,10 @@ ripgrep = "15.1.0"
 		t.Fatalf("expected covered duplicate backend to expose remove action, got %#v", actionRows["cargo:git-delta -> aqua:dandavison/delta"].Actions)
 	}
 	if len(actionRows["ripgrep -> ripgrep"].Actions) != 1 || !strings.Contains(actionRows["ripgrep -> ripgrep"].Actions[0].Value, "remove-brew") {
-		t.Fatalf("expected duplicated Homebrew/mise ownership to expose Brewfile removal action, got %#v", actionRows["ripgrep -> ripgrep"].Actions)
+		t.Fatalf("expected duplicated Homebrew/mise ownership to expose Brewfile removal action, got actions=%#v findings=%#v", actionRows["ripgrep -> ripgrep"].Actions, report.Findings)
+	}
+	if len(actionRows["rtk -> rtk"].Actions) != 1 || !strings.Contains(actionRows["rtk -> rtk"].Actions[0].Value, "adopt-mise") {
+		t.Fatalf("expected registry-backed Homebrew tool to expose pinned mise adoption, got %#v", actionRows["rtk -> rtk"].Actions)
 	}
 	if len(actionRows["cargo:demo-tool -> github:example/demo-tool"].Actions) != 0 {
 		t.Fatalf("expected metadata-inferred rewrite to remain review-only, got %#v", actionRows["cargo:demo-tool -> github:example/demo-tool"].Actions)

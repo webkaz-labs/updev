@@ -9,10 +9,11 @@ import (
 	"strings"
 
 	"github.com/webkaz-labs/updev/internal/plan"
+	"github.com/webkaz-labs/updev/internal/runner"
 	"github.com/webkaz-labs/updev/internal/textui"
 )
 
-func buildSecurityReviewReport(ctx context.Context, opts securityReviewOptions, client *http.Client, commandRunner commandRunner) securityReviewReport {
+func buildSecurityReviewReport(ctx context.Context, opts securityReviewOptions, client *http.Client, commandRunner runner.Runner) securityReviewReport {
 	scan := buildSecurityReport(ctx, opts.securityOptions, client, commandRunner)
 	report := securityReviewReport{
 		Status:   plan.StatusOK,

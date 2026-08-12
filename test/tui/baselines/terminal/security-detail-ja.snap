@@ -1,0 +1,27 @@
+updev security details
+↑↓/j/k 移動、PgUp/PgDn スクロール、Enter/Space 展開、a/1-9 action、/ filter、m mouse、x 解除、? help、b 戻る、q 終了
+1/2 行、offset 1 mouse=off
+選択中の操作: a/1=7日間許可して再実行, 2=理由/期限を指定して再実行, 3=理由/期限を指定して許可, 4=7日間だけ許可, +1
+
+    判定   provider kind item     version     理由                             操作
+> - hold   brew     brew jq       1.8.1 1.8.2 ローカル policy により保留中です 5
+    詳細
+    detail: ローカル policy により保留中です
+
+    根拠
+    provider: brew
+    kind: brew
+    gate status: held
+    decision: hold
+    reason: ローカル policy により保留中です
+    reason_code: policy_hold
+    version: 1.8.1 1.8.2
+
+    操作
+    action 1 [press a or 1]: 7日間許可して再実行 - 一時 allow rule を追加し、この item だけを再実行します
+    action 2 [press 2]: 理由/期限を指定して再実行 - 理由と期限を入力して allow rule を追加し、この item
+    だけを再実行します
+    action 3 [press 3]: 理由/期限を指定して許可 - local allow rule 追加前に理由と期限を入力します
+    action 4 [press 4]: 7日間だけ許可 - 確認後に一時的な local security policy allow rule を追加します
+    action 5 [press 5]: hold として記録 - 確認理由付きの local security policy hold rule を追加します
+  + review brew     cask firefox  151.0       配布元の確認が必要です           5

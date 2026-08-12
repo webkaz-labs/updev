@@ -487,8 +487,8 @@ func TestCollectUpdateSafetyIncludesVSCodeWhenBrewfileDeclaresExtensions(t *test
 	t.Setenv("UPDEV_VSCODE_MARKETPLACE_URL", marketplaceServer.URL)
 	t.Setenv("UPDEV_OSV_API_URL", osvServer.URL)
 	fake := &fakeCommandRunner{results: map[string]runner.Result{
-		strings.Join([]string{"env", "HOMEBREW_NO_AUTO_UPDATE=1", "HOMEBREW_NO_INSTALL_FROM_API=1", "brew", "outdated", "--json=v2", "--greedy"}, "\x00"): {Stdout: `{"formulae":[],"casks":[]}`},
-		strings.Join([]string{"code", "--list-extensions", "--show-versions"}, "\x00"):                                                                    {Stdout: "publisher.extension@0.9.0\n"},
+		strings.Join([]string{"env", "HOMEBREW_NO_AUTO_UPDATE=1", "brew", "outdated", "--json=v2", "--greedy"}, "\x00"): {Stdout: `{"formulae":[],"casks":[]}`},
+		strings.Join([]string{"code", "--list-extensions", "--show-versions"}, "\x00"):                                  {Stdout: "publisher.extension@0.9.0\n"},
 	}}
 	gates := collectUpdateSafetyWithPolicy(context.Background(), fake, updateOptions{root: root, security: "strict", includeVSCode: true}, securityPolicy{})
 	if len(gates) != 3 || gates[0].Provider != "brew" || gates[1].Provider != "mise" || gates[2].Provider != "vscode" {
@@ -506,8 +506,8 @@ func TestCollectUpdateSafetyExcludesVSCodeByDefault(t *testing.T) {
 		t.Fatal(err)
 	}
 	fake := &fakeCommandRunner{results: map[string]runner.Result{
-		strings.Join([]string{"env", "HOMEBREW_NO_AUTO_UPDATE=1", "HOMEBREW_NO_INSTALL_FROM_API=1", "brew", "outdated", "--json=v2", "--greedy"}, "\x00"): {Stdout: `{"formulae":[],"casks":[]}`},
-		strings.Join([]string{"code", "--list-extensions", "--show-versions"}, "\x00"):                                                                    {Stdout: "publisher.extension@0.9.0\n"},
+		strings.Join([]string{"env", "HOMEBREW_NO_AUTO_UPDATE=1", "brew", "outdated", "--json=v2", "--greedy"}, "\x00"): {Stdout: `{"formulae":[],"casks":[]}`},
+		strings.Join([]string{"code", "--list-extensions", "--show-versions"}, "\x00"):                                  {Stdout: "publisher.extension@0.9.0\n"},
 	}}
 	gates := collectUpdateSafetyWithPolicy(context.Background(), fake, updateOptions{root: root, security: "strict"}, securityPolicy{})
 	if len(gates) != 2 || gates[0].Provider != "brew" || gates[1].Provider != "mise" {

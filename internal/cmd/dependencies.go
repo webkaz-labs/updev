@@ -7,26 +7,40 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"runtime"
 	"sort"
 	"strings"
 	"time"
 
 	"github.com/webkaz-labs/updev/internal/i18n"
 	"github.com/webkaz-labs/updev/internal/mise"
+	"github.com/webkaz-labs/updev/internal/packageexecutor"
+	"github.com/webkaz-labs/updev/internal/packagemetadata"
+	"github.com/webkaz-labs/updev/internal/packageparity"
 	"github.com/webkaz-labs/updev/internal/plan"
 	"github.com/webkaz-labs/updev/internal/runner"
 	"github.com/webkaz-labs/updev/internal/support"
 	"github.com/webkaz-labs/updev/internal/textui"
 	"github.com/webkaz-labs/updev/internal/updevconfig"
+	"github.com/webkaz-labs/updev/internal/updevpath"
 )
 
-const dependencyContractReportSchemaVersion = 1
+const (
+	dependencyContractReportSchemaVersion = 1
+	minimumMiseVersion                    = "2026.8.2"
+)
 
 type dependencyOptions struct {
 	command string
 	format  string
 	root    string
 	ledger  string
+}
+
+type packageReportOptions struct {
+	format      string
+	root        string
+	interactive bool
 }
 
 type dependencyContractReport struct {
@@ -86,14 +100,31 @@ type dependencyProbe struct {
 	JSONArgs    []string
 	JSONFields  []string
 	JSONRootObj bool
+	CDRoot      bool
 }
 
 func runDoctor(args []string) int {
 	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "usage: updev doctor <dependencies|support> [--format text|json]")
+		fmt.Fprintln(os.Stderr, "usage: updev doctor <dependencies|package-executors|package-parity|support> [--format text|json]")
 		return usageExitCode
 	}
 	command := args[0]
+	if command == "package-executors" {
+		opts, err := parsePackageExecutorOptions(args[1:])
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			return usageExitCode
+		}
+		return runPackageExecutors(opts, runner.Local{})
+	}
+	if command == "package-parity" {
+		opts, err := parsePackageParityOptions(args[1:])
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			return usageExitCode
+		}
+		return runPackageParity(opts, runner.Local{})
+	}
 	if command == "support" {
 		opts, err := parseSupportOptions(args[1:])
 		if err != nil {
@@ -112,6 +143,158 @@ func runDoctor(args []string) int {
 		return usageExitCode
 	}
 	return runDependencyCheck(opts, runner.Local{})
+}
+
+func parsePackageExecutorOptions(args []string) (packageReportOptions, error) {
+	return parsePackageReportOptions(args, true)
+}
+
+func parsePackageParityOptions(args []string) (packageReportOptions, error) {
+	return parsePackageReportOptions(args, false)
+}
+
+func parsePackageReportOptions(args []string, allowInteractive bool) (packageReportOptions, error) {
+	opts := packageReportOptions{format: "text", root: defaultRoot()}
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "--format":
+			if i+1 >= len(args) {
+				return opts, fmt.Errorf("--format requires a value")
+			}
+			opts.format = args[i+1]
+			i++
+		case "--root":
+			if i+1 >= len(args) {
+				return opts, fmt.Errorf("--root requires a value")
+			}
+			opts.root = args[i+1]
+			i++
+		case "--interactive":
+			if !allowInteractive {
+				return opts, fmt.Errorf("unknown option: %s", args[i])
+			}
+			opts.interactive = true
+		case "--plain", "--no-interactive":
+			if !allowInteractive {
+				return opts, fmt.Errorf("unknown option: %s", args[i])
+			}
+			opts.interactive = false
+		case "--help", "-h":
+			printUsage()
+			os.Exit(0)
+		default:
+			return opts, fmt.Errorf("unknown option: %s", args[i])
+		}
+	}
+	if opts.format != "text" && opts.format != "json" {
+		return opts, fmt.Errorf("unsupported format: %s", opts.format)
+	}
+	if opts.interactive && opts.format != "text" {
+		return opts, fmt.Errorf("--interactive requires --format text")
+	}
+	return opts, nil
+}
+
+func runPackageExecutors(opts packageReportOptions, commandRunner runner.Runner) int {
+	brewfilePath := packageParityBrewfilePath(opts.root)
+	config := loadUpdevConfig()
+	metadataPath := updevconfig.PackageMetadataPath(config)
+	platform := packageexecutor.Platform{OS: runtime.GOOS, Arch: runtime.GOARCH}
+	capabilities := localPackageExecutorCapabilities(commandRunner, platform)
+	report, err := buildPackageExecutorReport(context.Background(), opts.root, brewfilePath, metadataPath, commandRunner, platform, capabilities)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
+	if opts.format == "json" {
+		if code := encodeJSON(report); code != 0 {
+			return code
+		}
+	} else if opts.interactive {
+		if !isTerminal(os.Stdin) || !isTerminal(os.Stdout) {
+			fmt.Fprintln(os.Stderr, "--interactive requires a TTY; use --plain or --format json")
+			return usageExitCode
+		}
+		if _, err := runDetailBrowser("updev package executor plan", packageexecutor.DetailRows(report, defaultLanguage()), textui.ColorEnabled()); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			return 1
+		}
+	} else {
+		packageexecutor.PrintText(os.Stdout, report, defaultLanguage(), textui.ColorEnabled())
+	}
+	if report.Status == plan.StatusDrift {
+		return 2
+	}
+	return 0
+}
+
+func buildPackageExecutorReport(ctx context.Context, root string, brewfilePath string, metadataPath string, commandRunner runner.Runner, platform packageexecutor.Platform, capabilities packageexecutor.Capabilities) (packageexecutor.Report, error) {
+	snapshot, err := packageparity.Read(ctx, root, brewfilePath, commandRunner)
+	if err != nil {
+		return packageexecutor.Report{}, err
+	}
+	return buildPackageExecutorReportFromSnapshot(snapshot, metadataPath, platform, capabilities)
+}
+
+func buildPackageExecutorReportFromSnapshot(snapshot packageparity.Snapshot, metadataPath string, platform packageexecutor.Platform, capabilities packageexecutor.Capabilities) (packageexecutor.Report, error) {
+	desiredIDs, err := packageexecutor.DesiredIDs(snapshot)
+	if err != nil {
+		return packageexecutor.Report{}, err
+	}
+	metadata, err := packagemetadata.Load(metadataPath, desiredIDs)
+	if err != nil {
+		return packageexecutor.Report{}, err
+	}
+	return packageexecutor.Build(packageexecutor.Input{
+		Snapshot:     snapshot,
+		Metadata:     metadata,
+		Platform:     platform,
+		Capabilities: capabilities,
+	})
+}
+
+func localPackageExecutorCapabilities(commandRunner runner.Runner, platform packageexecutor.Platform) packageexecutor.Capabilities {
+	capabilities := packageexecutor.Capabilities{NativeProviders: map[string]bool{}}
+	if platform.OS == "darwin" {
+		_, err := commandRunner.LookPath("brew")
+		capabilities.NativeProviders["brew"] = err == nil
+	}
+	return capabilities
+}
+
+func runPackageParity(opts packageReportOptions, commandRunner runner.Runner) int {
+	brewfilePath := packageParityBrewfilePath(opts.root)
+	report, err := buildPackageParityReport(context.Background(), opts.root, brewfilePath, commandRunner)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
+	if opts.format == "json" {
+		if code := encodeJSON(report); code != 0 {
+			return code
+		}
+	} else {
+		packageparity.PrintText(os.Stdout, report, defaultLanguage(), textui.ColorEnabled())
+	}
+	if report.Status == plan.StatusDrift {
+		return 2
+	}
+	return 0
+}
+
+func buildPackageParityReport(ctx context.Context, root string, brewfilePath string, commandRunner runner.Runner) (packageparity.Report, error) {
+	snapshot, err := packageparity.Read(ctx, root, brewfilePath, commandRunner)
+	if err != nil {
+		return packageparity.Report{}, err
+	}
+	return snapshot.Report, nil
+}
+
+func packageParityBrewfilePath(root string) string {
+	if shouldUseHomeBrewfile(root) {
+		return updevpath.HomeOrRootBrewfile(root)
+	}
+	return updevpath.RootBrewfileTemplate(root)
 }
 
 func parseDependencyOptions(command string, args []string) (dependencyOptions, error) {
@@ -178,9 +361,14 @@ func buildDependencyContractReport(ctx context.Context, opts dependencyOptions, 
 	for _, probe := range dependencyProbes() {
 		checks = append(checks, dependencyVersionCheck(ctx, commandRunner, probe))
 		if len(probe.JSONArgs) > 0 {
-			checks = append(checks, dependencyJSONContractCheck(ctx, commandRunner, probe))
+			checks = append(checks, dependencyJSONContractCheck(ctx, commandRunner, probe, opts.root))
 		}
 	}
+	for _, probe := range dependencyJSONProbes() {
+		checks = append(checks, dependencyJSONContractCheck(ctx, commandRunner, probe, opts.root))
+	}
+	checks = append(checks, dependencyMiseConfigSourcesCheck(ctx, commandRunner, opts.root))
+	checks = append(checks, dependencyMiseBootstrapPackagesDryRunCheck(ctx, commandRunner, opts.root))
 	checks = append(checks, dependencyMiseMinimumReleaseAgeCheck(ctx, commandRunner, opts.root))
 	checks = append(checks, homebrewTapTrustDependencyCheck(ctx, commandRunner, opts.root))
 	checks = append(checks, homebrewShellWrapperDependencyCheck())
@@ -203,6 +391,54 @@ func buildDependencyContractReport(ctx context.Context, opts dependencyOptions, 
 		Checks:              checks,
 		CompatibilityLedger: buildDependencyCompatibilityLedger(opts.root, checks, time.Now().UTC()),
 	}
+}
+
+func dependencyMiseConfigSourcesCheck(ctx context.Context, commandRunner runner.Runner, root string) dependencyContractCheck {
+	command := []string{"mise", "config", "ls", "--json", "--cd", root}
+	check := dependencyContractCheck{
+		Tool:     "mise",
+		Feature:  "config-sources-json",
+		Required: true,
+		Command:  command,
+		Status:   plan.StatusOK,
+	}
+	if _, err := commandRunner.LookPath("mise"); err != nil {
+		check.Status = plan.StatusUnavailable
+		check.Reason = "executable not found on PATH"
+		check.Remediation = dependencyRemediation("mise", true)
+		return check
+	}
+	result := runDependencyCommand(ctx, commandRunner, command[0], command[1:]...)
+	if result.Err != nil {
+		check.Status = plan.StatusError
+		check.Reason = dependencyCommandError(result)
+		check.Remediation = dependencyJSONRemediation("mise")
+		return check
+	}
+	sources, err := mise.ConfigSourcesFromJSON([]byte(result.Stdout))
+	if err != nil {
+		check.Status = plan.StatusDrift
+		check.Reason = "mise config source output is invalid: " + err.Error()
+		check.Remediation = dependencyJSONRemediation("mise")
+		return check
+	}
+	if len(sources) == 0 {
+		check.Status = plan.StatusDrift
+		check.Reason = "mise reported no active config sources"
+		check.Remediation = "activate a mise config before relying on updev inventory or mutation"
+		return check
+	}
+	environmentSources := 0
+	paths := make([]string, 0, len(sources))
+	for _, source := range sources {
+		if source.Environment != "" {
+			environmentSources++
+		}
+		paths = append(paths, source.Diagnostic())
+	}
+	check.Value = fmt.Sprintf("sources=%d, environment_sources=%d", len(sources), environmentSources)
+	check.Source = strings.Join(paths, "; ")
+	return check
 }
 
 func buildDependencyCompatibilityLedger(root string, checks []dependencyContractCheck, now time.Time) dependencyCompatibilityLedger {
@@ -364,13 +600,20 @@ func dependencyMiseMinimumReleaseAgeCheck(ctx context.Context, commandRunner run
 
 func dependencyProbes() []dependencyProbe {
 	return []dependencyProbe{
-		{Tool: "brew", Required: true, Env: []string{"HOMEBREW_NO_AUTO_UPDATE=1", "HOMEBREW_NO_INSTALL_FROM_API=1"}, VersionArgs: []string{"--version"}, Feature: "outdated-json-v2", JSONArgs: []string{"outdated", "--json=v2"}, JSONFields: []string{"formulae", "casks"}, JSONRootObj: true},
+		{Tool: "brew", Required: true, Env: []string{"HOMEBREW_NO_AUTO_UPDATE=1"}, VersionArgs: []string{"--version"}, Feature: "outdated-json-v2", JSONArgs: []string{"outdated", "--json=v2"}, JSONFields: []string{"formulae", "casks"}, JSONRootObj: true},
 		{Tool: "mise", Required: true, VersionArgs: []string{"--version"}, Feature: "current-json", JSONArgs: []string{"ls", "--current", "--json"}, JSONRootObj: true},
 		{Tool: "osv-scanner", VersionArgs: []string{"--version"}},
 		{Tool: "gitleaks", VersionArgs: []string{"version"}},
 		{Tool: "zizmor", VersionArgs: []string{"--version"}},
 		{Tool: "trivy", VersionArgs: []string{"--version"}},
 		{Tool: "grype", VersionArgs: []string{"version"}},
+	}
+}
+
+func dependencyJSONProbes() []dependencyProbe {
+	return []dependencyProbe{
+		{Tool: "mise", Required: true, Feature: "bootstrap-status-json", JSONArgs: []string{"bootstrap", "status", "--json"}, JSONFields: []string{"packages", "tools"}, JSONRootObj: true, CDRoot: true},
+		{Tool: "mise", Required: true, Feature: "bootstrap-plan-json", JSONArgs: []string{"bootstrap", "plan", "--json"}, JSONFields: []string{"resources", "summary"}, JSONRootObj: true, CDRoot: true},
 	}
 }
 
@@ -400,11 +643,33 @@ func dependencyVersionCheck(ctx context.Context, commandRunner runner.Runner, pr
 		check.Status = plan.StatusDrift
 		check.Reason = "version command returned no output"
 		check.Remediation = "verify the installed CLI still supports the expected version command"
+		return check
+	}
+	if probe.Tool == "mise" && !miseVersionAtLeast(check.Version, minimumMiseVersion) {
+		check.Status = plan.StatusDrift
+		check.Reason = fmt.Sprintf("mise %s is older than the required v%s baseline", strings.Fields(check.Version)[0], minimumMiseVersion)
+		check.Remediation = "upgrade mise to v" + minimumMiseVersion + " or newer"
 	}
 	return check
 }
 
-func dependencyJSONContractCheck(ctx context.Context, commandRunner runner.Runner, probe dependencyProbe) dependencyContractCheck {
+func miseVersionAtLeast(raw string, minimum string) bool {
+	fields := strings.Fields(raw)
+	if len(fields) == 0 {
+		return false
+	}
+	major, minor, patch := parseToolVersion(fields[0])
+	minimumMajor, minimumMinor, minimumPatch := parseToolVersion(minimum)
+	if major != minimumMajor {
+		return major > minimumMajor
+	}
+	if minor != minimumMinor {
+		return minor > minimumMinor
+	}
+	return patch >= minimumPatch
+}
+
+func dependencyJSONContractCheck(ctx context.Context, commandRunner runner.Runner, probe dependencyProbe, root string) dependencyContractCheck {
 	check := dependencyContractCheck{
 		Tool:          probe.Tool,
 		Feature:       probe.Feature,
@@ -414,6 +679,9 @@ func dependencyJSONContractCheck(ctx context.Context, commandRunner runner.Runne
 	}
 	commandName := probe.Tool
 	commandArgs := append([]string{}, probe.JSONArgs...)
+	if probe.CDRoot && strings.TrimSpace(root) != "" {
+		commandArgs = append(commandArgs, "--cd", root)
+	}
 	if len(probe.Env) > 0 {
 		commandName = "env"
 		commandArgs = append(append([]string{}, probe.Env...), probe.Tool)
@@ -453,6 +721,46 @@ func dependencyJSONContractCheck(ctx context.Context, commandRunner runner.Runne
 		check.MissingField = missing
 		check.Reason = "JSON output is missing required fields"
 		check.Remediation = dependencyJSONRemediation(probe.Tool)
+	}
+	if check.Status == plan.StatusOK && probe.Tool == "mise" && probe.Feature == "bootstrap-status-json" {
+		packages, err := mise.BootstrapPackagesFromStatusJSON([]byte(result.Stdout))
+		if err != nil {
+			check.Status = plan.StatusDrift
+			check.Reason = err.Error()
+			check.Remediation = dependencyJSONRemediation("mise")
+			return check
+		}
+		check.Value = fmt.Sprintf("packages=%d", len(packages))
+	}
+	return check
+}
+
+func dependencyMiseBootstrapPackagesDryRunCheck(ctx context.Context, commandRunner runner.Runner, root string) dependencyContractCheck {
+	command := []string{"mise", "bootstrap", "packages", "apply", "--dry-run"}
+	if strings.TrimSpace(root) != "" {
+		command = append(command, "--cd", root)
+	}
+	check := dependencyContractCheck{
+		Tool:     "mise",
+		Feature:  "bootstrap-packages-dry-run",
+		Required: true,
+		Command:  command,
+		Status:   plan.StatusOK,
+		Value:    "dry-run supported",
+	}
+	if _, err := commandRunner.LookPath("mise"); err != nil {
+		check.Status = plan.StatusUnavailable
+		check.Value = ""
+		check.Reason = "executable not found on PATH"
+		check.Remediation = dependencyRemediation("mise", true)
+		return check
+	}
+	result := runDependencyCommand(ctx, commandRunner, command[0], command[1:]...)
+	if result.Err != nil {
+		check.Status = plan.StatusError
+		check.Value = ""
+		check.Reason = dependencyCommandError(result)
+		check.Remediation = "upgrade mise to v2026.8.2 or newer, or update updev if the bootstrap package dry-run contract changed"
 	}
 	return check
 }

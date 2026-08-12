@@ -10,17 +10,45 @@ import (
 	"runtime"
 	"sort"
 	"strings"
+	"sync"
 
+	"github.com/webkaz-labs/updev/internal/mise"
 	"github.com/webkaz-labs/updev/internal/plan"
 	"github.com/webkaz-labs/updev/internal/runner"
 	"github.com/webkaz-labs/updev/internal/updevpath"
 )
 
 type Provider struct {
-	Root           string
-	Runner         runner.Runner
-	IncludeVSCode  bool
-	UseHomeDesired bool
+	Root              string
+	Runner            runner.Runner
+	IncludeVSCode     bool
+	UseHomeDesired    bool
+	AdditionalDesired []plan.Item
+	DesiredResolver   *BootstrapDesiredResolver
+}
+
+type BootstrapDesiredResolver struct {
+	root   string
+	runner runner.Runner
+	once   sync.Once
+	items  []plan.Item
+	err    error
+}
+
+func NewBootstrapDesiredResolver(root string, commandRunner runner.Runner) *BootstrapDesiredResolver {
+	return &BootstrapDesiredResolver{root: root, runner: commandRunner}
+}
+
+func (resolver *BootstrapDesiredResolver) Resolve(ctx context.Context) ([]plan.Item, error) {
+	resolver.once.Do(func() {
+		packageSet, taps, err := mise.ReadBootstrapDesiredState(ctx, resolver.runner, resolver.root)
+		if err != nil {
+			resolver.err = err
+			return
+		}
+		resolver.items = DesiredFromBootstrapPackages(packageSet, taps)
+	})
+	return append([]plan.Item(nil), resolver.items...), resolver.err
 }
 
 func (Provider) Name() string { return "brew" }
@@ -34,11 +62,20 @@ func (p Provider) Supported(ctx context.Context) bool {
 }
 
 func (p Provider) Desired(ctx context.Context) ([]plan.Item, error) {
+	additionalDesired := p.AdditionalDesired
+	if p.DesiredResolver != nil {
+		resolved, err := p.DesiredResolver.Resolve(ctx)
+		if err != nil {
+			return nil, err
+		}
+		additionalDesired = MergeDesired(additionalDesired, resolved)
+	}
 	path := p.desiredPath()
 	items, err := DesiredFromPath(path)
 	if err != nil {
 		return nil, err
 	}
+	items = MergeDesired(items, additionalDesired)
 	if p.IncludeVSCode {
 		return items, nil
 	}
@@ -50,6 +87,69 @@ func (p Provider) Desired(ctx context.Context) ([]plan.Item, error) {
 		out = append(out, item)
 	}
 	return out, nil
+}
+
+const MiseBootstrapDesiredDetail = "desired source: mise bootstrap packages"
+
+func DesiredFromBootstrapPackages(packageSet mise.BootstrapPackageSet, taps []mise.BootstrapTapDesired) []plan.Item {
+	items := []plan.Item{}
+	for _, pkg := range packageSet.Packages {
+		kind := ""
+		switch pkg.Manager {
+		case "brew":
+			kind = "brew"
+		case "brew-cask":
+			kind = "cask"
+		default:
+			continue
+		}
+		name := normalizeName(kind, pkg.Name)
+		if name == "" {
+			continue
+		}
+		items = append(items, plan.Item{Provider: "brew", Kind: kind, Name: name, Detail: MiseBootstrapDesiredDetail})
+		if tap := tapNameFromQualifiedPackage(pkg.Name); tap != "" {
+			items = append(items, plan.Item{Provider: "brew", Kind: "tap", Name: tap, Detail: MiseBootstrapDesiredDetail})
+		}
+	}
+	for _, tap := range taps {
+		name := normalizeName("tap", tap.Name)
+		if name != "" {
+			items = append(items, plan.Item{Provider: "brew", Kind: "tap", Name: name, Detail: MiseBootstrapDesiredDetail})
+		}
+	}
+	return MergeDesired(nil, items)
+}
+
+func MergeDesired(groups ...[]plan.Item) []plan.Item {
+	byKey := map[string]plan.Item{}
+	for _, group := range groups {
+		for _, item := range group {
+			key := item.Kind + "\x00" + item.Name
+			if existing, ok := byKey[key]; ok {
+				if existing.Detail == "" {
+					existing.Detail = item.Detail
+				}
+				byKey[key] = existing
+				continue
+			}
+			byKey[key] = item
+		}
+	}
+	keys := make([]string, 0, len(byKey))
+	for key := range byKey {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	items := make([]plan.Item, 0, len(keys))
+	for _, key := range keys {
+		items = append(items, byKey[key])
+	}
+	return items
+}
+
+func IsMiseBootstrapDesired(item plan.Item) bool {
+	return item.Detail == MiseBootstrapDesiredDetail
 }
 
 func (p Provider) desiredPath() string {
@@ -236,6 +336,12 @@ func tapNameFromQualifiedPackage(name string) string {
 	return parts[0] + "/" + parts[1]
 }
 
+// TapNameFromQualifiedPackage returns the Homebrew tap portion of a qualified
+// formula or cask name such as owner/repository/package.
+func TapNameFromQualifiedPackage(name string) string {
+	return tapNameFromQualifiedPackage(name)
+}
+
 func isHomebrewDefaultTap(name string) bool {
 	switch normalizeName("tap", name) {
 	case "homebrew/core", "homebrew/cask":
@@ -356,6 +462,12 @@ func normalizeName(kind string, name string) string {
 		return parts[len(parts)-1]
 	}
 	return name
+}
+
+// NormalizeDesiredName applies the same identity normalization used by the
+// Homebrew desired/live inventory adapters.
+func NormalizeDesiredName(kind string, name string) string {
+	return normalizeName(kind, name)
 }
 
 func splitLines(text string) []string {

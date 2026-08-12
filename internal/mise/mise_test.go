@@ -38,6 +38,95 @@ experimental = false
 	}
 }
 
+func TestConfigSourcesNormalizesMiseJSON(t *testing.T) {
+	fake := fakeRunner{result: runner.Result{Stdout: `[
+		{"path":"/home/user/.config/mise/config.toml","tools":["node","go"]},
+		{"path":"/home/user/.config/mise/config.team-blue.toml","tools":[]},
+		{"path":"/repo/project/mise.team-blue.toml","tools":["uv","python"]},
+		{"path":"/repo/project/custom.toml","tools":[]}
+	]`}}
+	sources, err := ConfigSources(context.Background(), &fake, "/repo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(sources) != 4 || sources[0].Path != "/home/user/.config/mise/config.toml" || sources[3].Path != "/repo/project/custom.toml" {
+		t.Fatalf("unexpected normalized config sources: %#v", sources)
+	}
+	if strings.Join(sources[0].Tools, ",") != "go,node" || strings.Join(sources[2].Tools, ",") != "python,uv" {
+		t.Fatalf("expected sorted tools, got %#v", sources)
+	}
+	if sources[1].Environment != "team-blue" || sources[2].Environment != "team-blue" || sources[3].Environment != "" {
+		t.Fatalf("expected generic environment labels only for standard filenames, got %#v", sources)
+	}
+	for i, source := range sources {
+		if source.ReportedOrder != i+1 {
+			t.Fatalf("expected mise reported order to be preserved, got %#v", sources)
+		}
+	}
+	if got := sources[1].Diagnostic(); got != "/home/user/.config/mise/config.team-blue.toml (reported_order=2, environment=team-blue, tools=0)" {
+		t.Fatalf("unexpected source diagnostic: %q", got)
+	}
+	wantCall := "mise\x00config\x00ls\x00--json\x00--cd\x00/repo"
+	if len(fake.calls) != 1 || strings.Join(fake.calls[0], "\x00") != wantCall {
+		t.Fatalf("unexpected config source command: %#v", fake.calls)
+	}
+}
+
+func TestConfigSourcesRejectsMalformedSources(t *testing.T) {
+	for name, input := range map[string]string{
+		"invalid JSON":           `{`,
+		"empty path with tools":  `[{"path":"","tools":["go"]}]`,
+		"duplicate clean path":   `[{"path":"/repo/dir/../mise.toml","tools":[]},{"path":"/repo/mise.toml","tools":[]}]`,
+		"empty tool":             `[{"path":"/repo/mise.toml","tools":[" "]}]`,
+		"duplicate trimmed tool": `[{"path":"/repo/mise.toml","tools":["go"," go "]}]`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := ConfigSourcesFromJSON([]byte(input)); err == nil {
+				t.Fatalf("expected config source error for %s", input)
+			}
+		})
+	}
+}
+
+func TestGlobalConfigContractIgnoresConfD(t *testing.T) {
+	root := t.TempDir()
+	miseDir := filepath.Join(root, "dot_config", "mise")
+	confDir := filepath.Join(miseDir, "conf.d")
+	if err := os.MkdirAll(confDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	primary := ConfigPath(root)
+	if err := os.WriteFile(primary, []byte("[tools]\ngo = \"1.26.4\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	fragment := filepath.Join(confDir, "10-tools.toml")
+	fragmentText := "[tools]\nnode = \"24.0.0\"\n"
+	if err := os.WriteFile(fragment, []byte(fragmentText), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	paths, err := ManifestPaths(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(paths) != 1 || paths[0] != primary {
+		t.Fatalf("expected one writable global config, got %#v", paths)
+	}
+	if HasTool(root, "node") {
+		t.Fatal("conf.d fragment must not become an implicit updev authority")
+	}
+	if changed, err := AddTool(root, "uv", "0.11.19"); err != nil || !changed {
+		t.Fatalf("expected primary config mutation, changed=%v err=%v", changed, err)
+	}
+	fragmentAfter, err := os.ReadFile(fragment)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(fragmentAfter) != fragmentText {
+		t.Fatalf("conf.d fragment was modified:\n%s", fragmentAfter)
+	}
+}
+
 func TestAddRemoveToolPreservesToolsTable(t *testing.T) {
 	root := t.TempDir()
 	dir := filepath.Join(root, "dot_config", "mise")

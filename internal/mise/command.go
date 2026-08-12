@@ -5,6 +5,14 @@ import (
 	"strings"
 )
 
+func GitHubTokenEnv(token string) []string {
+	token = strings.TrimSpace(token)
+	if token == "" {
+		return nil
+	}
+	return []string{"MISE_GITHUB_TOKEN=" + token}
+}
+
 func UpgradeCommand(root string, tools []string, minimumReleaseAge string) []string {
 	tools = cleanCommandTargets(tools)
 	if len(tools) == 0 {

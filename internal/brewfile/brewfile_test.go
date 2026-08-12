@@ -1,10 +1,13 @@
 package brewfile
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/webkaz-labs/updev/internal/runner"
 )
 
 func TestAddHasRemoveBrewfileEntry(t *testing.T) {
@@ -160,4 +163,45 @@ brew "git"
 	if _, ok := insertIntoCategory(content, "", `brew "jq"`); ok {
 		t.Fatal("expected ungrouped insert to fail when categories exist")
 	}
+}
+
+func TestDesiredSourceDistinguishesBrewfileMiseBothAndNone(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "Brewfile.tmpl"), []byte("brew \"git\"\nbrew \"jq\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	fake := &desiredSourceRunner{results: map[string]runner.Result{
+		strings.Join([]string{"mise", "config", "get", "bootstrap", "--cd", root}, "\x00"): {Stdout: "[packages]\n\"brew:btop\" = \"latest\"\n\"brew:jq\" = \"latest\"\n"},
+	}}
+	single, err := DesiredSources(context.Background(), root, []string{"brew", "btop"}, fake)
+	if err != nil || len(single) != 1 || single[0] != "mise" {
+		t.Fatalf("single desired source = %v, err=%v", single, err)
+	}
+	fake.calls = nil
+	got, err := DesiredSources(context.Background(), root, []string{"brew", "git", "brew", "btop", "brew", "jq", "brew", "curl"}, fake)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(got, ",") != "brewfile,mise,both,none" {
+		t.Fatalf("batched desired sources = %v", got)
+	}
+	if len(fake.calls) != 1 {
+		t.Fatalf("batched desired source must read resolved mise config once, calls=%v", fake.calls)
+	}
+}
+
+type desiredSourceRunner struct {
+	results map[string]runner.Result
+	calls   [][]string
+}
+
+func (*desiredSourceRunner) LookPath(name string) (string, error) { return "/fake/" + name, nil }
+
+func (fake *desiredSourceRunner) Run(_ context.Context, name string, args ...string) runner.Result {
+	call := append([]string{name}, args...)
+	fake.calls = append(fake.calls, call)
+	if result, ok := fake.results[strings.Join(call, "\x00")]; ok {
+		return result
+	}
+	return runner.Result{Err: os.ErrNotExist, Code: 1}
 }

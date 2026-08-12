@@ -26,6 +26,16 @@ func TestConfigFileUsesXDGConfigHome(t *testing.T) {
 	}
 }
 
+func TestPackageMetadataFileUsesXDGConfigHome(t *testing.T) {
+	configHome := filepath.Join(t.TempDir(), "config")
+	t.Setenv("XDG_CONFIG_HOME", configHome)
+
+	want := filepath.Join(configHome, "updev", "package-metadata.toml")
+	if got := PackageMetadataFile(); got != want {
+		t.Fatalf("expected package metadata path %q, got %q", want, got)
+	}
+}
+
 func TestCacheDirUsesXDGCacheHome(t *testing.T) {
 	cacheHome := filepath.Join(t.TempDir(), "cache")
 	t.Setenv("XDG_CACHE_HOME", cacheHome)
