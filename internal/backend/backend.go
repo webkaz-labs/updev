@@ -2,6 +2,7 @@ package backend
 
 import (
 	"context"
+	"fmt"
 	"sort"
 	"strings"
 	"sync"
@@ -19,6 +20,7 @@ type Options struct {
 	Command         string
 	Root            string
 	PreferenceOrder []string
+	KeepHomebrew    []string
 }
 
 type Report struct {
@@ -70,6 +72,7 @@ type Recommendation struct {
 	Kind           string
 	AssetEvidence  GitHubAssetEvidence
 	RewriteAllowed bool
+	Version        string
 }
 
 type GitHubAssetEvidence struct {
@@ -99,6 +102,7 @@ type PreferenceTier struct {
 
 type Registry struct {
 	PreferenceOrder []string
+	KeepHomebrew    []string
 }
 
 func BuildReport(ctx context.Context, opts Options, commandRunner runner.Runner) Report {
@@ -109,8 +113,9 @@ func BuildReport(ctx context.Context, opts Options, commandRunner runner.Runner)
 		warnings = append(warnings, "mise desired tools unavailable: "+miseWarnings.Error())
 		miseTools = map[string]string{}
 	}
-	registry := Registry{PreferenceOrder: opts.PreferenceOrder}
-	findings := Findings(brewItems, miseTools, registry, commandRunner)
+	registry := Registry{PreferenceOrder: opts.PreferenceOrder, KeepHomebrew: opts.KeepHomebrew}
+	findings, findingWarnings := Findings(ctx, brewItems, miseTools, registry, commandRunner)
+	warnings = append(warnings, findingWarnings...)
 	status := plan.StatusOK
 	if len(findings) > 0 {
 		status = plan.StatusDrift
@@ -140,9 +145,24 @@ func desiredBrewItems(ctx context.Context, root string) ([]plan.Item, []string) 
 	return items, nil
 }
 
-func Findings(brewItems []plan.Item, miseTools map[string]string, registry Registry, commandRunner runner.Runner) []Finding {
+func Findings(ctx context.Context, brewItems []plan.Item, miseTools map[string]string, registry Registry, commandRunner runner.Runner) ([]Finding, []string) {
 	findings := []Finding{}
-	homebrewGitHubRepos := homebrewFormulaGitHubRepos(genericHomebrewRecommendationNames(brewItems, registry), commandRunner)
+	warnings := []string{}
+	miseRegistry, err := loadMiseRegistry(ctx, commandRunner)
+	if err != nil {
+		warnings = append(warnings, err.Error())
+		miseRegistry = map[string]mise.RegistryEntry{}
+	}
+	homebrewEvidence, err := loadHomebrewPackageEvidence(ctx, brewItems, commandRunner)
+	if err != nil {
+		warnings = append(warnings, err.Error())
+		homebrewEvidence = map[string]homebrewPackageEvidence{}
+	}
+	genericNames := genericHomebrewRecommendationNames(brewItems, registry, miseRegistry)
+	homebrewGitHubRepos := homebrewFormulaGitHubReposFromEvidence(genericNames, homebrewEvidence)
+	if len(homebrewGitHubRepos) == 0 && len(genericNames) > 0 && err != nil {
+		homebrewGitHubRepos = homebrewFormulaGitHubRepos(genericNames, commandRunner)
+	}
 	resultCh := make(chan Finding)
 	var wg sync.WaitGroup
 	sem := make(chan struct{}, 8)
@@ -157,18 +177,37 @@ func Findings(brewItems []plan.Item, miseTools map[string]string, registry Regis
 			}
 		}()
 	}
-	for _, item := range brewItems {
+	orderedBrewItems := append([]plan.Item(nil), brewItems...)
+	sort.SliceStable(orderedBrewItems, func(i, j int) bool {
+		if orderedBrewItems[i].Kind != orderedBrewItems[j].Kind {
+			return orderedBrewItems[i].Kind < orderedBrewItems[j].Kind
+		}
+		return orderedBrewItems[i].Name < orderedBrewItems[j].Name
+	})
+	registryPlatformChecks := 0
+	skippedRegistryPlatformChecks := 0
+	for _, item := range orderedBrewItems {
 		item := item
-		if item.Kind != "brew" {
+		if item.Kind != "brew" && item.Kind != "cask" {
 			continue
 		}
+		if isHomebrewRegistryCheckCandidate(item, homebrewEvidence, miseRegistry, registry, commandRunner) {
+			if registryPlatformChecks >= maxRegistryPlatformChecks {
+				skippedRegistryPlatformChecks++
+				continue
+			}
+			registryPlatformChecks++
+		}
 		run(func() (Finding, bool) {
-			recommendation, ok := homebrewBackendRecommendation(item.Name, homebrewGitHubRepos, registry, commandRunner)
+			recommendation, ok := homebrewBackendRecommendation(ctx, item, homebrewGitHubRepos, homebrewEvidence, miseRegistry, registry, commandRunner)
 			if !ok {
 				return Finding{}, false
 			}
 			return backendHomebrewFinding(item, recommendation, miseTools, commandRunner), true
 		})
+	}
+	if skippedRegistryPlatformChecks > 0 {
+		warnings = append(warnings, fmt.Sprintf("mise registry platform check limit reached: checked %d candidates and skipped %d", maxRegistryPlatformChecks, skippedRegistryPlatformChecks))
 	}
 	for name, spec := range miseTools {
 		name, spec := name, spec
@@ -193,7 +232,8 @@ func Findings(brewItems []plan.Item, miseTools map[string]string, registry Regis
 		}
 		return findings[i].Name < findings[j].Name
 	})
-	return findings
+	sort.Strings(warnings)
+	return findings, warnings
 }
 
 func backendHomebrewFinding(item plan.Item, recommendation Recommendation, miseTools map[string]string, commandRunner runner.Runner) Finding {
@@ -208,7 +248,7 @@ func backendHomebrewFinding(item plan.Item, recommendation Recommendation, miseT
 		Provider:            "brew",
 		Kind:                item.Kind,
 		Name:                item.Name,
-		Current:             "brew:" + item.Name,
+		Current:             item.Kind + ":" + item.Name,
 		RecommendedProvider: recommendation.Provider,
 		RecommendedName:     recommendation.Name,
 		RecommendedTier:     recommendation.Tier,
@@ -216,6 +256,7 @@ func backendHomebrewFinding(item plan.Item, recommendation Recommendation, miseT
 		CommandNames:        recommendation.Commands,
 		CommandStatus:       backendCommandStatus(commandRunner, recommendation.Commands),
 		RecommendedSpec:     recommendedSpec,
+		CurrentSpec:         recommendation.Version,
 		RecommendedOS:       backendOSConditions(recommendedSpec),
 		CurrentPlatform:     recommendation.AssetEvidence.Platform,
 		ReleaseAssetStatus:  recommendation.AssetEvidence.Status,
@@ -275,11 +316,21 @@ func filterBackendDoctorFindings(findings []Finding) []Finding {
 	return out
 }
 
-func homebrewBackendRecommendation(name string, githubRepos map[string]string, registry Registry, commandRunner runner.Runner) (Recommendation, bool) {
-	if recommendation, ok := explicitHomebrewBackendRecommendation(name, registry); ok {
+func homebrewBackendRecommendation(ctx context.Context, item plan.Item, githubRepos map[string]string, evidence map[string]homebrewPackageEvidence, miseRegistry map[string]mise.RegistryEntry, registry Registry, commandRunner runner.Runner) (Recommendation, bool) {
+	if registry.KeepsHomebrew(item.Kind, item.Name) {
+		return Recommendation{}, false
+	}
+	if entry, ok := mise.RegistryEntryForTool(miseRegistry, item.Name); ok {
+		packageEvidence := evidence[homebrewEvidenceKey(item.Kind, item.Name)]
+		return homebrewRegistryRecommendation(ctx, item, entry, packageEvidence, registry, commandRunner)
+	}
+	if item.Kind != "brew" {
+		return Recommendation{}, false
+	}
+	if recommendation, ok := explicitHomebrewBackendRecommendation(item.Name, registry); ok {
 		return recommendation, true
 	}
-	return homebrewGitHubBackendRecommendation(name, githubRepos, registry, commandRunner)
+	return homebrewGitHubBackendRecommendation(item.Name, githubRepos, registry, commandRunner)
 }
 
 func explicitHomebrewBackendRecommendation(name string, registry Registry) (Recommendation, bool) {

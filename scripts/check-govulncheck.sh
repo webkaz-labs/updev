@@ -1,17 +1,15 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+source "$(dirname "$0")/lib/go-tool-cache.sh"
+
 version="v1.2.0"
-cache_base="${UPDEV_AUDIT_CACHE_DIR:-${TMPDIR:-/tmp}/updev-audit}"
-cache_root="$cache_base/govulncheck-$version"
-mkdir -p "$cache_root"
+govulncheck="$(updev_go_tool govulncheck golang.org/x/vuln/cmd/govulncheck "$version")"
+cache_base="${UPDEV_AUDIT_CACHE_DIR:-$(updev_lint_cache_base)}"
+updev_prepare_lint_cache "$cache_base"
+run_root="$cache_base/govulncheck-run/$(go env GOVERSION)"
+mkdir -p "$run_root"
 
-export GOPATH="$cache_root/gopath"
-export GOCACHE="$cache_root/gocache"
-export GOMODCACHE="$cache_root/gomodcache"
-export GOBIN="$cache_root/bin"
-
-go install "golang.org/x/vuln/cmd/govulncheck@${version}"
-"$GOBIN/govulncheck" ./...
+GOCACHE="$run_root/gocache" "$govulncheck" ./...
 
 printf 'govulncheck %s: ok\n' "$version"

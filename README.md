@@ -81,9 +81,11 @@ review queue, and JSON output for automation.
   update/security/support views first.
 - **Desired-state checks**: `updev check`, `updev sync`, and `updev status`
   find missing, extra, drifted, blocked, and unavailable entries.
-- **Safe Brewfile apply**: `updev apply brewfile` turns missing Homebrew desired
-  items into item-scoped install candidates, applies only gate-approved safe
-  items, and leaves extra/uninstall decisions outside the flow.
+- **Safe package apply**: the compatibility-named `updev apply brewfile`
+  resolves Homebrew desired items from the active Brewfile and mise
+  `[bootstrap.packages]`, turns only missing items into item-scoped candidates,
+  applies gate-approved safe items, and leaves extra/uninstall decisions
+  outside the flow.
 - **mise hygiene**: `updev fix mise` previews rewrites for unsafe `latest` pins
   while keeping Node `lts` as the only allowed LTS shortcut.
 - **Security review**: `updev security scan`, `gate`, `review`, and `policy`
@@ -173,7 +175,7 @@ updev doctor support --format json
 |------|-------------|
 | macOS preview | Homebrew and mise installed locally. |
 | Homebrew provider | `brew` must support JSON output such as `brew outdated --json=v2` and, on Homebrew 6, `brew trust --json=v1`; package mutation still runs through Homebrew. updev uses local tap metadata for safety discovery, reports non-official tap trust gaps, and exposes confirmed item-scoped `brew trust --formula` / `--cask` actions from security details. |
-| mise provider | `mise` must support `mise ls --current --json --cd <dir>`, `mise outdated --json --cd <dir>`, and scoped `mise upgrade --minimum-release-age <duration> <tool...>`. `updev` validates exact pins, rejects unsafe `latest` entries, and enforces its own age gate without requiring a global mise-native age setting. |
+| mise provider | `mise` v2026.8.2 or newer must support `mise ls --current --json --cd <dir>`, `mise outdated --json --cd <dir>`, scoped `mise upgrade --minimum-release-age <duration> <tool...>`, bootstrap status/plan JSON, and package apply dry-run. `updev` validates exact pins, rejects unsafe `latest` entries, and enforces its own age gate without requiring a global mise-native age setting. |
 | Description translation | Optional. `codex` on `PATH` enables Japanese description-cache updates for `updev list`; without it, `updev` keeps running with English descriptions. |
 | Manual app inventory | macOS `.app` bundle metadata is read locally; Mac App Store evidence is used only when receipts or `mas` evidence are available. |
 | Security gates | Network evidence is best-effort and provider-scoped. Strict mode can hold Homebrew updates, mise updates, and opt-in VS Code extension updates when required evidence is missing. Homebrew 6 trust remains a human security decision; whole-tap trust is confirmation-only and never runs automatically during update. |
@@ -185,7 +187,7 @@ Known-good validation for the current release gate:
 | macOS | primary supported preview platform. |
 | Homebrew | `6.0.0-2-g1cd9e81` locally; CI uses mocked provider output. |
 | mise | `2026.6.2 macos-x64`; GitHub backend install smoke is covered separately. |
-| Go | module and repository mise config use `go1.26.4` for local validation. |
+| Go | module and repository mise config use `go1.26.5` for local validation. |
 | GitHub Actions | CI uses GitHub-maintained Node 24 action majors; release uses the official GoReleaser action plus GitHub artifact attestations. |
 
 These are validation anchors, not permanent minimum versions. If a newer
@@ -274,7 +276,7 @@ candidate when strict mode is intentionally holding it.
 | `updev status` / `updev st` | Show compact current state. |
 | `updev check` / `updev ck` | Validate manifests and provider consistency. |
 | `updev sync` | Compare desired and live state without mutating. |
-| `updev apply brewfile --safe-only` | Apply gate-approved missing Homebrew desired items with item-scoped commands. |
+| `updev apply brewfile --safe-only` | Apply gate-approved missing resolved Homebrew desired items with item-scoped commands. |
 | `updev last` | Re-open the cached last update dashboard on TTY. |
 | `updev fix mise` | Preview or apply safe mise manifest pin fixes. |
 | `updev security scan` | Run explicit broad security checks. |
@@ -359,6 +361,7 @@ preference_order = [
   "package-manager/native",
   "vendor/manual",
 ]
+keep_homebrew = ["brew/chezmoi", "brew/ripgrep", "brew/podman"]
 ```
 
 Public defaults are conservative: `updev` can inspect live evidence and detected
@@ -409,6 +412,10 @@ can use the same `provider/backend` shape. Deprecated mise backends such as
 `mise/ubi` and legacy plugin backends such as `mise/asdf` are recognized when
 already present or explicitly configured, but they are not part of the default
 recommendation order.
+`keep_homebrew` is also optional. Use canonical `brew/<name>` or `cask/<name>`
+identities only for local bootstrap, native integration, or dependency reasons
+that make Homebrew ownership intentional. Registry-first backend convergence
+excludes these items before proposing a mise migration.
 
 ## Support Status
 
@@ -429,8 +436,11 @@ scripts/check-staticcheck.sh
 go vet ./...
 go test ./...
 go build ./...
-shellcheck -S warning scripts/*.sh
+shellcheck -S warning scripts/*.sh scripts/lib/*.sh
 scripts/check-docs.sh
+scripts/check-validation-blocks.sh
+scripts/check-mise-contract.sh
+scripts/test-tui-shell-use.sh all
 mise run audit
 git diff --check
 ```
@@ -443,18 +453,24 @@ mise run lint
 mise run check
 mise run audit
 mise run docs-check
+mise run validation-check
+mise run test-tui
+mise run mise-contract
 ```
 
 ## Documentation
 
 | Document | Purpose |
 |----------|---------|
-| [docs/DESIGN.md](docs/DESIGN.md) | Mission, product boundaries, v1 completion goal. |
-| [docs/CLI.md](docs/CLI.md) | Command surface, text/JSON/TUI behavior, localization. |
-| [docs/DATA-MODEL.md](docs/DATA-MODEL.md) | Desired state, config, cache, reports, status vocabulary. |
+| [docs/PRODUCT.md](docs/PRODUCT.md) | Mission, product boundaries, v1 completion goal. |
+| [docs/UX.md](docs/UX.md) | Interactive routes, focus/return behavior, review flows, and TTY lifecycle. |
+| [docs/DESIGN.md](docs/DESIGN.md) | TUI visual design system and visual baseline IDs. |
+| [docs/CLI.md](docs/CLI.md) | Stable command/output index; links to command, interactive, and automation contracts. |
+| [docs/DATA-MODEL.md](docs/DATA-MODEL.md) | Stable state-model index; links to desired-state, config/apply, inventory/report, and manual-state contracts. |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Provider model, package layout, runner/test seams. |
 | [docs/SECURITY.md](docs/SECURITY.md) | Security scan/gate/review/policy behavior. |
 | [docs/ROADMAP.md](docs/ROADMAP.md) | Current state and later target ordering. |
+| [docs/VALIDATION.md](docs/VALIDATION.md) | Standard gates and executable release smoke; links to domain-specific validation checklists. |
 | [docs/RELEASE.md](docs/RELEASE.md) | Active release scope, non-goals, blockers, and release-ready criteria. |
 | [docs/EXTERNAL-MANAGEMENT.md](docs/EXTERNAL-MANAGEMENT.md) | Manual/external app and installer direction. |
 | [docs/agent/USAGE.md](docs/agent/USAGE.md) | Agent and automation workflow guidance. |

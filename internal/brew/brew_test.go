@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/webkaz-labs/updev/internal/mise"
+	"github.com/webkaz-labs/updev/internal/plan"
 	"github.com/webkaz-labs/updev/internal/runner"
 )
 
@@ -115,6 +117,46 @@ func TestProviderDesiredUsesSourceRootUnlessHomeDesiredEnabled(t *testing.T) {
 	}
 	if len(homeItems) != 1 || homeItems[0].Name != "home-tool" {
 		t.Fatalf("expected home rendered desired state, got %#v", homeItems)
+	}
+}
+
+func TestDesiredFromBootstrapPackagesNormalizesHomebrewManagersAndTaps(t *testing.T) {
+	items := DesiredFromBootstrapPackages(mise.BootstrapPackageSet{Packages: []mise.BootstrapPackageDesired{
+		{Manager: "brew", Name: "homebrew/core/btop", RequestedVersion: "latest"},
+		{Manager: "brew-cask", Name: "example/tools/app", RequestedVersion: "latest"},
+		{Manager: "apt", Name: "curl", RequestedVersion: "latest"},
+	}}, []mise.BootstrapTapDesired{{Name: "another/tap"}})
+	got := []string{}
+	for _, item := range items {
+		got = append(got, item.Kind+":"+item.Name)
+		if item.Detail != MiseBootstrapDesiredDetail {
+			t.Fatalf("expected mise desired evidence, got %#v", item)
+		}
+	}
+	want := "brew:btop,cask:app,tap:another/tap,tap:example/tools,tap:homebrew/core"
+	if strings.Join(got, ",") != want {
+		t.Fatalf("unexpected normalized bootstrap desired: %v", got)
+	}
+}
+
+func TestProviderDesiredMergesBootstrapOwnershipWithoutDuplicates(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "Brewfile.tmpl"), []byte("brew \"git\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	items, err := (Provider{Root: root, AdditionalDesired: []plan.Item{
+		{Provider: "brew", Kind: "brew", Name: "btop", Detail: MiseBootstrapDesiredDetail},
+		{Provider: "brew", Kind: "brew", Name: "git", Detail: MiseBootstrapDesiredDetail},
+	}}).Desired(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := []string{}
+	for _, item := range items {
+		got = append(got, item.Kind+":"+item.Name)
+	}
+	if strings.Join(got, ",") != "brew:btop,brew:git" {
+		t.Fatalf("unexpected merged desired items: %v", got)
 	}
 }
 

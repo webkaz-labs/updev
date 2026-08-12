@@ -91,10 +91,12 @@ func buildBackendPlanReport(ctx context.Context, opts backendOptions) backendPla
 }
 
 func buildBackendPlanReportWithRunner(ctx context.Context, opts backendOptions, commandRunner runner.Runner) backendPlanReport {
+	config := loadUpdevConfig()
 	return backend.BuildReport(ctx, backend.Options{
 		Command:         opts.command,
 		Root:            opts.root,
-		PreferenceOrder: loadUpdevConfig().Backends.PreferenceOrder,
+		PreferenceOrder: config.Backends.PreferenceOrder,
+		KeepHomebrew:    config.Backends.KeepHomebrew,
 	}, commandRunner)
 }
 
@@ -108,10 +110,6 @@ func backendPreferenceTiersWithConfig(config updevConfig) []backendPreferenceTie
 
 func backendPreferenceTierFor(provider string, name string) backendPreferenceTier {
 	return backend.Registry{PreferenceOrder: loadUpdevConfig().Backends.PreferenceOrder}.PreferenceTierFor(provider, name)
-}
-
-func backendPreferenceTierFromLabel(label string) backendPreferenceTier {
-	return backend.PreferenceTierFromLabel(label)
 }
 
 func backendSourceNamePrefix(name string) string {
@@ -165,7 +163,7 @@ func printBackendPlanText(w io.Writer, report backendPlanReport, color bool) {
 	}, rows, color)
 	fmt.Fprintln(w, "\n"+tr("next", "次"))
 	fmt.Fprintln(w, "  "+tr("review candidates manually; interactive updev can apply safe mise backend rewrites and covered old-entry removals after confirmation", "候補を手動確認します。interactive updev では安全な mise backend rewrite とカバー済み old-entry 削除だけ確認後に適用できます"))
-	fmt.Fprintln(w, "  "+tr("Brewfile ownership removal is available only when mise already owns the tool; missing mise entries remain review-only", "Brewfile ownership 削除は mise が既に tool を所有している場合だけ可能です。mise entry が無いものは review-only です"))
+	fmt.Fprintln(w, "  "+tr("registry-backed, platform-compatible rows can add a pinned mise entry; Brewfile ownership removal remains a separate verified step", "registry-backed かつ platform 対応済みの行は pin 済み mise entry を追加できます。Brewfile ownership 削除は検証後の別 step です"))
 }
 
 func backendFindingActionText(finding backendFinding) string {
@@ -194,6 +192,9 @@ func backendFindingActionText(finding backendFinding) string {
 	case "homebrew-to-mise":
 		if finding.RecommendedSpec != "" {
 			return fmt.Sprintf("%s を Brewfile に残す理由を確認してください。bootstrap や cask 依存に Homebrew が必要なら維持します", finding.Name)
+		}
+		if finding.CurrentSpec != "" && finding.ReleaseAssetStatus == "compatible" {
+			return fmt.Sprintf("%s@%s を mise desired state に追加できます。検証完了まで Brewfile ownership は維持します", finding.RecommendedName, finding.CurrentSpec)
 		}
 		return fmt.Sprintf("Brewfile からの削除を検討する前に %s を mise に追加できるか確認してください", finding.RecommendedName)
 	case "mise-backend-rewrite":
@@ -231,6 +232,8 @@ func localizedBackendReasonText(value string) string {
 		return value
 	}
 	switch value {
+	case "source: mise registry --json":
+		return "情報源: mise registry --json"
 	case "stable mise core tool is preferred for CLI developer tools":
 		return "CLI 開発ツールは安定した mise core tool を優先します"
 	case "fd has a registry-backed mise/aqua path":
@@ -254,7 +257,18 @@ func localizedBackendReasonText(value string) string {
 	case "mise-backend-rewrite":
 		return "mise backend の書き換え確認"
 	default:
-		return value
+		switch {
+		case strings.HasPrefix(value, "registry backend: "):
+			return "registry backend: " + strings.TrimPrefix(value, "registry backend: ")
+		case strings.HasPrefix(value, "platform check: isolated mise lock for "):
+			return "platform 確認: " + strings.TrimPrefix(value, "platform check: isolated mise lock for ")
+		case strings.HasPrefix(value, "mise registry resolves ") && strings.Contains(value, "does not resolve for the current platform"):
+			return "mise registry の候補は確認できましたが、pin version を現在の platform 向けに解決できません"
+		case strings.HasPrefix(value, "mise registry resolves "):
+			return "mise registry と現在の platform 向け pin version 解決を確認済みです"
+		default:
+			return value
+		}
 	}
 }
 
@@ -359,17 +373,59 @@ func backendFindingDetailRow(finding backendFinding) detailBrowserRow {
 		metadata = append(metadata, tr("release asset sample: ", "release asset サンプル: ")+strings.Join(finding.ReleaseAssets, ", "))
 	}
 	for _, evidence := range finding.SourceEvidence {
-		metadata = append(metadata, tr("source evidence: ", "根拠: ")+evidence)
+		metadata = append(metadata, tr("source evidence: ", "根拠: ")+localizedBackendReasonText(evidence))
+	}
+	if reason := localizedBackendReasonText(finding.Reason); reason != "" {
+		metadata = append(metadata, tr("reason: ", "理由: ")+reason)
 	}
 	metadata = append(metadata, tr("applyability: ", "適用可否: ")+backendFindingApplyability(finding))
+	actions := backendDetailActions(finding)
 	return detailBrowserRow{
 		Title:    finding.Name + " -> " + finding.RecommendedName,
 		Status:   string(finding.Status),
-		Summary:  localizedBackendReasonText(finding.Reason),
+		Summary:  backendFindingCompactSummary(finding),
 		Detail:   backendFindingActionText(finding),
 		Metadata: metadata,
-		Actions:  backendDetailActions(finding),
+		Actions:  actions,
+		Columns: []string{
+			string(finding.Status),
+			finding.Type,
+			firstNonEmpty(finding.Provider, "-") + "/" + firstNonEmpty(finding.Kind, "-"),
+			finding.Name,
+			firstNonEmpty(finding.RecommendedProvider, "-") + "/" + firstNonEmpty(finding.RecommendedName, "-"),
+			backendFindingCompactSummary(finding),
+			detailActionCountText(actions),
+		},
+		ColumnHeaders: backendFindingDetailColumns(),
 	}
+}
+
+func backendFindingDetailColumns() []reviewui.DetailColumn {
+	return []reviewui.DetailColumn{
+		{Header: tr("status", "状態"), Min: 6, Max: 9},
+		{Header: tr("type", "種別"), Min: 12, Max: 24},
+		{Header: tr("current", "現在"), Min: 8, Max: 18},
+		{Header: tr("name", "名前"), Min: 10, Max: 30},
+		{Header: tr("target", "候補"), Min: 12, Max: 36},
+		{Header: tr("reason", "理由"), Min: 16, Max: 56},
+		{Header: tr("action", "操作"), Min: 4, Max: 6},
+	}
+}
+
+func backendFindingCompactSummary(finding backendFinding) string {
+	if finding.RecommendedProvider != "" || finding.RecommendedName != "" {
+		target := strings.Trim(strings.TrimSpace(finding.RecommendedProvider)+"/"+strings.TrimSpace(finding.RecommendedName), "/")
+		if target != "" {
+			return fmt.Sprintf(tr("candidate: %s", "候補: %s"), truncate(target, 56))
+		}
+	}
+	if text := compactKnownListEvidenceText(localizedBackendReasonText(finding.Reason)); text != "" {
+		return text
+	}
+	if finding.RecommendationKind != "" {
+		return localizedBackendReasonText(finding.RecommendationKind)
+	}
+	return truncate(strings.Join(strings.Fields(localizedBackendReasonText(finding.Reason)), " "), 96)
 }
 
 func backendPlanActionableCount(report backendPlanReport) int {
@@ -391,6 +447,16 @@ func backendDetailActions(finding backendFinding) []detailBrowserAction {
 			Value:       backendDetailActionValue("remove-brew", finding.Kind+":"+finding.Name, finding.RecommendedName),
 			Label:       tr("remove Brewfile entry", "Brewfile entry を削除する"),
 			Description: tr("remove the Homebrew desired-state entry because mise already owns the tool", "mise が既に所有しているため Homebrew desired-state entry を削除します"),
+		}}
+	}
+	if finding.Type == "homebrew-to-mise" && finding.RecommendationKind == "recommendation" && finding.RecommendedSpec == "" && finding.CurrentSpec != "" {
+		if finding.Kind == "" || finding.Name == "" || finding.RecommendedName == "" {
+			return nil
+		}
+		return []detailBrowserAction{{
+			Value:       backendDetailActionValue("adopt-mise", finding.Kind+":"+finding.Name, finding.RecommendedName+"@"+finding.CurrentSpec),
+			Label:       tr("add pinned mise entry", "pin 済み mise entry を追加する"),
+			Description: tr("add the installed Homebrew version to mise desired state without removing Brewfile ownership", "installed Homebrew version を mise desired state に追加し、Brewfile ownership は維持します"),
 		}}
 	}
 	if finding.Type != "mise-backend-rewrite" || !finding.RewriteAllowed {
@@ -462,7 +528,10 @@ func backendFindingApplyability(finding backendFinding) string {
 		if finding.RecommendedSpec != "" {
 			return tr("applyable: remove the Homebrew desired-state entry because mise already owns the tool", "適用可能: mise が既に所有しているため Homebrew desired-state entry を削除します")
 		}
-		return tr("review-only; add or verify the mise entry before removing Brewfile ownership", "review-only。Brewfile ownership を外す前に mise entry を追加または確認してください")
+		if finding.CurrentSpec != "" && finding.ReleaseAssetStatus == "compatible" {
+			return tr("applyable: add the pinned mise desired entry; Brewfile ownership stays until verification", "適用可能: pin 済み mise desired entry を追加します。確認完了まで Brewfile ownership は維持します")
+		}
+		return tr("review-only; verify a pinned mise entry before removing Brewfile ownership", "review-only。Brewfile ownership を外す前に pin 済み mise entry を確認してください")
 	case finding.Type == "mise-backend-rewrite" && !finding.RewriteAllowed:
 		return tr("review-only; rewrite is not allowed for this finding", "review-only。この検出では rewrite は許可されていません")
 	case finding.Type == "mise-backend-rewrite" && finding.RecommendedSpec == "":

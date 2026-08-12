@@ -140,7 +140,7 @@ func runList(opts listOptions) int {
 		if !opts.refresh {
 			maxAge = 0
 		}
-		result = collectInventoryCachedWithOptions(context.Background(), opts.root, opts.refresh, maxAge, inventoryOptions{IncludeVSCode: listIncludesVSCode(opts)})
+		result = collectInventoryCachedWithOptions(context.Background(), opts.root, opts.refresh, maxAge, runner.Local{}, inventoryOptions{IncludeVSCode: listIncludesVSCode(opts)})
 		progress.Done()
 	}
 	report := buildListReport(result, opts)
@@ -1847,11 +1847,6 @@ func listReportEvidenceSummary(report listReport, color bool) string {
 	return listEvidenceCountSummary(updates, security, backends, color)
 }
 
-func listEvidenceSummary(evidence plan.EvidenceIndex, color bool) string {
-	updates, security, backends := plan.EvidenceCounts(evidence)
-	return listEvidenceCountSummary(updates, security, backends, color)
-}
-
 func listEvidenceCountSummary(updates int, security int, backends int, color bool) string {
 	return fmt.Sprintf(
 		"%s=%s %s=%s %s=%s",
@@ -2589,14 +2584,6 @@ func inventoryItemManagementSummary(item plan.Item) string {
 	}
 }
 
-func detailActionSummary(action detailBrowserAction) string {
-	summary := strings.TrimSpace(action.Label)
-	if strings.TrimSpace(action.Description) != "" {
-		summary += " - " + localizedListEvidenceText(action.Description)
-	}
-	return summary
-}
-
 func derivedListReport(report listReport, opts listOptions) listReport {
 	if opts.root == "" {
 		opts.root = report.Root
@@ -2660,15 +2647,27 @@ func itemDetailRow(root string, item plan.Item, evidence plan.EvidenceIndex) det
 	}
 	itemEvidence := itemListEvidence(item, evidence)
 	metadata = append(metadata, listItemEvidenceMetadata(itemEvidence)...)
-	actions := detailActionsFromReviewActions(itemToolRowActions(root, item, evidence))
+	reviewActions := itemToolRowActions(root, item, evidence)
+	actions := detailActionsFromReviewActions(reviewActions)
 	metadata = append(metadata, actionRouteEvidence(actions)...)
+	status := inventoryannotate.ItemStatusLabel(item)
 	return detailBrowserRow{
 		Title:    item.Provider + "/" + item.Kind + " " + item.Name,
-		Status:   inventoryannotate.ItemStatusLabel(item),
-		Summary:  firstNonEmpty(item.Detail, listItemEvidenceSummary(itemEvidence), item.Version),
+		Status:   status,
+		Summary:  compactInventoryRowSummary(firstNonEmpty(listItemEvidenceSummary(itemEvidence), item.Detail, item.Version)),
 		Detail:   inventoryItemDetail(item, itemEvidence, actions),
 		Metadata: metadata,
 		Actions:  actions,
+		Columns: []string{
+			status,
+			item.Provider + "/" + item.Kind,
+			item.Name,
+			item.Version,
+			"-",
+			detailReviewActionBadge(reviewActions),
+			compactInventoryRowSummary(firstNonEmpty(listItemEvidenceSummary(itemEvidence), item.Detail, item.Version)),
+		},
+		ColumnHeaders: inventoryDetailColumns(),
 	}
 }
 
@@ -2686,11 +2685,48 @@ func toolDetailRow(section toolSection, row toolRow) detailBrowserRow {
 	return detailBrowserRow{
 		Title:    section.Title + " " + row.Name,
 		Status:   state,
-		Summary:  firstNonEmpty(row.Detail, row.Version),
+		Summary:  compactInventoryRowSummary(firstNonEmpty(row.Detail, row.Version)),
 		Detail:   row.Detail,
 		Metadata: metadata,
 		Actions:  actions,
+		Columns: []string{
+			state,
+			section.Name,
+			row.Name,
+			row.Version,
+			row.Wanted,
+			detailReviewActionBadge(row.Actions),
+			compactInventoryRowSummary(firstNonEmpty(row.Detail, row.Version)),
+		},
+		ColumnHeaders: inventoryDetailColumns(),
 	}
+}
+
+func inventoryDetailColumns() []reviewui.DetailColumn {
+	return []reviewui.DetailColumn{
+		{Header: tr("status", "状態"), Min: 6, Max: 9},
+		{Header: "group", Min: 8, Max: 24},
+		{Header: tr("name", "名前"), Min: 10, Max: 32},
+		{Header: "version", Min: 7, Max: 16},
+		{Header: "wanted", Min: 6, Max: 12},
+		{Header: tr("check", "確認"), Min: 4, Max: 18},
+		{Header: tr("detail", "詳細"), Min: 16, Max: 64},
+	}
+}
+
+func detailReviewActionBadge(actions []reviewui.Action) string {
+	if len(actions) == 0 {
+		return "-"
+	}
+	inputs := make([]textui.ActionBadgeInput, 0, len(actions))
+	for _, action := range actions {
+		inputs = append(inputs, textui.ActionBadgeInput{
+			Label:  action.Label,
+			Badge:  action.Badge,
+			Status: action.BadgeStatus,
+		})
+	}
+	return textui.ActionBadgeWithWidth(inputs, 18, false)
 }
 
 func brewfileApplyRouteRows(root string, route listRouteAction) []detailBrowserRow {
@@ -2727,14 +2763,22 @@ func routeMatchesBrewfileApplyCandidate(route listRouteAction, candidate brewfil
 
 func brewfileApplyCandidateDetailRow(candidate brewfileApplyCandidate) detailBrowserRow {
 	metadata := []string{
+		"identity: " + candidate.Identity,
 		"provider: " + candidate.Provider,
 		"kind: " + candidate.Kind,
 		"name: " + candidate.Name,
+		"desired source: " + candidate.DesiredSource,
+		"executor: " + candidate.Executor,
 		"decision: " + candidate.Decision,
-		"command: " + brew.JoinCommand(candidate.Command),
+	}
+	if len(candidate.Command) > 0 {
+		metadata = append(metadata, "command: "+brew.JoinCommand(candidate.Command))
 	}
 	if candidate.Category != "" {
 		metadata = append(metadata, "category: "+candidate.Category)
+	}
+	if candidate.Reason != "" {
+		metadata = append(metadata, "reason: "+localizedListEvidenceText(candidate.Reason))
 	}
 	for _, evidence := range candidate.Evidence {
 		metadata = append(metadata, "evidence: "+localizedListEvidenceText(evidence))
@@ -2746,10 +2790,41 @@ func brewfileApplyCandidateDetailRow(candidate brewfileApplyCandidate) detailBro
 	return detailBrowserRow{
 		Title:    candidate.Provider + "/" + candidate.Kind + " " + candidate.Name,
 		Status:   candidate.Decision,
-		Summary:  candidate.Reason,
+		Summary:  compactInventoryRowSummary(candidate.Reason),
 		Detail:   detail,
 		Metadata: metadata,
+		Columns: []string{
+			candidate.Decision,
+			candidate.Provider + "/" + candidate.Kind,
+			candidate.Name,
+			firstNonEmpty(candidate.Executor, "-"),
+			compactInventoryRowSummary(candidate.Reason),
+			firstNonEmpty(brew.JoinCommand(candidate.Command), "-"),
+		},
+		ColumnHeaders: brewfileApplyDetailColumns(),
 	}
+}
+
+func brewfileApplyDetailColumns() []reviewui.DetailColumn {
+	return []reviewui.DetailColumn{
+		{Header: tr("decision", "判定"), Min: 6, Max: 8},
+		{Header: "group", Min: 8, Max: 18},
+		{Header: tr("name", "名前"), Min: 10, Max: 32},
+		{Header: "executor", Min: 8, Max: 11},
+		{Header: tr("reason", "理由"), Min: 16, Max: 56},
+		{Header: "command", Min: 12, Max: 48},
+	}
+}
+
+func compactInventoryRowSummary(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	if text := compactListEvidenceText(value); text != "" {
+		return text
+	}
+	return truncate(strings.Join(strings.Fields(localizedListEvidenceText(value)), " "), 96)
 }
 
 func detailActionsFromReviewActions(actions []reviewui.Action) []detailBrowserAction {
@@ -3009,20 +3084,6 @@ func styledToolRow(row toolRow, includeWanted bool, color bool) []string {
 	return reviewui.StyledRow(row, includeWanted, color)
 }
 
-func toolRowDimmed(row toolRow) bool {
-	return reviewui.RowDimmed(row)
-}
-
-func styleVersion(value string, active bool, color bool) string {
-	if value == "" {
-		return value
-	}
-	if active {
-		return textui.StyleVersion(value, color)
-	}
-	return textui.StyleDim(value, color)
-}
-
 func styleInventoryItemVersion(value string, status plan.Status, color bool) string {
 	if value == "" {
 		return value
@@ -3050,16 +3111,6 @@ func styleInventoryItemDetail(value string, status plan.Status, color bool) stri
 	default:
 		return textui.StyleWarning(value, color)
 	}
-}
-
-func styleState(value string, active bool, color bool) string {
-	if value == "" {
-		return value
-	}
-	if active {
-		return textui.StyleVersion(value, color)
-	}
-	return textui.StyleDim(value, color)
 }
 
 func styleDriftCount(count int, color bool) string {
@@ -3623,7 +3674,7 @@ func (m *listHubRouterModel) showWriteResult(result routedWriteResult) {
 
 func (m *listHubRouterModel) refreshAfterWriteAction() {
 	if action, _, _, _, ok := parseBrewDriftAction(m.writeFlow.Action); ok && action == "adopt" {
-		result := collectInventoryCachedWithOptions(context.Background(), m.report.Root, true, inventoryCacheMaxAge, inventoryOptions{IncludeVSCode: includeVSCodeExtensionsByDefault()})
+		result := collectInventoryCachedWithOptions(context.Background(), m.report.Root, true, inventoryCacheMaxAge, runner.Local{}, inventoryOptions{IncludeVSCode: includeVSCodeExtensionsByDefault()})
 		updated := buildListReport(result, listOptions{root: m.report.Root})
 		if !m.backendLoading {
 			updated.Evidence = addBackendListEvidence(updated.Evidence, m.backendPlan)
@@ -4096,6 +4147,12 @@ func routedDetailWriteActionSpec(value string) (detailWriteActionSpec, bool) {
 			return detailWriteActionSpec{}, false
 		}
 		switch action {
+		case "adopt-mise":
+			return detailWriteActionSpec{
+				Title:       tr("backend convergence action", "backend 整理操作"),
+				Prompt:      fmt.Sprintf(tr("Add pinned mise entry %s for %s?", "pin 済み mise entry %s を %s 向けに追加しますか?"), recommended, current),
+				Description: tr("Write mise desired state only. Keep Brewfile ownership and do not install or uninstall packages.", "mise desired state だけを書き込みます。Brewfile ownership を維持し、package の install/uninstall は行いません。"),
+			}, true
 		case "remove-brew":
 			return detailWriteActionSpec{
 				Title:       tr("backend convergence action", "backend 整理操作"),

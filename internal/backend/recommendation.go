@@ -44,6 +44,9 @@ func homebrewRecommendationAction(item plan.Item, recommendation Recommendation,
 	if alreadyDesired {
 		return fmt.Sprintf("review why %s remains in Brewfile before removing; keep it if bootstrap or cask dependency requires Homebrew", item.Name)
 	}
+	if recommendation.Version != "" {
+		return fmt.Sprintf("add pinned mise entry %s@%s and preserve Brewfile ownership until the mise install is verified", recommendation.Name, recommendation.Version)
+	}
 	return fmt.Sprintf("review adding %s to mise before considering Brewfile removal", recommendation.Name)
 }
 

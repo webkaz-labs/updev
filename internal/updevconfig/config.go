@@ -11,15 +11,16 @@ import (
 )
 
 type Config struct {
-	Security     SecurityConfig
-	Providers    ProvidersConfig
-	Update       UpdateConfig
-	UI           UIConfig
-	Sources      SourcesConfig
-	Brewfile     BrewfileConfig
-	ChezmoiHooks ChezmoiHooksConfig
-	Inventory    InventoryConfig
-	Backends     BackendsConfig
+	Security      SecurityConfig
+	Providers     ProvidersConfig
+	Update        UpdateConfig
+	UI            UIConfig
+	Sources       SourcesConfig
+	Brewfile      BrewfileConfig
+	ChezmoiHooks  ChezmoiHooksConfig
+	MiseBootstrap MiseBootstrapConfig
+	Inventory     InventoryConfig
+	Backends      BackendsConfig
 }
 
 type SecurityConfig struct {
@@ -82,6 +83,10 @@ type ChezmoiBrewfileHookConfig struct {
 	Mode *string
 }
 
+type MiseBootstrapConfig struct {
+	PackageMetadata *string
+}
+
 type InventoryConfig struct {
 	StateDir  *string
 	Overrides *string
@@ -110,6 +115,7 @@ type InventoryReportConfig struct {
 
 type BackendsConfig struct {
 	PreferenceOrder []string
+	KeepHomebrew    []string
 }
 
 func Load() Config {
@@ -259,6 +265,10 @@ func ParseTOMLWithError(data string) (Config, error) {
 				normalized := strings.ToLower(strings.TrimSpace(stringValue))
 				config.ChezmoiHooks.Brewfile.Mode = &normalized
 			}
+		case "mise_bootstrap":
+			if key == "package_metadata" {
+				config.MiseBootstrap.PackageMetadata = parseNonEmptyStringPtr(stringValue)
+			}
 		case "inventory":
 			switch key {
 			case "state_dir":
@@ -286,6 +296,8 @@ func ParseTOMLWithError(data string) (Config, error) {
 			switch key {
 			case "preference_order":
 				config.Backends.PreferenceOrder = ParseStringArray(value)
+			case "keep_homebrew":
+				config.Backends.KeepHomebrew = ParseStringArray(value)
 			}
 		case "inventory.reports":
 			if len(config.Inventory.Reports) == 0 {
@@ -308,6 +320,13 @@ func ParseTOMLWithError(data string) (Config, error) {
 		return Config{}, err
 	}
 	return config, nil
+}
+
+func PackageMetadataPath(config Config) string {
+	if config.MiseBootstrap.PackageMetadata == nil {
+		return updevpath.PackageMetadataFile()
+	}
+	return updevpath.ResolveConfigRelative(*config.MiseBootstrap.PackageMetadata, ConfigPath())
 }
 
 func ValidBrewfileDesiredMode(value string) bool {

@@ -81,12 +81,6 @@ func runDetailBrowserWithState(title string, rows []detailBrowserRow, state deta
 	return reviewui.RunDetailBrowserModel(newDetailBrowserModel(title, rows, state, color))
 }
 
-func runPrimaryActionBrowserWithState(title string, rows []detailBrowserRow, state detailBrowserState, color bool) (detailBrowserState, error) {
-	model := newDetailBrowserModel(title, rows, state, color)
-	model.PrimaryEnterAction = true
-	return reviewui.RunDetailBrowserModel(model)
-}
-
 func newDetailBrowserModel(title string, rows []detailBrowserRow, state detailBrowserState, color bool) detailBrowserModel {
 	return reviewui.NewDetailBrowserModel(reviewui.DetailBrowserOptions{
 		Title:   title,
@@ -163,39 +157,7 @@ func interactiveBrowserHelpLines() []string {
 	return detailBrowserLabelsForLocale().HelpLines
 }
 
-func detailBrowserExpandedLines(row detailBrowserRow) []string {
-	return reviewui.DetailBrowserExpandedLines(row)
-}
-
-func detailBrowserExpandedLinesWithWidth(row detailBrowserRow, width int) []string {
-	return reviewui.DetailBrowserExpandedLinesWithWidth(row, width)
-}
-
-func detailBrowserExpandedLinesStyled(row detailBrowserRow, width int, color bool) []string {
-	return reviewui.DetailBrowserExpandedLinesStyled(row, width, color)
-}
-
-func detailBrowserExpandedLinesStyledFocus(row detailBrowserRow, width int, color bool, actionFocus int) []string {
-	return reviewui.DetailBrowserExpandedLinesStyledFocus(row, width, color, actionFocus)
-}
-
-func detailBrowserDetailLines(detail string, width int, color bool) []string {
-	return reviewui.DetailBrowserDetailLines(detail, width, color)
-}
-
-func detailBrowserCollapsedSummary(row detailBrowserRow) string {
-	return reviewui.DetailBrowserCollapsedSummary(row)
-}
-
-func detailBrowserActionKeyIndex(key string) (int, bool) {
-	return reviewui.DetailBrowserActionKeyIndex(key)
-}
-
-type (
-	toolTableBrowserModel = reviewui.TableBrowserModel
-	toolTableMouseMsg     = reviewui.TableMouseMsg
-	toolTableWheelMsg     = reviewui.TableWheelMsg
-)
+type toolTableBrowserModel = reviewui.TableBrowserModel
 
 func runToolTableBrowserWithState(title string, sections []toolSection, state detailBrowserState, color bool) (detailBrowserState, error) {
 	return reviewui.RunTableBrowserWithState(title, sections, state, tableBrowserLabels(), tableBrowserActions(), color)
@@ -205,52 +167,12 @@ func runToolTableBrowserWithStateAndActions(title string, sections []toolSection
 	return reviewui.RunTableBrowserWithState(title, sections, state, labels, actions, color)
 }
 
-func newToolTableBrowserModel(title string, sections []toolSection, state detailBrowserState, color bool) toolTableBrowserModel {
-	return reviewui.NewTableBrowserModel(title, sections, state, tableBrowserLabels(), tableBrowserActions(), color)
-}
-
 func newToolTableBrowserModelWithActions(title string, sections []toolSection, state detailBrowserState, actions reviewui.BrowserActions, labels reviewui.TableBrowserLabels, color bool) toolTableBrowserModel {
 	return reviewui.NewTableBrowserModel(title, sections, state, labels, actions, color)
 }
 
-func filteredToolSections(sections []toolSection, rawQuery string) []toolSection {
-	return reviewui.FilteredSections(sections, rawQuery)
-}
-
-func toolTableRowMatches(section toolSection, row toolRow, query string) bool {
-	return reviewui.RowMatches(section, row, query)
-}
-
 func toolTableRowCount(sections []toolSection) int {
 	return reviewui.RowCount(sections)
-}
-
-func toolSectionHasWanted(section toolSection) bool {
-	return reviewui.HasWanted(section)
-}
-
-func toolTableColumns(includeWanted bool) []textui.Column {
-	return reviewui.Columns(includeWanted, reviewLabels())
-}
-
-func toolTableStyledRows(rows []toolRow, includeWanted bool, color bool) [][]string {
-	return reviewui.StyledRows(rows, includeWanted, color)
-}
-
-func toolTableHeader(columns []textui.Column, widths []int, color bool) string {
-	return reviewui.Header(columns, widths, color)
-}
-
-func toolTableRow(row []string, widths []int) string {
-	return reviewui.TableRow(row, widths)
-}
-
-func toolTableExpandedLines(row toolRow) []string {
-	return reviewui.ExpandedLines(row, reviewLabels())
-}
-
-func toolTableVisibleRows(sections []toolSection, offset int, maxBodyLines int, expanded map[int]bool) map[int]bool {
-	return reviewui.TableVisibleRows(sections, offset, maxBodyLines, expanded, reviewLabels())
 }
 
 func tableBrowserActions() reviewui.BrowserActions {

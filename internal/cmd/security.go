@@ -236,18 +236,6 @@ func fetchHomebrewMetadata(ctx context.Context, client *http.Client, apiBase str
 	return brew.FetchMetadata(ctx, client, apiBase, kind, name)
 }
 
-func homebrewPostureFromMetadata(item plan.Item, entry brewSafetyEntry, metadata homebrewMetadata) homebrewPosture {
-	return brew.PostureFromMetadata(item, homebrewAuditManifestEntry(entry), metadata)
-}
-
-func homebrewManifestPosture(item plan.Item, entry brewSafetyEntry, reason string) homebrewPosture {
-	return brew.ManifestPosture(item, homebrewAuditManifestEntry(entry), reason)
-}
-
-func homebrewMetadataUnavailable(item plan.Item, entry brewSafetyEntry, err error) homebrewPosture {
-	return brew.MetadataUnavailable(item, homebrewAuditManifestEntry(entry), err)
-}
-
 func homebrewAuditManifestEntry(entry brewSafetyEntry) brew.ManifestEntry {
 	return brew.ManifestEntry{
 		RawName:  entry.RawName,
@@ -382,10 +370,6 @@ func homebrewTrustGroupsByTap(targets []homebrewTrustTarget) []homebrewTrustGrou
 
 func homebrewTrustGroupCounts(groups []homebrewTrustGroup) (int, int) {
 	return brew.TrustGroupCounts(groups)
-}
-
-func homebrewUntrustedTargetNames(targets []homebrewTrustTarget, limit int) []string {
-	return brew.UntrustedTargetNames(targets, limit)
 }
 
 func homebrewUntrustedTrustGroupNames(groups []homebrewTrustGroup, limit int) []string {
@@ -561,16 +545,6 @@ type securityFinding = securityadvisory.Finding
 
 type osvBatchRequest = securityadvisory.OSVBatchRequest
 
-type osvQuery = securityadvisory.OSVQuery
-
-type osvPackage = securityadvisory.OSVPackage
-
-type osvBatchResponse = securityadvisory.OSVBatchResponse
-
-type osvResult = securityadvisory.OSVResult
-
-type osvVuln = securityadvisory.OSVVuln
-
 type osvVulnDetail = securityadvisory.OSVVulnDetail
 
 type osvSeverity = securityadvisory.OSVSeverity
@@ -580,16 +554,6 @@ type osvAffected = securityadvisory.OSVAffected
 type osvRange = securityadvisory.OSVRange
 
 type osvRangeEvent = securityadvisory.OSVRangeEvent
-
-type kevCatalog = securityadvisory.KEVCatalog
-
-type kevVulnerability = securityadvisory.KEVVulnerability
-
-type kevFinding = securityadvisory.KEVFinding
-
-type epssResponse = securityadvisory.EPSSResponse
-
-type epssEntry = securityadvisory.EPSSEntry
 
 type epssFinding = securityadvisory.EPSSFinding
 
@@ -1027,9 +991,9 @@ func securityGateStatus(gates []safetyGate) plan.Status {
 	return status
 }
 
-func buildSecurityReport(ctx context.Context, opts securityOptions, client *http.Client, commandRunner commandRunner) securityReport {
+func buildSecurityReport(ctx context.Context, opts securityOptions, client *http.Client, commandRunner runner.Runner) securityReport {
 	includeVSCode := securityIncludesVSCode(opts)
-	result := collectInventoryCachedWithOptions(ctx, opts.root, opts.refresh, inventoryCacheMaxAge, inventoryOptions{IncludeVSCode: includeVSCode})
+	result := collectInventoryCachedWithOptions(ctx, opts.root, opts.refresh, inventoryCacheMaxAge, commandRunner, inventoryOptions{IncludeVSCode: includeVSCode})
 	items := filterSecurityItems(enrichItems(result.Report.Items, legacycache.Load(), manualAppIndex(opts.root)), opts)
 	packages, skipped := securityScopeFromItems(items)
 	packages = filterSecurityPackages(packages, opts)
@@ -1652,20 +1616,6 @@ func securityPackageBinaryCandidates(pkg securityPackage, npmBinaries map[string
 	}
 }
 
-func cargoBinaryCandidates(crate string) []string {
-	if strings.ContainsAny(crate, "/@:") {
-		return nil
-	}
-	switch crate {
-	case "fd-find":
-		return []string{"fd", "fd-find"}
-	case "git-delta":
-		return []string{"delta", "git-delta"}
-	default:
-		return []string{crate}
-	}
-}
-
 func prioritizeSecurityBinaryCandidates(pkg string, binaries []string) []string {
 	out := append([]string(nil), binaries...)
 	preferred := registryaudit.NPMDefaultBinaryName(pkg)
@@ -1729,16 +1679,8 @@ func enrichFindingsWithEPSS(ctx context.Context, client *http.Client, epssURL st
 	return securityadvisory.EnrichWithEPSS(ctx, client, epssURL, findings)
 }
 
-func securityExposureFromPackage(pkg securityPackage) string {
-	return securityadvisory.ExposureFromPackage(pkg)
-}
-
 func securityFindingReason(finding securityFinding) string {
 	return securityadvisory.Reason(finding)
-}
-
-func securityFindingRemediation(finding securityFinding) string {
-	return securityadvisory.Remediation(finding)
 }
 
 func sortSecurityFindings(findings []securityFinding) {
@@ -2238,13 +2180,6 @@ func scannerEvidenceIssue(scanner scannerEvidence) string {
 
 func securityDecisionPriority(decision string) int {
 	return securitygate.DecisionPriority(decision)
-}
-
-func boolPriority(value bool) int {
-	if value {
-		return 1
-	}
-	return 0
 }
 
 func printSecurityGateText(w io.Writer, report securityGateReport) {

@@ -12,7 +12,6 @@ import (
 type (
 	detailBrowserRow    = DetailRow
 	detailBrowserAction = DetailAction
-	detailBrowserState  = State
 )
 
 const (
@@ -23,10 +22,10 @@ const (
 
 type DetailBrowserModel struct {
 	Title               string
-	Rows                []detailBrowserRow
-	FilteredRows        []detailBrowserRow
+	Rows                []DetailRow
+	FilteredRows        []DetailRow
 	FilteredQuery       string
-	State               detailBrowserState
+	State               State
 	Color               bool
 	Height              int
 	Width               int
@@ -78,7 +77,7 @@ type DetailBrowserFormatters struct {
 	LocalizeEvidence func(string) string
 }
 
-func RunDetailBrowserModel(model DetailBrowserModel) (detailBrowserState, error) {
+func RunDetailBrowserModel(model DetailBrowserModel) (State, error) {
 	final, err := tea.NewProgram(model).Run()
 	if err != nil {
 		return model.State, err
@@ -158,7 +157,7 @@ func (m *DetailBrowserModel) clampActionFocus() {
 	}
 }
 
-func DefaultDetailBrowserLabels() DetailBrowserLabels {
+func defaultDetailBrowserLabels() DetailBrowserLabels {
 	return DetailBrowserLabels{
 		Keyboard:             "Up/Down/j/k move, PgUp/PgDn scroll, Enter/Space expand, a/1-9 action, / filter, m mouse, x clear, ? help, b Back, q Exit",
 		PrimaryKeyboard:      "Up/Down/j/k move, PgUp/PgDn scroll, Enter action, Space expand, a/1-9 action, / filter, m mouse, x clear, ? help, b Back, q Exit",
@@ -199,7 +198,7 @@ func DefaultDetailBrowserLabels() DetailBrowserLabels {
 	}
 }
 
-func DefaultDetailBrowserFormatters() DetailBrowserFormatters {
+func defaultDetailBrowserFormatters() DetailBrowserFormatters {
 	return DetailBrowserFormatters{
 		Truncate:         textui.Truncate,
 		OneLine:          func(text string) string { return strings.Join(strings.Fields(text), " ") },
@@ -209,7 +208,7 @@ func DefaultDetailBrowserFormatters() DetailBrowserFormatters {
 }
 
 func fillDetailBrowserLabels(labels DetailBrowserLabels) DetailBrowserLabels {
-	defaults := DefaultDetailBrowserLabels()
+	defaults := defaultDetailBrowserLabels()
 	if labels.Keyboard == "" {
 		labels.Keyboard = defaults.Keyboard
 	}
@@ -265,7 +264,7 @@ func fillDetailBrowserLabels(labels DetailBrowserLabels) DetailBrowserLabels {
 }
 
 func fillDetailBrowserFormatters(format DetailBrowserFormatters) DetailBrowserFormatters {
-	defaults := DefaultDetailBrowserFormatters()
+	defaults := defaultDetailBrowserFormatters()
 	if format.Truncate == nil {
 		format.Truncate = defaults.Truncate
 	}
@@ -369,7 +368,7 @@ func (m DetailBrowserModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "x":
 			m.clearFilter()
 		default:
-			if index, ok := DetailBrowserActionKeyIndex(msg.String()); ok {
+			if index, ok := detailBrowserActionKeyIndex(msg.String()); ok {
 				if m.selectRowAction(index) {
 					return m, tea.Quit
 				}
@@ -593,6 +592,12 @@ func (m DetailBrowserModel) View() tea.View {
 	if len(filteredRows) == 0 {
 		fmt.Fprintf(&out, "  %s\n", textui.StyleDim(m.labels.NoRows, m.Color))
 	}
+	tableHeaders := detailBrowserTableHeaders(filteredRows)
+	tableWidths := detailBrowserTableWidths(tableHeaders, filteredRows, m.Width)
+	if len(tableHeaders) > 0 {
+		fmt.Fprintf(&out, "    %s\n", detailBrowserTableHeaderLine(tableHeaders, tableWidths, m.Color))
+		line++
+	}
 	rowLines := map[int]int{}
 	renderedLines := 0
 	maxBodyLines := m.visibleBodyLines(line)
@@ -612,12 +617,16 @@ func (m DetailBrowserModel) View() tea.View {
 		if m.State.Expanded[index] {
 			marker = "-"
 		}
-		status := row.Status
-		if status == "" {
-			status = "ok"
+		if len(tableHeaders) > 0 && len(row.Columns) > 0 {
+			fmt.Fprintf(&out, "%s%s %s\n", prefix, marker, detailBrowserTableRowLine(row, tableHeaders, tableWidths, m.Color))
+		} else {
+			status := row.Status
+			if status == "" {
+				status = "ok"
+			}
+			summary := m.collapsedSummary(row)
+			fmt.Fprintf(&out, "%s%s %s %s %s\n", prefix, marker, textui.StyleStatus(status, m.Color), textui.StyleName(row.Title, m.Color), detailBrowserStyleSummary(m.format.Truncate(summary, 82), status, m.Color))
 		}
-		summary := m.collapsedSummary(row)
-		fmt.Fprintf(&out, "%s%s %s %s %s\n", prefix, marker, textui.StyleStatus(status, m.Color), textui.StyleName(row.Title, m.Color), detailBrowserStyleSummary(m.format.Truncate(summary, 82), status, m.Color))
 		line++
 		renderedLines++
 		if m.State.Expanded[index] {
@@ -721,10 +730,6 @@ func (m DetailBrowserModel) selectedActionHint() string {
 	return m.labels.FocusedActionsPrefix + strings.Join(parts, ", ")
 }
 
-func interactiveBrowserHelpLines() []string {
-	return DefaultDetailBrowserLabels().HelpLines
-}
-
 func (m DetailBrowserModel) helpLines() []string {
 	lines := m.labels.HelpLines
 	if !m.PrimaryEnterAction {
@@ -822,7 +827,7 @@ func detailBrowserRowBlockVisible(rows []detailBrowserRow, offset int, maxBodyLi
 		}
 		rowLines := 1
 		if expanded[index] {
-			rowLines += len(DetailBrowserExpandedLinesWithWidth(rows[index], width))
+			rowLines += len(detailBrowserExpandedLinesWithWidth(rows[index], width))
 		}
 		if index == selected {
 			return renderedLines+rowLines <= maxBodyLines
@@ -879,6 +884,95 @@ func (m DetailBrowserModel) filteredRows() []detailBrowserRow {
 	return filteredDetailRows(m.Rows, m.State.Query)
 }
 
+func detailBrowserTableHeaders(rows []detailBrowserRow) []DetailColumn {
+	for _, row := range rows {
+		if len(row.Columns) > 0 && len(row.ColumnHeaders) > 0 {
+			return row.ColumnHeaders
+		}
+	}
+	return nil
+}
+
+func detailBrowserTableWidths(headers []DetailColumn, rows []detailBrowserRow, width int) []int {
+	if len(headers) == 0 {
+		return nil
+	}
+	columns := make([]textui.Column, 0, len(headers))
+	for _, header := range headers {
+		columns = append(columns, textui.Column{Header: header.Header, Min: header.Min, Max: header.Max})
+	}
+	values := make([][]string, 0, len(rows))
+	for _, row := range rows {
+		if len(row.Columns) > 0 {
+			values = append(values, row.Columns)
+		}
+	}
+	widths := textui.ColumnWidths(columns, values)
+	if width <= 0 || len(widths) == 0 {
+		return widths
+	}
+	const collapsedPrefixWidth = 4
+	total := collapsedPrefixWidth
+	if len(widths) > 1 {
+		total += len(widths) - 1
+	}
+	for _, columnWidth := range widths {
+		total += columnWidth
+	}
+	if total <= width {
+		return widths
+	}
+	shrink := len(widths) - 1
+	if len(widths) > 1 {
+		shrink = len(widths) - 2
+	}
+	minWidth := headers[shrink].Min
+	if minWidth <= 0 {
+		minWidth = textui.DisplayWidth(headers[shrink].Header)
+	}
+	if minWidth < 8 {
+		minWidth = 8
+	}
+	reduced := widths[shrink] - (total - width)
+	if reduced < minWidth {
+		reduced = minWidth
+	}
+	widths[shrink] = reduced
+	return widths
+}
+
+func detailBrowserTableHeaderLine(headers []DetailColumn, widths []int, color bool) string {
+	values := make([]string, 0, len(headers))
+	for i, header := range headers {
+		width := 0
+		if i < len(widths) {
+			width = widths[i]
+		}
+		values = append(values, textui.StyleLabel(textui.PadRight(textui.Truncate(header.Header, width), width), color))
+	}
+	return strings.Join(values, " ")
+}
+
+func detailBrowserTableRowLine(row detailBrowserRow, headers []DetailColumn, widths []int, color bool) string {
+	values := make([]string, 0, len(headers))
+	for i := range headers {
+		value := ""
+		if i < len(row.Columns) {
+			value = row.Columns[i]
+		}
+		width := 0
+		if i < len(widths) {
+			width = widths[i]
+		}
+		value = textui.PadRight(textui.Truncate(value, width), width)
+		if i == 0 {
+			value = textui.StyleStatusText(value, row.Status, color)
+		}
+		values = append(values, value)
+	}
+	return strings.Join(values, " ")
+}
+
 func (m *DetailBrowserModel) refreshFilteredRows() {
 	m.FilteredQuery = strings.TrimSpace(strings.ToLower(m.State.Query))
 	m.FilteredRows = filteredDetailRows(m.Rows, m.State.Query)
@@ -899,7 +993,8 @@ func filteredDetailRows(rows []detailBrowserRow, rawQuery string) []detailBrowse
 }
 
 func detailBrowserRowMatches(row detailBrowserRow, query string) bool {
-	parts := append([]string{row.Title, row.Status, row.Summary, row.Detail}, row.Metadata...)
+	parts := append([]string{row.Title, row.Status, row.Summary, row.Detail}, row.Columns...)
+	parts = append(parts, row.Metadata...)
 	for _, action := range row.Actions {
 		parts = append(parts, action.Label, action.Description)
 	}
@@ -907,20 +1002,16 @@ func detailBrowserRowMatches(row detailBrowserRow, query string) bool {
 	return strings.Contains(haystack, query)
 }
 
-func DetailBrowserExpandedLines(row detailBrowserRow) []string {
-	return DetailBrowserExpandedLinesWithWidth(row, 0)
+func detailBrowserExpandedLinesWithWidth(row detailBrowserRow, width int) []string {
+	return detailBrowserExpandedLinesStyled(row, width, false)
 }
 
-func DetailBrowserExpandedLinesWithWidth(row detailBrowserRow, width int) []string {
-	return DetailBrowserExpandedLinesStyled(row, width, false)
+func detailBrowserExpandedLinesStyled(row detailBrowserRow, width int, color bool) []string {
+	return detailBrowserExpandedLinesStyledFocus(row, width, color, -1)
 }
 
-func DetailBrowserExpandedLinesStyled(row detailBrowserRow, width int, color bool) []string {
-	return DetailBrowserExpandedLinesStyledFocus(row, width, color, -1)
-}
-
-func DetailBrowserExpandedLinesStyledFocus(row detailBrowserRow, width int, color bool, actionFocus int) []string {
-	return detailBrowserExpandedLinesStyledFocusWithLabels(row, width, color, actionFocus, DefaultDetailBrowserLabels(), DefaultDetailBrowserFormatters())
+func detailBrowserExpandedLinesStyledFocus(row detailBrowserRow, width int, color bool, actionFocus int) []string {
+	return detailBrowserExpandedLinesStyledFocusWithLabels(row, width, color, actionFocus, defaultDetailBrowserLabels(), defaultDetailBrowserFormatters())
 }
 
 func (m DetailBrowserModel) expandedLinesStyledFocus(row detailBrowserRow, width int, color bool, actionFocus int) []string {
@@ -929,12 +1020,12 @@ func (m DetailBrowserModel) expandedLinesStyledFocus(row detailBrowserRow, width
 
 func detailBrowserExpandedLinesStyledFocusWithLabels(row detailBrowserRow, width int, color bool, actionFocus int, labels DetailBrowserLabels, format DetailBrowserFormatters) []string {
 	if format.SectionHeading == nil {
-		format.SectionHeading = DefaultDetailBrowserFormatters().SectionHeading
+		format.SectionHeading = defaultDetailBrowserFormatters().SectionHeading
 	}
 	lines := []string{}
 	if strings.TrimSpace(row.Detail) != "" {
 		lines = append(lines, format.SectionHeading(labels.DetailsHeading, color))
-		lines = append(lines, DetailBrowserDetailLines(row.Detail, width, color)...)
+		lines = append(lines, detailBrowserDetailLines(row.Detail, width, color)...)
 	}
 	metadataStarted := false
 	for _, meta := range row.Metadata {
@@ -970,7 +1061,7 @@ func detailBrowserExpandedLinesStyledFocusWithLabels(row detailBrowserRow, width
 	return lines
 }
 
-func DetailBrowserDetailLines(detail string, width int, color bool) []string {
+func detailBrowserDetailLines(detail string, width int, color bool) []string {
 	lines := []string{}
 	rawLines := splitNonEmpty(strings.ReplaceAll(detail, "\r\n", "\n"), "\n")
 	for index, rawLine := range rawLines {
@@ -1028,7 +1119,7 @@ func isDetailBrowserKeyValueLine(line string) bool {
 }
 
 func detailBrowserActionLine(index int, action detailBrowserAction, color bool, focused bool) string {
-	return detailBrowserActionLineWithFormat(index, action, color, focused, DefaultDetailBrowserFormatters())
+	return detailBrowserActionLineWithFormat(index, action, color, focused, defaultDetailBrowserFormatters())
 }
 
 func detailBrowserActionLineWithFormat(index int, action detailBrowserAction, color bool, focused bool, format DetailBrowserFormatters) string {
@@ -1037,7 +1128,7 @@ func detailBrowserActionLineWithFormat(index int, action detailBrowserAction, co
 		key = fmt.Sprintf("action %d [press a or 1]:", index+1)
 	}
 	if format.LocalizeEvidence == nil {
-		format.LocalizeEvidence = DefaultDetailBrowserFormatters().LocalizeEvidence
+		format.LocalizeEvidence = defaultDetailBrowserFormatters().LocalizeEvidence
 	}
 	label := textui.StyleAction(strings.TrimSpace(action.Label), color)
 	prefix := "  "
@@ -1061,22 +1152,14 @@ func compactDetailBrowserActionDescription(value string) string {
 	return textui.Truncate(value, 72)
 }
 
-func DetailBrowserCollapsedSummary(row detailBrowserRow) string {
-	return detailBrowserCollapsedSummaryWithFormat(row, DefaultDetailBrowserFormatters())
-}
-
 func (m DetailBrowserModel) collapsedSummary(row detailBrowserRow) string {
 	return detailBrowserCollapsedSummaryWithLabels(row, m.labels, m.format)
-}
-
-func detailBrowserCollapsedSummaryWithFormat(row detailBrowserRow, format DetailBrowserFormatters) string {
-	return detailBrowserCollapsedSummaryWithLabels(row, DefaultDetailBrowserLabels(), format)
 }
 
 func detailBrowserCollapsedSummaryWithLabels(row detailBrowserRow, labels DetailBrowserLabels, format DetailBrowserFormatters) string {
 	parts := detailBrowserRowBadgesWithLabels(row, labels, format)
 	if format.OneLine == nil {
-		format.OneLine = DefaultDetailBrowserFormatters().OneLine
+		format.OneLine = defaultDetailBrowserFormatters().OneLine
 	}
 	if summary := strings.TrimSpace(format.OneLine(row.Summary)); summary != "" {
 		parts = append(parts, summary)
@@ -1087,13 +1170,9 @@ func detailBrowserCollapsedSummaryWithLabels(row detailBrowserRow, labels Detail
 	return strings.Join(parts, " ")
 }
 
-func detailBrowserRowBadges(row detailBrowserRow) []string {
-	return detailBrowserRowBadgesWithLabels(row, DefaultDetailBrowserLabels(), DefaultDetailBrowserFormatters())
-}
-
 func detailBrowserRowBadgesWithLabels(row detailBrowserRow, labels DetailBrowserLabels, format DetailBrowserFormatters) []string {
 	if format.OneLine == nil {
-		format.OneLine = DefaultDetailBrowserFormatters().OneLine
+		format.OneLine = defaultDetailBrowserFormatters().OneLine
 	}
 	badges := []string{}
 	if len(row.Actions) > 0 {
@@ -1186,7 +1265,7 @@ func detailBrowserStyleSummary(value string, status string, color bool) string {
 	}
 }
 
-func DetailBrowserActionKeyIndex(key string) (int, bool) {
+func detailBrowserActionKeyIndex(key string) (int, bool) {
 	if len(key) != 1 || key[0] < '1' || key[0] > '9' {
 		return 0, false
 	}

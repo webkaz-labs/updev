@@ -32,17 +32,14 @@ const (
 )
 
 type (
-	vscodePosture              = vscode.Posture
-	vscodeMarketplaceRequest   = vscode.MarketplaceRequest
-	vscodeMarketplaceFilter    = vscode.MarketplaceFilter
-	vscodeMarketplaceCriterion = vscode.MarketplaceCriterion
-	vscodeMarketplaceResponse  = vscode.MarketplaceResponse
-	vscodeMarketplaceResult    = vscode.MarketplaceResult
-	vscodeExtension            = vscode.Extension
-	vscodePublisher            = vscode.Publisher
-	vscodeVersion              = vscode.Version
-	vscodeProperty             = vscode.Property
-	vscodeStatistic            = vscode.Statistic
+	vscodePosture            = vscode.Posture
+	vscodeMarketplaceRequest = vscode.MarketplaceRequest
+
+	vscodeExtension = vscode.Extension
+	vscodePublisher = vscode.Publisher
+	vscodeVersion   = vscode.Version
+	vscodeProperty  = vscode.Property
+	vscodeStatistic = vscode.Statistic
 )
 
 func includeVSCodeExtensionsByDefault() bool {
@@ -314,16 +311,8 @@ func vscodeAdvisoryRemediation(fixedVersions []string) string {
 	return "review the OSV advisory and wait for a fixed Marketplace version, or add a temporary policy override with reason and expiry after review"
 }
 
-func fetchVSCodeMarketplaceExtension(ctx context.Context, client *http.Client, endpoint string, extension string) (vscodeExtension, error) {
-	return vscode.FetchMarketplaceExtension(ctx, client, endpoint, extension)
-}
-
 func vscodePostureFromMetadata(requestedName string, metadata vscodeExtension) vscodePosture {
 	return vscode.PostureFromMetadata(requestedName, metadata, vscodeThresholds())
-}
-
-func vscodePostureUnavailable(extension string, err error) vscodePosture {
-	return vscode.PostureUnavailable(extension, err)
 }
 
 func vscodeAdvisoryPackagesFromPostures(postures []vscodePosture) []securityPackage {
@@ -348,14 +337,6 @@ func vscodeAdvisoryPackagesFromPostures(postures []vscodePosture) []securityPack
 		})
 	}
 	return packages
-}
-
-func vscodeStatisticValue(statistics []vscodeStatistic, name string) (float64, bool) {
-	return vscode.StatisticValue(statistics, name)
-}
-
-func vscodePropertyValue(properties []vscodeProperty, key string) string {
-	return vscode.PropertyValue(properties, key)
 }
 
 func vscodeMarketplaceURL() string {
@@ -402,14 +383,6 @@ func minVSCodeUpdateAge() time.Duration {
 func minVSCodeUpdateAgeWithConfig(config updevConfig) time.Duration {
 	days := configuredNonNegativeInt(defaultVSCodeMinUpdateAgeDays, config.Security.VSCode.MinUpdateAgeDays, vscodeMinUpdateAgeDaysEnvName)
 	return time.Duration(days) * 24 * time.Hour
-}
-
-func vscodeExtensionTooNew(publishedDate string, minAge time.Duration) bool {
-	return vscode.ExtensionTooNew(publishedDate, minAge)
-}
-
-func vscodeExtensionAgeReason(publishedDate string, minAge time.Duration) string {
-	return vscode.ExtensionAgeReason(publishedDate, minAge)
 }
 
 func applyVSCodeUpdateAge(finding safetyFinding, minAge time.Duration) safetyFinding {

@@ -77,6 +77,15 @@ type MetadataURL struct {
 	URL string `json:"url"`
 }
 
+type CaskProvenanceVerdict struct {
+	Decision    string
+	Confidence  string
+	Reason      string
+	ReasonCode  string
+	Remediation string
+	Evidence    string
+}
+
 func (metadata *Metadata) UnmarshalJSON(data []byte) error {
 	type rawMetadata Metadata
 	var raw struct {
@@ -268,10 +277,15 @@ func PostureFromMetadata(item plan.Item, entry ManifestEntry, metadata Metadata)
 		setPostureReason(&posture, securityreason.HomebrewPostureReason(securityreason.HomebrewEntryDeprecated, item.Kind, name, reasonText, map[string]string{"reason_text": reasonText}))
 		posture.Remediation = "replace the deprecated Homebrew entry or add a temporary policy override after review"
 	case item.Kind == "cask":
-		posture.Decision = "review"
-		posture.Confidence = "low"
-		setPostureReason(&posture, securityreason.HomebrewCaskProvenanceReason(name, caskProvenanceReason(homepageHost, urlHost), homepageHost, urlHost))
-		posture.Remediation = caskProvenanceRemediation(homepageHost, urlHost)
+		verdict := CaskProvenanceVerdictFor(homepageHost, urlHost, version)
+		posture.Decision = verdict.Decision
+		posture.Confidence = verdict.Confidence
+		setPostureReason(&posture, securityreason.HomebrewPostureReason(verdict.ReasonCode, "cask", name, verdict.Reason, map[string]string{
+			"homepage_host": homepageHost,
+			"url_host":      urlHost,
+		}))
+		posture.Remediation = verdict.Remediation
+		posture.Evidence = appendEvidence(posture.Evidence, verdict.Evidence)
 	}
 	return posture
 }
@@ -343,14 +357,76 @@ func appendEvidence(evidence []string, value string) []string {
 	return append(evidence, value)
 }
 
-func caskProvenanceReason(homepageHost string, urlHost string) string {
-	if homepageHost == "" || urlHost == "" {
-		return "Homebrew cask provenance needs review because homepage or download URL host is missing"
+func CaskProvenanceVerdictFor(homepageHost string, urlHost string, version string) CaskProvenanceVerdict {
+	homepageHost = strings.TrimSpace(homepageHost)
+	urlHost = strings.TrimSpace(urlHost)
+	version = strings.TrimSpace(version)
+	switch {
+	case homepageHost == "" || urlHost == "":
+		return CaskProvenanceVerdict{
+			Decision:    "review",
+			Confidence:  "low",
+			Reason:      "Homebrew cask provenance needs review because homepage or download URL host is missing",
+			ReasonCode:  securityreason.HomebrewCaskProvenanceReview,
+			Remediation: "review the cask vendor homepage and download URL before adding a policy override",
+		}
+	case version == "" || strings.EqualFold(version, "latest"):
+		return CaskProvenanceVerdict{
+			Decision:    "review",
+			Confidence:  "low",
+			Reason:      "Homebrew cask update requires vendor provenance review",
+			ReasonCode:  securityreason.HomebrewCaskProvenanceReview,
+			Remediation: "review the cask vendor homepage and download URL before adding a policy override",
+		}
+	case caskHostsSameSite(homepageHost, urlHost):
+		return CaskProvenanceVerdict{
+			Decision:   "allow",
+			Confidence: "medium",
+			Reason:     "Homebrew cask download host is under the homepage host; vendor provenance verified from Homebrew metadata",
+			ReasonCode: securityreason.HomebrewCaskProvenanceOK,
+			Evidence:   "Homebrew cask same-site download host",
+		}
+	case homepageHost != urlHost:
+		return CaskProvenanceVerdict{
+			Decision:    "review",
+			Confidence:  "low",
+			Reason:      "Homebrew cask download host differs from homepage host; vendor provenance review required",
+			ReasonCode:  securityreason.HomebrewCaskHostMismatch,
+			Remediation: "review whether " + urlHost + " is an official distribution host for " + homepageHost + " before adding a policy override",
+		}
+	default:
+		return CaskProvenanceVerdict{
+			Decision:    "review",
+			Confidence:  "low",
+			Reason:      "Homebrew cask update requires vendor provenance review",
+			ReasonCode:  securityreason.HomebrewCaskProvenanceReview,
+			Remediation: "review the cask vendor homepage and download URL before adding a policy override",
+		}
 	}
-	if homepageHost != urlHost {
-		return "Homebrew cask download host differs from homepage host; vendor provenance review required"
+}
+
+func caskHostsSameSite(homepageHost string, urlHost string) bool {
+	homepageHost = normalizeCaskHostForComparison(homepageHost)
+	urlHost = normalizeCaskHostForComparison(urlHost)
+	if homepageHost == "" || urlHost == "" || sharedCaskHostSuffix(homepageHost) {
+		return false
 	}
-	return "Homebrew cask update requires vendor provenance review"
+	return urlHost == homepageHost || strings.HasSuffix(urlHost, "."+homepageHost)
+}
+
+func normalizeCaskHostForComparison(host string) string {
+	host = strings.ToLower(strings.TrimSpace(host))
+	host = strings.TrimPrefix(host, "www.")
+	return strings.TrimSuffix(host, ".")
+}
+
+func sharedCaskHostSuffix(host string) bool {
+	switch host {
+	case "github.io", "pages.dev", "vercel.app", "netlify.app", "cloudfront.net", "appspot.com", "googleapis.com", "amazonaws.com", "azureedge.net", "fastly.net":
+		return true
+	default:
+		return false
+	}
 }
 
 func setPostureReason(posture *Posture, reason securityreason.Reason) {
@@ -360,13 +436,6 @@ func setPostureReason(posture *Posture, reason securityreason.Reason) {
 	posture.Reason = reason.Text
 	posture.ReasonCode = reason.Code
 	posture.ReasonArgs = reason.Args
-}
-
-func caskProvenanceRemediation(homepageHost string, urlHost string) string {
-	if homepageHost != "" && urlHost != "" && homepageHost != urlHost {
-		return "review whether " + urlHost + " is an official distribution host for " + homepageHost + " before adding a policy override"
-	}
-	return "review the cask vendor homepage and download URL before adding a policy override"
 }
 
 func firstNonEmpty(values ...string) string {

@@ -56,12 +56,12 @@ const (
 	MouseClick MouseMode = "click"
 )
 
-type TableMouseMsg struct {
+type tableMouseMsg struct {
 	Index   int
 	Release bool
 }
 
-type TableWheelMsg struct {
+type tableWheelMsg struct {
 	Delta int
 }
 
@@ -191,7 +191,7 @@ func (m TableBrowserModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.Height = msg.Height
 		m.Width = msg.Width
 		m.ensureSelectedVisible()
-	case TableMouseMsg:
+	case tableMouseMsg:
 		if msg.Index >= 0 && msg.Index < m.filteredRowCount() {
 			if msg.Release {
 				if m.pendingMouseRelease == msg.Index {
@@ -207,7 +207,7 @@ func (m TableBrowserModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.ensureSelectedVisible()
 			m.pendingMouseRelease = msg.Index
 		}
-	case TableWheelMsg:
+	case tableWheelMsg:
 		m.scroll(msg.Delta)
 	}
 	return m, nil
@@ -471,8 +471,8 @@ visible:
 		fmt.Fprintf(&out, "%s %s\n", textui.StyleSection(section.Title, m.Color), textui.StyleCount(fmt.Sprintf("(%d)", len(section.Rows)), m.Color))
 		line++
 		renderedLines++
-		hasWanted := HasWanted(section)
-		columns := Columns(hasWanted, m.labels.Labels)
+		includeWanted := hasWanted(section)
+		columns := columns(includeWanted, m.labels.Labels)
 		windowStart := 0
 		if m.State.Offset > sectionStart {
 			windowStart = m.State.Offset - sectionStart
@@ -481,9 +481,9 @@ visible:
 		if windowEnd > len(section.Rows) {
 			windowEnd = len(section.Rows)
 		}
-		rows := StyledRows(section.Rows[windowStart:windowEnd], hasWanted, m.Color)
+		rows := styledRows(section.Rows[windowStart:windowEnd], includeWanted, m.Color)
 		widths := textui.ColumnWidths(columns, rows)
-		fmt.Fprintf(&out, "  %s\n", Header(columns, widths, m.Color))
+		fmt.Fprintf(&out, "  %s\n", header(columns, widths, m.Color))
 		line++
 		renderedLines++
 		rowIndex = sectionStart + windowStart
@@ -496,12 +496,12 @@ visible:
 				break visible
 			}
 			rowLines[rowIndex] = line
-			tableRow := StyledRow(section.Rows[rowOffset], hasWanted, m.Color)
+			styledRow := StyledRow(section.Rows[rowOffset], includeWanted, m.Color)
 			prefix := "  "
 			if rowIndex == m.State.Selected {
 				prefix = "> "
 			}
-			fmt.Fprintf(&out, "%s%s\n", prefix, TableRow(tableRow, widths))
+			fmt.Fprintf(&out, "%s%s\n", prefix, tableRow(styledRow, widths))
 			line++
 			renderedLines++
 			if m.State.Expanded[rowIndex] {
@@ -509,7 +509,7 @@ visible:
 				if rowIndex == m.State.Selected {
 					actionFocus = m.actionFocus
 				}
-				for _, expandedLine := range ExpandedLinesWithWidthStyledFocus(section.Rows[rowOffset], m.labels.Labels, m.expandedDetailWidth(), m.Color, actionFocus) {
+				for _, expandedLine := range expandedLinesWithWidthStyledFocus(section.Rows[rowOffset], m.labels.Labels, m.expandedDetailWidth(), m.Color, actionFocus) {
 					if renderedLines >= maxBodyLines {
 						break
 					}
@@ -548,9 +548,9 @@ visible:
 			mouse := msg.Mouse()
 			switch mouse.Button {
 			case tea.MouseWheelUp:
-				return func() tea.Msg { return TableWheelMsg{Delta: -3} }
+				return func() tea.Msg { return tableWheelMsg{Delta: -3} }
 			case tea.MouseWheelDown:
-				return func() tea.Msg { return TableWheelMsg{Delta: 3} }
+				return func() tea.Msg { return tableWheelMsg{Delta: 3} }
 			default:
 				return nil
 			}
@@ -563,7 +563,7 @@ visible:
 		}
 		for index, y := range rowLines {
 			if mouse.Y == y {
-				return func() tea.Msg { return TableMouseMsg{Index: index, Release: release} }
+				return func() tea.Msg { return tableMouseMsg{Index: index, Release: release} }
 			}
 		}
 		return nil
@@ -625,7 +625,7 @@ func (m *TableBrowserModel) ensureSelectedVisible() {
 	}
 	sections := m.filteredSections()
 	for attempts := 0; attempts <= m.filteredRowCount(); attempts++ {
-		if TableRowBlockVisibleWithWidth(TableRowBlockOptions{
+		if tableRowBlockVisibleWithWidth(tableRowBlockOptions{
 			Sections:     sections,
 			Offset:       m.State.Offset,
 			MaxBodyLines: m.visibleBodyLines(),
@@ -652,7 +652,7 @@ func (m *TableBrowserModel) ensureSelectedVisible() {
 	}
 }
 
-type TableRowBlockOptions struct {
+type tableRowBlockOptions struct {
 	Sections     []Section
 	Offset       int
 	MaxBodyLines int
@@ -662,7 +662,7 @@ type TableRowBlockOptions struct {
 	Labels       Labels
 }
 
-func TableRowBlockVisibleWithWidth(options TableRowBlockOptions) bool {
+func tableRowBlockVisibleWithWidth(options tableRowBlockOptions) bool {
 	if options.MaxBodyLines <= 0 || options.Selected < 0 {
 		return false
 	}
@@ -700,7 +700,7 @@ func TableRowBlockVisibleWithWidth(options TableRowBlockOptions) bool {
 			}
 			rowLines := 1
 			if options.Expanded[rowIndex] {
-				rowLines += len(ExpandedLinesWithWidth(section.Rows[rowOffset], options.Labels, options.Width))
+				rowLines += len(expandedLinesWithWidth(section.Rows[rowOffset], options.Labels, options.Width))
 			}
 			if rowIndex == options.Selected {
 				return renderedLines+rowLines <= options.MaxBodyLines
@@ -711,63 +711,6 @@ func TableRowBlockVisibleWithWidth(options TableRowBlockOptions) bool {
 		rowIndex = sectionEnd
 	}
 	return false
-}
-
-func TableVisibleRows(sections []Section, offset int, maxBodyLines int, expanded map[int]bool, labels ...Labels) map[int]bool {
-	return TableVisibleRowsWithWidth(sections, offset, maxBodyLines, expanded, 0, labels...)
-}
-
-func TableVisibleRowsWithWidth(sections []Section, offset int, maxBodyLines int, expanded map[int]bool, width int, labels ...Labels) map[int]bool {
-	visible := map[int]bool{}
-	if maxBodyLines <= 0 {
-		return visible
-	}
-	renderedLines := 0
-	rowIndex := 0
-	rowLabels := Labels{}
-	if len(labels) > 0 {
-		rowLabels = labels[0]
-	}
-	for sectionIndex, section := range sections {
-		sectionStart := rowIndex
-		sectionEnd := sectionStart + len(section.Rows)
-		if sectionEnd <= offset {
-			rowIndex = sectionEnd
-			continue
-		}
-		if sectionIndex > 0 && renderedLines > 0 {
-			renderedLines++
-			if renderedLines >= maxBodyLines {
-				return visible
-			}
-		}
-		renderedLines += 2
-		if renderedLines >= maxBodyLines {
-			return visible
-		}
-		windowStart := 0
-		if offset > sectionStart {
-			windowStart = offset - sectionStart
-		}
-		rowIndex = sectionStart + windowStart
-		for rowOffset := windowStart; rowOffset < len(section.Rows); rowOffset++ {
-			if rowIndex < offset {
-				rowIndex++
-				continue
-			}
-			if renderedLines >= maxBodyLines {
-				return visible
-			}
-			visible[rowIndex] = true
-			renderedLines++
-			if expanded[rowIndex] {
-				renderedLines += len(ExpandedLinesWithWidth(section.Rows[rowOffset], rowLabels, width))
-			}
-			rowIndex++
-		}
-		rowIndex = sectionEnd
-	}
-	return visible
 }
 
 func (m TableBrowserModel) expandedDetailWidth() int {
@@ -850,7 +793,7 @@ func (m TableBrowserModel) filteredSections() []Section {
 	if m.FilteredQuery == strings.TrimSpace(strings.ToLower(m.State.Query)) {
 		return m.FilteredSections
 	}
-	return FilteredSections(m.Sections, m.State.Query)
+	return filteredSections(m.Sections, m.State.Query)
 }
 
 func (m TableBrowserModel) VisibleSections() []Section {
@@ -859,7 +802,7 @@ func (m TableBrowserModel) VisibleSections() []Section {
 
 func (m *TableBrowserModel) refreshFilteredSections() {
 	m.FilteredQuery = strings.TrimSpace(strings.ToLower(m.State.Query))
-	m.FilteredSections = FilteredSections(m.Sections, m.State.Query)
+	m.FilteredSections = filteredSections(m.Sections, m.State.Query)
 }
 
 func nextMouseMode(mode MouseMode) MouseMode {

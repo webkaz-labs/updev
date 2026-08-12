@@ -31,6 +31,13 @@ type ManifestIssue struct {
 	Reason  string
 }
 
+type ConfigSource struct {
+	Path          string   `json:"path"`
+	Environment   string   `json:"environment,omitempty"`
+	ReportedOrder int      `json:"reported_order"`
+	Tools         []string `json:"tools"`
+}
+
 func (Provider) Name() string { return "mise" }
 
 func (p Provider) Supported(ctx context.Context) bool {
@@ -133,6 +140,81 @@ func desiredFromPath(providerName string, path string) ([]plan.Item, error) {
 
 func ConfigPath(root string) string {
 	return filepath.Join(root, "dot_config", "mise", "config.toml")
+}
+
+func ConfigSources(ctx context.Context, commandRunner runner.Runner, root string) ([]ConfigSource, error) {
+	result := commandRunner.Run(ctx, "mise", "config", "ls", "--json", "--cd", root)
+	if result.Err != nil {
+		return nil, fmt.Errorf("mise config ls --json: %s", runner.ResultDetail(result, "command failed", runner.ResultDetailOption{}))
+	}
+	return ConfigSourcesFromJSON([]byte(result.Stdout))
+}
+
+func ConfigSourcesFromJSON(data []byte) ([]ConfigSource, error) {
+	var sources []ConfigSource
+	if err := json.Unmarshal(data, &sources); err != nil {
+		return nil, err
+	}
+	normalized := make([]ConfigSource, 0, len(sources))
+	seenPaths := map[string]bool{}
+	for _, source := range sources {
+		path := strings.TrimSpace(source.Path)
+		if path == "" {
+			if len(source.Tools) > 0 {
+				return nil, fmt.Errorf("mise config source path is empty")
+			}
+			continue
+		}
+		path = filepath.Clean(path)
+		if seenPaths[path] {
+			return nil, fmt.Errorf("duplicate mise config source path: %s", path)
+		}
+		seenPaths[path] = true
+
+		seenTools := map[string]bool{}
+		tools := make([]string, 0, len(source.Tools))
+		for _, rawTool := range source.Tools {
+			tool := strings.TrimSpace(rawTool)
+			if tool == "" {
+				return nil, fmt.Errorf("mise config source %s contains an empty tool name", path)
+			}
+			if seenTools[tool] {
+				return nil, fmt.Errorf("mise config source %s contains duplicate tool %q", path, tool)
+			}
+			seenTools[tool] = true
+			tools = append(tools, tool)
+		}
+		source.Path = path
+		source.Environment = configEnvironment(path)
+		source.ReportedOrder = len(normalized) + 1
+		source.Tools = tools
+		sort.Strings(source.Tools)
+		normalized = append(normalized, source)
+	}
+	return normalized, nil
+}
+
+func configEnvironment(path string) string {
+	name := filepath.Base(path)
+	for _, prefix := range []string{"config.", "mise.", ".mise."} {
+		if len(name) <= len(prefix)+len(".toml") || !strings.HasPrefix(name, prefix) || !strings.HasSuffix(name, ".toml") {
+			continue
+		}
+		environment := strings.TrimSuffix(strings.TrimPrefix(name, prefix), ".toml")
+		if environment != "" {
+			return environment
+		}
+	}
+	return ""
+}
+
+func (source ConfigSource) Diagnostic() string {
+	attributes := []string{fmt.Sprintf("reported_order=%d", source.ReportedOrder)}
+	if source.Environment != "" {
+		attributes = append(attributes, "environment="+source.Environment)
+	}
+	attributes = append(attributes, fmt.Sprintf("tools=%d", len(source.Tools)))
+	return fmt.Sprintf("%s (%s)", source.Path, strings.Join(attributes, ", "))
 }
 
 func HasTool(root string, name string) bool {

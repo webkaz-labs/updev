@@ -77,3 +77,33 @@ func TestNPMPostureReviewsMissingRepositoryURL(t *testing.T) {
 		t.Fatalf("expected npm posture remediation, got %#v", posture)
 	}
 }
+
+func TestNPMPosturesFromItemsReviewsPrivateRegistryAuthFailure(t *testing.T) {
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, `{"error":"authentication token not provided"}`, http.StatusUnauthorized)
+	}))
+	defer server.Close()
+
+	postures, err := NPMPosturesFromItems(context.Background(), server.Client(), server.URL, []plan.Item{{
+		Provider: "mise",
+		Name:     "npm:@webkaz-labs/xskills",
+		Version:  "0.1.0",
+	}})
+	if err != nil {
+		t.Fatalf("expected item-scoped review posture without aggregate error, got %v", err)
+	}
+	if len(postures) != 1 || postures[0].Decision != "review" || postures[0].ReasonCode != securityreason.RegistryMetadataUnavailable {
+		t.Fatalf("expected registry metadata review posture, got %#v", postures)
+	}
+	if !strings.Contains(postures[0].Reason, "authentication required") || !strings.Contains(postures[0].Remediation, "authentication") {
+		t.Fatalf("expected auth-specific reason/remediation, got %#v", postures[0])
+	}
+}
+
+func TestNPMPackageFromAuthErrorExtractsGitHubPackage(t *testing.T) {
+	detail := "npm error 401 Unauthorized - GET https://npm.pkg.github.com/@webkaz-labs%2fxskills - authentication token not provided"
+	if got := NPMPackageFromAuthError(detail); got != "@webkaz-labs/xskills" {
+		t.Fatalf("expected package extraction, got %q", got)
+	}
+}

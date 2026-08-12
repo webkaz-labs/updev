@@ -9,6 +9,28 @@ permissions:
   contents: read
 
 jobs:
+  mise-contract:
+    name: mise-contract (${{ matrix.mise-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        mise-version: ["2026.8.2", "latest"]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup mise contract binary
+        uses: jdx/mise-action@v3
+        with:
+          version: ${{ matrix.mise-version }}
+          install: false
+          cache: false
+          env: false
+
+      - name: Mise contract
+        run: scripts/check-mise-contract.sh
+
   test:
     name: test
     runs-on: ubuntu-latest
@@ -34,13 +56,16 @@ jobs:
       - name: GolangCI-Lint
         run: scripts/check-golangci-lint.sh
 
+      - name: Go tool cache test
+        run: scripts/test-go-tool-cache.sh
+
       - name: Shellcheck
         run: |
           if ! command -v shellcheck >/dev/null 2>&1; then
             sudo apt-get update
             sudo apt-get install -y shellcheck
           fi
-          shellcheck -S warning scripts/*.sh
+          shellcheck -S warning scripts/*.sh scripts/lib/*.sh
 
       - name: Verify modules
         run: go mod verify
@@ -53,3 +78,33 @@ jobs:
 
       - name: Build
         run: go build ./...
+
+  tui-semantic:
+    name: tui-semantic (${{ matrix.runner }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-latest, macos-15-intel]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: test/tui/package-lock.json
+
+      - name: Install TUI test dependencies
+        run: npm ci --prefix test/tui --no-audit --no-fund
+
+      - name: TUI semantic journeys
+        run: scripts/test-tui-shell-use.sh semantic

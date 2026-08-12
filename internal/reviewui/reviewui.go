@@ -83,7 +83,7 @@ func CachedState(states map[string]State, key string) State {
 	return states[key]
 }
 
-func TakeAction(state *State) string {
+func takeAction(state *State) string {
 	if state == nil {
 		return ""
 	}
@@ -103,7 +103,7 @@ func TakeActionAndRemember(states map[string]State, key string, state *State) st
 	if state == nil {
 		return ""
 	}
-	action := TakeAction(state)
+	action := takeAction(state)
 	RememberState(states, key, *state)
 	return action
 }
@@ -119,7 +119,7 @@ type Labels struct {
 	NoExtraDetail string
 }
 
-func DefaultLabels() Labels {
+func defaultLabels() Labels {
 	return Labels{
 		Name:          "name",
 		Version:       "version",
@@ -140,7 +140,7 @@ func RowCount(sections []Section) int {
 	return count
 }
 
-func HasWanted(section Section) bool {
+func hasWanted(section Section) bool {
 	for _, row := range section.Rows {
 		if row.Wanted != "" {
 			return true
@@ -156,7 +156,7 @@ func LimitedRows(rows []Row, limit int) []Row {
 	return rows[:limit]
 }
 
-func FilteredSections(sections []Section, rawQuery string) []Section {
+func filteredSections(sections []Section, rawQuery string) []Section {
 	query := strings.ToLower(strings.TrimSpace(rawQuery))
 	if query == "" {
 		return sections
@@ -165,7 +165,7 @@ func FilteredSections(sections []Section, rawQuery string) []Section {
 	for _, section := range sections {
 		rows := make([]Row, 0, len(section.Rows))
 		for _, row := range section.Rows {
-			if RowMatches(section, row, query) {
+			if rowMatches(section, row, query) {
 				rows = append(rows, row)
 			}
 		}
@@ -178,7 +178,7 @@ func FilteredSections(sections []Section, rawQuery string) []Section {
 	return out
 }
 
-func RowMatches(section Section, row Row, query string) bool {
+func rowMatches(section Section, row Row, query string) bool {
 	query = strings.ToLower(strings.TrimSpace(query))
 	if query == "" {
 		return true
@@ -199,7 +199,7 @@ func RowMatches(section Section, row Row, query string) bool {
 }
 
 func StyledRow(row Row, includeWanted bool, color bool) []string {
-	dimmed := RowDimmed(row)
+	dimmed := rowDimmed(row)
 	name := textui.StyleName(row.Name, color)
 	version := styleVersion(row.Version, dimmed, color)
 	state := styleState(row.State, color)
@@ -224,11 +224,11 @@ func actionBadgeInputs(actions []Action) []textui.ActionBadgeInput {
 	return out
 }
 
-func RowDimmed(row Row) bool {
+func rowDimmed(row Row) bool {
 	return strings.EqualFold(strings.TrimSpace(row.State), "inactive")
 }
 
-func Columns(includeWanted bool, labels Labels) []textui.Column {
+func columns(includeWanted bool, labels Labels) []textui.Column {
 	labels = fillLabels(labels)
 	if includeWanted {
 		return []textui.Column{
@@ -268,12 +268,12 @@ func PrintSections(w io.Writer, sections []Section, limit int, labels Labels, co
 		for _, row := range visible {
 			rows = append(rows, StyledRow(row, includeWanted, color))
 		}
-		textui.PrintTable(w, Columns(includeWanted, labels), rows, color)
+		textui.PrintTable(w, columns(includeWanted, labels), rows, color)
 		PrintOmittedRows(w, len(section.Rows)-len(visible), labels, color)
 	}
 }
 
-func StyledRows(rows []Row, includeWanted bool, color bool) [][]string {
+func styledRows(rows []Row, includeWanted bool, color bool) [][]string {
 	out := make([][]string, 0, len(rows))
 	for _, row := range rows {
 		out = append(out, StyledRow(row, includeWanted, color))
@@ -281,7 +281,7 @@ func StyledRows(rows []Row, includeWanted bool, color bool) [][]string {
 	return out
 }
 
-func Header(columns []textui.Column, widths []int, color bool) string {
+func header(columns []textui.Column, widths []int, color bool) string {
 	values := make([]string, 0, len(columns))
 	for i, column := range columns {
 		values = append(values, textui.StyleHeading(textui.PadRight(column.Header, widths[i]), color))
@@ -289,7 +289,7 @@ func Header(columns []textui.Column, widths []int, color bool) string {
 	return strings.Join(values, " ")
 }
 
-func TableRow(row []string, widths []int) string {
+func tableRow(row []string, widths []int) string {
 	values := make([]string, 0, len(widths))
 	for i := range widths {
 		value := ""
@@ -301,19 +301,19 @@ func TableRow(row []string, widths []int) string {
 	return strings.Join(values, " ")
 }
 
-func ExpandedLines(row Row, labels Labels) []string {
-	return ExpandedLinesWithWidth(row, labels, defaultExpandedDetailWidth)
+func expandedLines(row Row, labels Labels) []string {
+	return expandedLinesWithWidth(row, labels, defaultExpandedDetailWidth)
 }
 
-func ExpandedLinesWithWidth(row Row, labels Labels, width int) []string {
-	return ExpandedLinesWithWidthStyled(row, labels, width, false)
+func expandedLinesWithWidth(row Row, labels Labels, width int) []string {
+	return expandedLinesWithWidthStyled(row, labels, width, false)
 }
 
-func ExpandedLinesWithWidthStyled(row Row, labels Labels, width int, color bool) []string {
-	return ExpandedLinesWithWidthStyledFocus(row, labels, width, color, -1)
+func expandedLinesWithWidthStyled(row Row, labels Labels, width int, color bool) []string {
+	return expandedLinesWithWidthStyledFocus(row, labels, width, color, -1)
 }
 
-func ExpandedLinesWithWidthStyledFocus(row Row, labels Labels, width int, color bool, actionFocus int) []string {
+func expandedLinesWithWidthStyledFocus(row Row, labels Labels, width int, color bool, actionFocus int) []string {
 	labels = fillLabels(labels)
 	lines := []string{}
 	if strings.TrimSpace(row.Detail) != "" {
@@ -506,7 +506,7 @@ func styleDetail(value string, status string, color bool) string {
 }
 
 func fillLabels(labels Labels) Labels {
-	defaults := DefaultLabels()
+	defaults := defaultLabels()
 	if labels.Name == "" {
 		labels.Name = defaults.Name
 	}

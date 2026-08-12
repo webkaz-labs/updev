@@ -383,6 +383,127 @@ func TestUpdateSummaryTablesCompactReleaseAgeReasons(t *testing.T) {
 	}
 }
 
+func TestUpdateSummaryTablesPreferAdvisoryReasonOverReleaseAge(t *testing.T) {
+	withDefaultLanguageForTest(t, "ja")
+	releasedAt := time.Now().Add(-48 * time.Hour).UTC().Format(time.RFC3339)
+	finding := safetyFinding{
+		Provider:          "brew",
+		Kind:              "brew",
+		Name:              "jq",
+		InstalledVersions: []string{"1.8.1"},
+		CurrentVersion:    "1.8.2",
+		Decision:          "hold",
+		Reason:            "OSV advisory match for Homebrew source tag: OSV-2024-396,OSV-2024-440",
+		ReasonCode:        securityreason.HomebrewAdvisoryMatch,
+		ReasonArgs: map[string]string{
+			"advisory_source":     "OSV",
+			"advisory_match_type": "candidate_version_affected",
+			"advisory_ids":        "OSV-2024-396,OSV-2024-440",
+			"candidate_version":   "1.8.2",
+		},
+		MinReleaseAgeDays: 3,
+		ReleaseDate:       releasedAt,
+		ReleaseAgeDays:    2,
+	}
+	report := updateReport{
+		Security: "strict",
+		Steps: []updateStep{{
+			Name:         "brew",
+			Status:       plan.StatusHeld,
+			Skipped:      true,
+			SkippedItems: updateSafetySkippedSummaries([]safetyFinding{finding}),
+		}},
+		Safety: []safetyGate{{Provider: "brew", Status: plan.StatusHeld, Findings: []safetyFinding{finding}}},
+	}
+	rows := updateOutcomeRows(report, 10, false)
+	if len(rows) < 2 {
+		t.Fatalf("expected skipped row and safety row, got %#v", rows)
+	}
+	for _, row := range rows[:2] {
+		if !strings.Contains(row[3], "更新候補 1.8.2 が affected") || !strings.Contains(row[3], "OSV-2024-396") {
+			t.Fatalf("expected advisory reason before release-age summary, got %#v", row)
+		}
+		if strings.HasPrefix(row[3], "リリース待ち:") {
+			t.Fatalf("expected advisory reason not release wait first, got %#v", row)
+		}
+	}
+	attention := safetyAttentionRows(report.Safety, 10, false, "strict")
+	if len(attention) != 1 || !strings.Contains(attention[0][4], "更新候補 1.8.2 が affected") || strings.HasPrefix(attention[0][4], "リリース待ち:") {
+		t.Fatalf("expected top security reason to prefer advisory evidence, got %#v", attention)
+	}
+	var buffer bytes.Buffer
+	printUpdateSafetyDashboard(&buffer, report, false)
+	if got := buffer.String(); !strings.Contains(got, "更新候補 1.8.2 が affected") || strings.Contains(got, "OSV advisory match for Homebrew source tag") {
+		t.Fatalf("expected dashboard provider reason to localize advisory evidence, got %q", got)
+	}
+}
+
+func TestOldHomebrewOSVSourceTagReasonInfersCandidateAffected(t *testing.T) {
+	withDefaultLanguageForTest(t, "ja")
+	finding := safetyFinding{
+		Kind:           "brew",
+		Name:           "jq",
+		CurrentVersion: "1.8.2",
+		Decision:       "hold",
+		ReasonCode:     securityreason.HomebrewAdvisoryMatch,
+		ReasonArgs:     map[string]string{"advisory_ids": "OSV-2024-396,OSV-2024-440", "advisory_source": "OSV source tag"},
+		Reason:         "OSV advisory match for Homebrew source tag: OSV-2024-396,OSV-2024-440",
+	}
+	got := compactSafetyAdvisoryReason(finding)
+	if !strings.Contains(got, "更新候補 1.8.2 が affected") || !strings.Contains(got, "OSV-2024-396") {
+		t.Fatalf("expected old cached OSV source-tag reason to infer candidate affected, got %q", got)
+	}
+}
+
+func TestSecurityDetailRowsUseCompactCollapsedSummaries(t *testing.T) {
+	withDefaultLanguageForTest(t, "ja")
+	report := updateReport{Safety: []safetyGate{{
+		Provider: "brew",
+		Status:   plan.StatusHeld,
+		Findings: []safetyFinding{
+			{
+				Provider:          "brew",
+				Kind:              "brew",
+				Name:              "mise",
+				Decision:          "hold",
+				ReleaseAgeDays:    0,
+				MinReleaseAgeDays: 3,
+				ReasonCode:        securityreason.CandidateReleaseTooNew,
+				ReasonArgs:        map[string]string{"age_days": "0", "min_age_days": "3"},
+			},
+			{
+				Provider:     "brew",
+				Kind:         "cask",
+				Name:         "firefox",
+				Decision:     "review",
+				URLHost:      "download-installer.cdn.mozilla.net",
+				ReasonCode:   securityreason.HomebrewCaskHostMismatch,
+				ReasonArgs:   map[string]string{"url_host": "download-installer.cdn.mozilla.net", "homepage_host": "mozilla.org"},
+				HomepageHost: "mozilla.org",
+			},
+		},
+	}}}
+	rows := updateSecurityDetailRows(report)
+	if len(rows) != 2 {
+		t.Fatalf("expected two security detail rows, got %#v", rows)
+	}
+	if got := rows[0].Summary; !strings.Contains(got, "リリース待ち") || strings.Contains(got, "候補リリースが新しすぎます") {
+		t.Fatalf("expected compact release-age collapsed summary, got %q", got)
+	}
+	if got := rows[1].Summary; !strings.Contains(got, "配布元確認") || strings.Contains(got, "Homebrew cask の download host") {
+		t.Fatalf("expected compact cask provenance collapsed summary, got %q", got)
+	}
+	if len(rows[0].Columns) != 7 || rows[0].Columns[0] != "hold" || rows[0].Columns[1] != "brew" || rows[0].Columns[2] != "brew" || rows[0].Columns[3] != "mise" {
+		t.Fatalf("expected security detail row columns, got %#v", rows[0].Columns)
+	}
+	if len(rows[0].ColumnHeaders) != 7 || rows[0].ColumnHeaders[0].Header != "判定" || rows[0].ColumnHeaders[5].Header != "理由" {
+		t.Fatalf("expected security detail column headers, got %#v", rows[0].ColumnHeaders)
+	}
+	if !strings.Contains(strings.Join(rows[1].Metadata, "\n"), "reason:") {
+		t.Fatalf("expected full reason to remain available in expanded metadata, got %#v", rows[1].Metadata)
+	}
+}
+
 func TestPrintUpdateTextIncludesSkippedStepStatus(t *testing.T) {
 	var buffer bytes.Buffer
 	printUpdateTextTo(&buffer, updateReport{
@@ -438,7 +559,7 @@ func TestSafetyHumanTextLocalizesReleaseAgeWarnings(t *testing.T) {
 	}
 	row := safetyFindingDetailRow(report.Safety[0], finding)
 	metadata := strings.Join(row.Metadata, "\n")
-	if !strings.Contains(row.Summary, "候補リリースが新しすぎます") || !strings.Contains(row.Detail, "リリースが最小経過日数に達するまで") || !strings.Contains(metadata, "候補リリースが新しすぎます") {
+	if !strings.Contains(row.Summary, "リリース待ち") || strings.Contains(row.Summary, "候補リリースが新しすぎます") || !strings.Contains(row.Detail, "リリースが最小経過日数に達するまで") || !strings.Contains(metadata, "候補リリースが新しすぎます") {
 		t.Fatalf("expected localized safety detail row, row=%#v metadata=%q", row, metadata)
 	}
 }
@@ -871,6 +992,7 @@ func TestPrintLastReportSecurityDetails(t *testing.T) {
 }
 
 func TestUpdateDetailRowsExposeInventorySecurityAndLogs(t *testing.T) {
+	t.Setenv("UPDEV_CONFIG", filepath.Join(t.TempDir(), "missing-config.toml"))
 	report := updateReport{
 		Status: plan.StatusHeld,
 		Steps: []updateStep{{
@@ -1073,9 +1195,46 @@ func TestUpdateLogDetailRowsDistinguishSkippedErrorAndPreserveLogLines(t *testin
 	if rows[1].Status != string(plan.StatusError) || rows[1].Summary != "error one error two" {
 		t.Fatalf("expected error provider row to summarize stderr, got %#v", rows[1])
 	}
-	expanded := strings.Join(detailBrowserExpandedLinesWithWidth(rows[0], 80), "\n")
+	if len(rows[0].Columns) != 5 || rows[0].Columns[0] != "skipped" || rows[0].Columns[1] != "brew" || rows[0].Columns[2] != "-" {
+		t.Fatalf("expected update log provider row columns, got %#v", rows[0].Columns)
+	}
+	if len(rows[1].ColumnHeaders) != 5 ||
+		(rows[1].ColumnHeaders[0].Header != "結果" && rows[1].ColumnHeaders[0].Header != "result") ||
+		(rows[1].ColumnHeaders[3].Header != "詳細" && rows[1].ColumnHeaders[3].Header != "detail") {
+		t.Fatalf("expected update log column headers, got %#v", rows[1].ColumnHeaders)
+	}
+	model := newDetailBrowserModel("update logs", rows, detailBrowserState{Expanded: map[int]bool{0: true}}, false)
+	model.Width = 80
+	model.Height = 40
+	expanded := model.View().Content
 	if !strings.Contains(expanded, "stdout: line one") || !strings.Contains(expanded, "line two") {
 		t.Fatalf("expected expanded update log to preserve stdout newlines, got %q", expanded)
+	}
+}
+
+func TestUpdateLogDetailRowsUseCompactSummaries(t *testing.T) {
+	longHoldReason := "候補リリースが新しすぎます: 経過 2日、最小 3日。リリース日: 2026-06-14。解除目安は 2026-06-17（あと約1日）です"
+	rows := updateLogDetailRows(updateReport{Steps: []updateStep{{
+		Name:         "brew",
+		Command:      []string{"brew", "upgrade", "mole"},
+		Status:       plan.StatusHeld,
+		Reason:       "strict safety will apply 2 safe Homebrew candidates and hold 2 unsafe candidates; Homebrew cannot generally install an older intermediate release",
+		SkippedItems: []string{"mole -> 1.43.0 hold: " + longHoldReason},
+	}}})
+	if len(rows) != 2 {
+		t.Fatalf("expected item and provider rows, got %#v", rows)
+	}
+	if strings.Contains(rows[0].Summary, "候補リリースが新しすぎます") || (!strings.Contains(rows[0].Summary, "リリース待ち") && !strings.Contains(rows[0].Summary, "release-age hold")) {
+		t.Fatalf("expected compact release-age item summary, got %#v", rows[0])
+	}
+	if strings.Contains(rows[1].Summary, "Homebrew cannot") || (!strings.Contains(rows[1].Summary, "安全") && !strings.Contains(rows[1].Summary, "safe")) {
+		t.Fatalf("expected compact provider summary, got %#v", rows[1])
+	}
+	if len(rows[0].Columns) != 5 || rows[0].Columns[0] != "held" || rows[0].Columns[1] != "brew" || rows[0].Columns[2] != "mole" || rows[0].Columns[4] != "1" {
+		t.Fatalf("expected compact update item columns, got %#v", rows[0].Columns)
+	}
+	if !strings.Contains(strings.Join(rows[0].Metadata, " "), longHoldReason) {
+		t.Fatalf("expected full item reason to remain in metadata, got %#v", rows[0].Metadata)
 	}
 }
 
@@ -1608,7 +1767,7 @@ func TestRunUpdateStrictSafetyHoldsTooNewBrewCandidate(t *testing.T) {
 	t.Setenv("UPDEV_GITHUB_API_URL", server.URL)
 	t.Setenv("UPDEV_OSV_API_URL", server.URL)
 	fake := &fakeCommandRunner{results: map[string]runner.Result{
-		"env\x00HOMEBREW_NO_AUTO_UPDATE=1\x00HOMEBREW_NO_INSTALL_FROM_API=1\x00brew\x00outdated\x00--json=v2\x00--greedy": {Stdout: `{"formulae":[{"name":"jq","installed_versions":["1.7"],"current_version":"1.8.1"}],"casks":[]}`},
+		"env\x00HOMEBREW_NO_AUTO_UPDATE=1\x00brew\x00outdated\x00--json=v2\x00--greedy": {Stdout: `{"formulae":[{"name":"jq","installed_versions":["1.7"],"current_version":"1.8.1"}],"casks":[]}`},
 	}}
 	code := runUpdate(updateOptions{format: "text", root: root, security: "strict"}, fake)
 	if code != 2 {
@@ -1676,8 +1835,8 @@ cask "wezterm@nightly"
 {"name":"wezterm@nightly","installed_versions":"latest","current_version":"latest"}
 ]}`
 	fake := &fakeCommandRunner{results: map[string]runner.Result{
-		strings.Join([]string{"brew", "update"}, "\x00"): {Stdout: "Updated Homebrew metadata"},
-		strings.Join([]string{"env", "HOMEBREW_NO_AUTO_UPDATE=1", "HOMEBREW_NO_INSTALL_FROM_API=1", "brew", "outdated", "--json=v2", "--greedy"}, "\x00"): {Stdout: outdatedJSON},
+		strings.Join([]string{"brew", "update"}, "\x00"):                                                                {Stdout: "Updated Homebrew metadata"},
+		strings.Join([]string{"env", "HOMEBREW_NO_AUTO_UPDATE=1", "brew", "outdated", "--json=v2", "--greedy"}, "\x00"): {Stdout: outdatedJSON},
 	}}
 	staleGate := safetyGate{
 		Provider: "brew",
@@ -1694,7 +1853,7 @@ cask "wezterm@nightly"
 		context.Background(),
 		fake,
 		updateSteps()[0],
-		updateOptions{root: root, security: "strict"},
+		updateOptions{root: root, security: " STRICT "},
 		securityPolicy{},
 		[]safetyGate{staleGate},
 		false,
@@ -1834,9 +1993,9 @@ func TestRunUpdateStrictSafetyHoldsMiseCandidate(t *testing.T) {
 	defer server.Close()
 	t.Setenv("UPDEV_GITHUB_API_URL", server.URL)
 	fake := &fakeCommandRunner{results: map[string]runner.Result{
-		"env\x00HOMEBREW_NO_AUTO_UPDATE=1\x00HOMEBREW_NO_INSTALL_FROM_API=1\x00brew\x00outdated\x00--json=v2\x00--greedy": {Stdout: `{"formulae":[],"casks":[]}`},
-		strings.Join([]string{"mise", "outdated", "--json", "--cd", root}, "\x00"):                                        {Stdout: `{"github:openai/codex":{"requested":"0.60.0","current":"0.60.0","latest":"0.61.0"}}`},
-		strings.Join([]string{"brew", "update"}, "\x00"):                                                                  {Stdout: "Already up-to-date."},
+		"env\x00HOMEBREW_NO_AUTO_UPDATE=1\x00brew\x00outdated\x00--json=v2\x00--greedy": {Stdout: `{"formulae":[],"casks":[]}`},
+		strings.Join([]string{"mise", "outdated", "--json", "--cd", root}, "\x00"):      {Stdout: `{"github:openai/codex":{"requested":"0.60.0","current":"0.60.0","latest":"0.61.0"}}`},
+		strings.Join([]string{"brew", "update"}, "\x00"):                                {Stdout: "Already up-to-date."},
 	}}
 	code := runUpdate(updateOptions{format: "text", root: root, security: "strict"}, fake)
 	if code != 2 {
@@ -1885,9 +2044,9 @@ func TestRunUpdateStrictSafetyAppliesMiseSafeCandidateAndHoldsNewerNativeCandida
 	t.Setenv("UPDEV_GITHUB_API_URL", server.URL)
 	scopedMiseKey := strings.Join([]string{"mise", "upgrade", "--yes", "--minimum-release-age", "3d", "--cd", root, "github:openai/codex"}, "\x00")
 	fake := &fakeCommandRunner{results: map[string]runner.Result{
-		"env\x00HOMEBREW_NO_AUTO_UPDATE=1\x00HOMEBREW_NO_INSTALL_FROM_API=1\x00brew\x00outdated\x00--json=v2\x00--greedy": {Stdout: `{"formulae":[],"casks":[]}`},
-		strings.Join([]string{"mise", "outdated", "--json", "--cd", root}, "\x00"):                                        {Stdout: `{"github:openai/codex":{"requested":"0.60.0","current":"0.60.0","latest":"0.61.0"}}`},
-		strings.Join([]string{"env", "MISE_MINIMUM_RELEASE_AGE=0d", "mise", "outdated", "--json", "--cd", root}, "\x00"):  {Stdout: `{"github:openai/codex":{"requested":"0.60.0","current":"0.60.0","latest":"0.62.0"}}`},
+		"env\x00HOMEBREW_NO_AUTO_UPDATE=1\x00brew\x00outdated\x00--json=v2\x00--greedy":                                  {Stdout: `{"formulae":[],"casks":[]}`},
+		strings.Join([]string{"mise", "outdated", "--json", "--cd", root}, "\x00"):                                       {Stdout: `{"github:openai/codex":{"requested":"0.60.0","current":"0.60.0","latest":"0.61.0"}}`},
+		strings.Join([]string{"env", "MISE_MINIMUM_RELEASE_AGE=0d", "mise", "outdated", "--json", "--cd", root}, "\x00"): {Stdout: `{"github:openai/codex":{"requested":"0.60.0","current":"0.60.0","latest":"0.62.0"}}`},
 		scopedMiseKey: {Stdout: "github:openai/codex 0.60.0 -> 0.61.0"},
 		strings.Join([]string{"mise", "prune"}, "\x00"): {Stdout: "mise pruned configuration links"},
 	}}
@@ -2062,37 +2221,43 @@ func TestScopedSecurityRerunStepOnlyTargetsSelectedFinding(t *testing.T) {
 	}
 }
 
-func TestScopedMiseUpgradeCommandUsesConfiguredMinimumReleaseAge(t *testing.T) {
+func TestStrictMiseUpdateUsesConfiguredMinimumReleaseAge(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	t.Setenv("UPDEV_MISE_MIN_RELEASE_AGE_DAYS", "5")
 	root := t.TempDir()
 
-	command := scopedMiseUpgradeCommand(root, []safetyFinding{{
+	step, holdReason := updateStepWithStrictSafety(updateSteps()[1], updateOptions{root: root, security: "strict"}, []safetyGate{{
 		Provider: "mise",
-		Name:     "github:openai/codex",
-		Decision: "allow",
+		Status:   plan.StatusOK,
+		Findings: []safetyFinding{{Provider: "mise", Name: "github:openai/codex", Decision: "allow"}},
 	}})
+	if holdReason != "" {
+		t.Fatalf("expected scoped mise plan, got hold reason %q", holdReason)
+	}
 
-	got := strings.Join(command, " ")
+	got := strings.Join(step.Command, " ")
 	want := "mise upgrade --yes --minimum-release-age 5d --cd " + root + " github:openai/codex"
 	if !strings.Contains(got, want) {
 		t.Fatalf("expected configured minimum release age in scoped mise command\nwant: %s\ngot:  %s", want, got)
 	}
 }
 
-func TestScopedMiseUpgradeCommandOmitsMinimumReleaseAgeWhenDisabled(t *testing.T) {
+func TestStrictMiseUpdateOmitsMinimumReleaseAgeWhenDisabled(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	t.Setenv("UPDEV_MISE_MIN_RELEASE_AGE_DAYS", "0")
 
-	command := scopedMiseUpgradeCommand("", []safetyFinding{{
+	step, holdReason := updateStepWithStrictSafety(updateSteps()[1], updateOptions{security: "strict"}, []safetyGate{{
 		Provider: "mise",
-		Name:     "github:openai/codex",
-		Decision: "allow",
+		Status:   plan.StatusOK,
+		Findings: []safetyFinding{{Provider: "mise", Name: "github:openai/codex", Decision: "allow"}},
 	}})
+	if holdReason != "" {
+		t.Fatalf("expected scoped mise plan, got hold reason %q", holdReason)
+	}
 
-	got := strings.Join(command, " ")
+	got := strings.Join(step.Command, " ")
 	if strings.Contains(got, "--minimum-release-age") {
 		t.Fatalf("expected disabled minimum release age to omit flag, got %s", got)
 	}
@@ -2142,7 +2307,7 @@ func TestRunUpdateStrictSafetyRefreshesBrewMetadataAndAppliesDiscoveredSafeCandi
 	t.Setenv("UPDEV_HOMEBREW_API_URL", server.URL)
 	t.Setenv("UPDEV_GITHUB_API_URL", server.URL)
 	t.Setenv("UPDEV_OSV_API_URL", server.URL)
-	outdatedKey := "env\x00HOMEBREW_NO_AUTO_UPDATE=1\x00HOMEBREW_NO_INSTALL_FROM_API=1\x00brew\x00outdated\x00--json=v2\x00--greedy"
+	outdatedKey := "env\x00HOMEBREW_NO_AUTO_UPDATE=1\x00brew\x00outdated\x00--json=v2\x00--greedy"
 	scopedBrewKey := strings.Join([]string{"env", "HOMEBREW_NO_AUTO_UPDATE=1", "brew", "upgrade", "--greedy", "jq"}, "\x00")
 	fake := &fakeCommandRunner{
 		results: map[string]runner.Result{

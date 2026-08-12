@@ -48,11 +48,11 @@ func TestFilteredSectionsSearchesSectionAndRowFields(t *testing.T) {
 			{Name: "python", Version: "3.13.0", State: "inactive", Detail: "Python runtime"},
 		},
 	}}
-	filtered := FilteredSections(sections, "PYTHON")
+	filtered := filteredSections(sections, "PYTHON")
 	if RowCount(filtered) != 1 || filtered[0].Rows[0].Name != "python" {
 		t.Fatalf("expected only python row, got %#v", filtered)
 	}
-	filtered = FilteredSections(sections, "runtime")
+	filtered = filteredSections(sections, "runtime")
 	if RowCount(filtered) != 2 {
 		t.Fatalf("expected section/title query to keep both rows, got %#v", filtered)
 	}
@@ -60,7 +60,7 @@ func TestFilteredSectionsSearchesSectionAndRowFields(t *testing.T) {
 
 func TestTakeActionClearsOnlyAction(t *testing.T) {
 	state := State{Selected: 2, Offset: 1, Query: "git", Expanded: map[int]bool{2: true}, Action: "open"}
-	action := TakeAction(&state)
+	action := takeAction(&state)
 	if action != "open" {
 		t.Fatalf("expected action to be returned, got %q", action)
 	}
@@ -70,7 +70,7 @@ func TestTakeActionClearsOnlyAction(t *testing.T) {
 	if state.Selected != 2 || state.Offset != 1 || state.Query != "git" || !state.Expanded[2] {
 		t.Fatalf("expected navigation state to be preserved, got %#v", state)
 	}
-	if action := TakeAction(nil); action != "" {
+	if action := takeAction(nil); action != "" {
 		t.Fatalf("expected nil state to return empty action, got %q", action)
 	}
 }
@@ -124,11 +124,11 @@ func TestTakeActionAndRememberClearsCachedAction(t *testing.T) {
 }
 
 func TestExpandedLinesUseLabelsAndFallback(t *testing.T) {
-	lines := ExpandedLines(Row{}, Labels{NoExtraDetail: "none"})
+	lines := expandedLines(Row{}, Labels{NoExtraDetail: "none"})
 	if len(lines) != 1 || lines[0] != "none" {
 		t.Fatalf("expected fallback detail line, got %#v", lines)
 	}
-	lines = ExpandedLines(Row{Detail: "detail text", Version: "1.0.0", Wanted: "latest", State: "active"}, Labels{Detail: "詳細", Version: "版", Wanted: "要求", State: "状態"})
+	lines = expandedLines(Row{Detail: "detail text", Version: "1.0.0", Wanted: "latest", State: "active"}, Labels{Detail: "詳細", Version: "版", Wanted: "要求", State: "状態"})
 	joined := strings.Join(lines, "\n")
 	for _, want := range []string{"詳細", "詳細: detail text"} {
 		if !strings.Contains(joined, want) {
@@ -143,7 +143,7 @@ func TestExpandedLinesUseLabelsAndFallback(t *testing.T) {
 }
 
 func TestExpandedLinesDoNotSplitURLsAsKeyValue(t *testing.T) {
-	lines := strings.Join(ExpandedLines(Row{Detail: "go言語（組み込みプラグイン）。https://mise.jdx.dev/lang/go.html"}, Labels{Detail: "詳細"}), "\n")
+	lines := strings.Join(expandedLines(Row{Detail: "go言語（組み込みプラグイン）。https://mise.jdx.dev/lang/go.html"}, Labels{Detail: "詳細"}), "\n")
 	if strings.Contains(lines, "https: //") {
 		t.Fatalf("did not expect URL scheme to be split as key-value:\n%s", lines)
 	}
@@ -152,8 +152,22 @@ func TestExpandedLinesDoNotSplitURLsAsKeyValue(t *testing.T) {
 	}
 }
 
+func TestExpandedLinesKeepLocalizedKeyValueDetails(t *testing.T) {
+	detail := strings.Join([]string{
+		"説明: macOS/system git を使える状態に保つ",
+		"管理: brew / brew / git",
+		"確認: bak 1",
+		"backend: GitHub候補 github:git/git (要確認)",
+		"操作: 下の actions から 1 件選択できます",
+	}, "\n")
+	lines := strings.Join(expandedLines(Row{Detail: detail}, Labels{Detail: "詳細"}), "\n")
+	if strings.Contains(lines, "note:") {
+		t.Fatalf("did not expect localized key-value details to fall back to note lines:\n%s", lines)
+	}
+}
+
 func TestExpandedLinesExposeRowActions(t *testing.T) {
-	lines := ExpandedLines(Row{
+	lines := expandedLines(Row{
 		Name:   "jq",
 		State:  "extra",
 		Detail: "installed but not desired",
@@ -535,7 +549,7 @@ func TestExpandedLinesPreserveAndWrapURL(t *testing.T) {
 	row := Row{
 		Detail: "A cat clone. https://github.com/sharkdp/bat-with-a-deliberately-long-url-segment-for-wrapping",
 	}
-	lines := ExpandedLines(row, Labels{})
+	lines := expandedLines(row, Labels{})
 	joined := strings.Join(lines, "\n")
 	if !strings.Contains(joined, "https://github.com") {
 		t.Fatalf("expected expanded detail to preserve URL, got %#v", lines)
@@ -552,8 +566,8 @@ func TestExpandedLinesUseRequestedWidth(t *testing.T) {
 		Detail: "detail text with a deliberately-long-token-for-width-sensitive-wrapping",
 	}
 	narrowWidth := 48
-	narrow := ExpandedLinesWithWidth(row, Labels{}, narrowWidth)
-	wide := ExpandedLinesWithWidth(row, Labels{}, 96)
+	narrow := expandedLinesWithWidth(row, Labels{}, narrowWidth)
+	wide := expandedLinesWithWidth(row, Labels{}, 96)
 	if len(narrow) <= len(wide) {
 		t.Fatalf("expected narrow terminal width to produce more detail lines, narrow=%#v wide=%#v", narrow, wide)
 	}
@@ -576,7 +590,7 @@ func TestWriteFlowHelpersBuildStableStateAndDescription(t *testing.T) {
 		t.Fatalf("expected confirm state key to be write-only")
 	}
 	now := time.Date(2026, 6, 13, 0, 0, 0, 0, time.UTC)
-	if got := DefaultWriteExpiry("", now); got != "2026-06-20" {
+	if got := defaultWriteExpiry("", now); got != "2026-06-20" {
 		t.Fatalf("expected seven-day default expiry, got %q", got)
 	}
 	flow := NewWriteFlow(action, "", "dashboard", WriteActionSpec{DefaultReason: "default", DefaultExpires: "2026-06-20"})

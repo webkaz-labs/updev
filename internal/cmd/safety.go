@@ -24,7 +24,6 @@ import (
 	"github.com/webkaz-labs/updev/internal/securitygate"
 	"github.com/webkaz-labs/updev/internal/securityreason"
 	"github.com/webkaz-labs/updev/internal/textui"
-	"github.com/webkaz-labs/updev/internal/updatereason"
 	"github.com/webkaz-labs/updev/internal/updevpath"
 )
 
@@ -71,10 +70,6 @@ func saveUpdateSafetyErrorCache(provider string, key string, status plan.Status,
 
 func saveUpdateSafetyUnavailableCache(provider string, key string, message string, findings []safetyFinding, warnings []string) {
 	securitygate.SaveUnavailableCache(provider, key, message, findings, warnings)
-}
-
-func updateSafetyCachePath(provider string, key string) string {
-	return securitygate.CachePath(provider, key)
 }
 
 func updateSafetyCacheKey(parts ...string) string {
@@ -147,7 +142,7 @@ func setSafetyFindingReasonText(finding *safetyFinding, reason string) {
 	setSafetyFindingReason(finding, securityreason.Infer(reason))
 }
 
-func localizedSafetyFindingReason(finding safetyFinding) string {
+func safetyFindingReason(finding safetyFinding) securityreason.Reason {
 	reason := securityreason.Reason{
 		Code: finding.ReasonCode,
 		Text: finding.Reason,
@@ -155,7 +150,22 @@ func localizedSafetyFindingReason(finding safetyFinding) string {
 	}
 	if reason.Code == "" {
 		reason = securityreason.Infer(finding.Reason)
+	} else {
+		inferred := securityreason.Infer(finding.Reason)
+		if inferred.Code == reason.Code && len(inferred.Args) > 0 {
+			reason.Args = cloneStringMap(reason.Args)
+			for key, value := range inferred.Args {
+				if reason.Args[key] == "" {
+					reason.Args[key] = value
+				}
+			}
+		}
 	}
+	return reason
+}
+
+func localizedSafetyFindingReason(finding safetyFinding) string {
+	reason := safetyFindingReason(finding)
 	if defaultLanguage() == "ja" && reason.Code != "" {
 		localized := securityreason.LocalizeJapanese(reason)
 		if strings.TrimSpace(localized) != "" {
@@ -163,10 +173,6 @@ func localizedSafetyFindingReason(finding safetyFinding) string {
 		}
 	}
 	return localizedSafetyReason(finding.Reason)
-}
-
-func collectUpdateSafety(ctx context.Context, commandRunner commandRunner, opts updateOptions) []safetyGate {
-	return collectUpdateSafetyWithPolicy(ctx, commandRunner, opts, loadSecurityPolicy())
 }
 
 func collectUpdateSafetyWithPolicy(ctx context.Context, commandRunner commandRunner, opts updateOptions, policy securityPolicy) []safetyGate {
@@ -242,6 +248,12 @@ func collectMiseUpdateSafetyWithPolicy(ctx context.Context, commandRunner comman
 	findings, warnings, err := parseMiseOutdatedResult(runMiseOutdatedJSON(ctx, commandRunner, root))
 	gate.Warnings = append(gate.Warnings, warnings...)
 	if err != nil {
+		if finding, ok := unavailableMiseNPMRegistryFinding("mise", err.Error()); ok {
+			gate.Status = plan.StatusHeld
+			gate.Findings = []safetyFinding{finding}
+			gate.Summary = safetySummaryFromFindings(gate.Findings)
+			return gate
+		}
 		gate.Status = plan.StatusError
 		gate.Error = err.Error()
 		return gate
@@ -497,7 +509,7 @@ func runBrewOutdatedJSON(ctx context.Context, commandRunner commandRunner) runne
 	timeout := brewOutdatedTimeout()
 	requestCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	args := []string{"HOMEBREW_NO_AUTO_UPDATE=1", "HOMEBREW_NO_INSTALL_FROM_API=1"}
+	args := []string{"HOMEBREW_NO_AUTO_UPDATE=1"}
 	args = append(args, "brew", "outdated", "--json=v2", "--greedy")
 	result := commandRunner.Run(requestCtx, "env", args...)
 	if requestCtx.Err() == context.DeadlineExceeded && result.Stdout == "" && result.Stderr == "" {
@@ -908,26 +920,17 @@ func applyHomebrewSafetyMetadata(finding safetyFinding, metadata homebrewMetadat
 		finding.Remediation = ""
 		finding.Confidence = "medium"
 	case finding.Kind == "cask":
-		finding.Decision = "review"
-		setSafetyFindingReason(&finding, securityreason.HomebrewCaskProvenanceReason(finding.Name, caskProvenanceReason(finding.HomepageHost, finding.URLHost), finding.HomepageHost, finding.URLHost))
-		finding.Remediation = caskProvenanceRemediation(finding.HomepageHost, finding.URLHost)
-		finding.Confidence = "low"
+		verdict := brew.CaskProvenanceVerdictFor(finding.HomepageHost, finding.URLHost, finding.Version)
+		finding.Decision = verdict.Decision
+		setSafetyFindingReason(&finding, securityreason.HomebrewPostureReason(verdict.ReasonCode, "cask", finding.Name, verdict.Reason, map[string]string{
+			"homepage_host": finding.HomepageHost,
+			"url_host":      finding.URLHost,
+		}))
+		finding.Remediation = verdict.Remediation
+		finding.Confidence = verdict.Confidence
+		finding.Evidence = appendEvidence(finding.Evidence, verdict.Evidence)
 	}
 	return finding
-}
-
-func caskProvenanceReason(homepageHost string, urlHost string) string {
-	if homepageHost != "" && urlHost != "" && homepageHost != urlHost {
-		return "Homebrew cask download host differs from homepage host; vendor provenance review required"
-	}
-	return "Homebrew cask needs vendor provenance review before update"
-}
-
-func caskProvenanceRemediation(homepageHost string, urlHost string) string {
-	if homepageHost != "" && urlHost != "" && homepageHost != urlHost {
-		return "review vendor provenance between homepage host " + homepageHost + " and download host " + urlHost + ", then add a temporary allow policy with reason and expiry if accepted"
-	}
-	return "review vendor homepage and download host, then add a temporary allow policy with reason and expiry if accepted"
 }
 
 func hostFromURL(rawURL string) string {
@@ -966,38 +969,8 @@ func manifestWarnings(manifest brewSafetyManifest) []safetyFinding {
 	return brew.ManifestWarnings(manifest.Manifest)
 }
 
-func brewSafetyNormalizeName(kind string, name string) string {
-	return brew.NormalizePackageName(kind, name)
-}
-
-func brewSafetyTap(kind string, name string) string {
-	return brew.TapName(kind, name)
-}
-
 func isOfficialBrewTap(tap string) bool {
 	return brew.IsOfficialTap(tap)
-}
-
-func isURLBrewName(name string) bool {
-	return brew.IsURLName(name)
-}
-
-func providerHeldBySafety(provider string, opts updateOptions, gates []safetyGate) string {
-	if opts.security != "strict" {
-		return ""
-	}
-	for _, gate := range gates {
-		if gate.Provider != provider {
-			continue
-		}
-		if gate.Status == plan.StatusError {
-			return updatereason.StrictGateFailedReason(gate.Error).Text
-		}
-		if gate.Status == plan.StatusHeld {
-			return "security=strict held update because safety gate requires review"
-		}
-	}
-	return ""
 }
 
 func firstNonEmpty(values ...string) string {
@@ -1034,6 +1007,12 @@ func collectMiseBumpSafetyWithPolicy(ctx context.Context, commandRunner commandR
 	findings, warnings, err := parseMiseBumpOutdatedResult(runMiseOutdatedJSONBump(ctx, commandRunner, root))
 	gate.Warnings = append(gate.Warnings, warnings...)
 	if err != nil {
+		if finding, ok := unavailableMiseNPMRegistryFinding(miseBumpProvider, err.Error()); ok {
+			gate.Status = plan.StatusHeld
+			gate.Findings = []safetyFinding{finding}
+			gate.Summary = safetySummaryFromFindings(gate.Findings)
+			return gate
+		}
 		if miseBumpOutdatedUnavailable(err.Error()) {
 			finding := unavailableMiseBumpDiscoveryFinding(err.Error())
 			gate.Status = plan.StatusHeld
@@ -1123,9 +1102,35 @@ func miseBumpOutdatedUnavailable(detail string) bool {
 		strings.Contains(lower, "returned no output")
 }
 
+func unavailableMiseNPMRegistryFinding(provider string, detail string) (safetyFinding, bool) {
+	if !registryaudit.NPMRegistryAuthRequired(detail) {
+		return safetyFinding{}, false
+	}
+	pkg := registryaudit.NPMPackageFromAuthError(detail)
+	name := "npm registry metadata"
+	if pkg != "" {
+		name = "npm:" + pkg
+	}
+	reason := "npm registry authentication required before mise update"
+	if pkg != "" {
+		reason = "npm registry authentication required before mise update: " + pkg
+	}
+	finding := safetyFinding{
+		Provider:    provider,
+		Kind:        "npm",
+		Name:        name,
+		Decision:    "review",
+		Remediation: "configure npm registry authentication for this private package or review the package manually before allowing",
+		Evidence:    []string{"mise outdated metadata probe"},
+		Confidence:  "low",
+	}
+	setSafetyFindingReason(&finding, securityreason.RegistryPostureReason(securityreason.RegistryMetadataUnavailable, "npm", pkg, "", reason))
+	return finding, true
+}
+
 func unavailableMiseBumpDiscoveryFinding(detail string) safetyFinding {
 	return safetyFinding{
-		Provider:    "mise",
+		Provider:    miseBumpProvider,
 		Kind:        "provider",
 		Name:        "candidate-discovery",
 		Decision:    "review",
@@ -1272,6 +1277,17 @@ func unsafeMiseBumpFindings(gate safetyGate) []safetyFinding {
 }
 
 func validateMiseBumpPlannedCandidates(ctx context.Context, commandRunner commandRunner, root string, planned []safetyFinding) error {
+	_, changed, err := reconcileMiseBumpPlannedCandidates(ctx, commandRunner, root, planned)
+	if err != nil {
+		return err
+	}
+	if len(changed) > 0 {
+		return fmt.Errorf("%s", changed[0])
+	}
+	return nil
+}
+
+func reconcileMiseBumpPlannedCandidates(ctx context.Context, commandRunner commandRunner, root string, planned []safetyFinding) ([]safetyFinding, []string, error) {
 	var result runner.Result
 	if miseBumpNeedsReleaseAgeBypass(planned) {
 		result = runMiseOutdatedJSONBumpAgeDisabled(ctx, commandRunner, root)
@@ -1280,23 +1296,44 @@ func validateMiseBumpPlannedCandidates(ctx context.Context, commandRunner comman
 	}
 	current, _, err := parseMiseBumpOutdatedResult(result)
 	if err != nil {
-		return err
+		return nil, nil, err
 	}
 	currentByName := map[string]safetyFinding{}
 	for _, finding := range current {
 		currentByName[strings.ToLower(strings.TrimSpace(finding.Name))] = finding
 	}
+	stable := []safetyFinding{}
+	changed := []string{}
 	for _, finding := range planned {
 		name := strings.TrimSpace(finding.Name)
 		currentFinding, ok := currentByName[strings.ToLower(name)]
 		if !ok {
-			return fmt.Errorf("planned candidate %s is no longer reported by mise outdated --bump", name)
+			changed = append(changed, fmt.Sprintf("planned candidate %s is no longer reported by mise outdated --bump", name))
+			continue
+		}
+		if !sameMiseBumpInstalledVersions(currentFinding, finding) {
+			changed = append(changed, fmt.Sprintf("planned candidate %s installed version changed from %s to %s", name, miseBumpInstalledVersions(finding), miseBumpInstalledVersions(currentFinding)))
+			continue
 		}
 		if miseCandidateVersion(currentFinding) != miseCandidateVersion(finding) {
-			return fmt.Errorf("planned candidate %s changed from %s to %s", name, miseCandidateVersion(finding), miseCandidateVersion(currentFinding))
+			if miseCandidateVersion(finding) == "" {
+				changed = append(changed, fmt.Sprintf("planned candidate %s changed from %s to %s", name, miseCandidateVersion(finding), miseCandidateVersion(currentFinding)))
+				continue
+			}
 		}
+		stable = append(stable, finding)
 	}
-	return nil
+	return stable, changed, nil
+}
+
+func sameMiseBumpInstalledVersions(a safetyFinding, b safetyFinding) bool {
+	aInstalled := miseBumpInstalledVersions(a)
+	bInstalled := miseBumpInstalledVersions(b)
+	return aInstalled != "" && aInstalled == bInstalled
+}
+
+func miseBumpInstalledVersions(finding safetyFinding) string {
+	return strings.TrimSpace(strings.Join(finding.InstalledVersions, ","))
 }
 
 const miseNativeReleaseAgeSource = "mise-native-minimum-release-age"

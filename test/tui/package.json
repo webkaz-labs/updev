@@ -1,0 +1,13 @@
+{
+  "name": "updev-tui-tests",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@microsoft/shell-use": "0.0.1-beta.6",
+    "@resvg/resvg-js": "2.6.2",
+    "odiff-bin": "4.5.0"
+  }
+}

@@ -234,6 +234,35 @@ func TestQueryOSVBatchClassifiesHomebrewGitTagVersionAffected(t *testing.T) {
 	}
 }
 
+func TestQueryOSVBatchClassifiesHomebrewGitTagAffectedWhenDetailUsesDifferentPackage(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			_, _ = w.Write([]byte(`{
+  "id": "OSV-2024-jq",
+  "affected": [{
+    "package": {"ecosystem": "OSS-Fuzz", "name": "jq"},
+    "versions": ["jq-1.8.2"],
+    "ranges": [{"type":"GIT","repo":"https://github.com/jqlang/jq","events": [{"introduced": "abc"}]}]
+  }]
+}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"results":[{"vulns":[{"id":"OSV-2024-jq"}]}]}`))
+	}))
+	defer server.Close()
+	packages := []Package{{Provider: "brew", Name: "jq", Package: "https://github.com/jqlang/jq.git", Version: "1.8.2", Ecosystem: "GIT", Confidence: "medium"}}
+	findings, err := QueryOSVBatch(context.Background(), server.Client(), server.URL, packages)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(findings) != 1 || findings[0].MatchType != AdvisoryMatchCandidateVersionAffected {
+		t.Fatalf("expected repo-matched affected-version match, got %#v", findings)
+	}
+	if len(findings[0].AffectedVersions) != 1 || findings[0].AffectedVersions[0] != "jq-1.8.2" {
+		t.Fatalf("expected affected version evidence from repo-matched detail, got %#v", findings[0])
+	}
+}
+
 func TestQueryOSVBatchClassifiesHomebrewGitSourceRangeMatch(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet {

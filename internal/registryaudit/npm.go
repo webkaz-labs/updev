@@ -134,11 +134,9 @@ func NPMPosturesFromItems(ctx context.Context, client *http.Client, registryBase
 		requests = append(requests, requestedPackage{name: item.Name, pkg: pkg, version: item.Version})
 	}
 	postures := make([]NPMPosture, 0, len(requests))
-	errs := []error{}
 	for _, request := range requests {
 		metadata, err := FetchNPMMetadata(ctx, client, registryBase, request.pkg)
 		if err != nil {
-			errs = append(errs, fmt.Errorf("%s: %w", request.pkg, err))
 			postures = append(postures, NPMPostureUnavailable(request.name, request.pkg, request.version, err))
 			continue
 		}
@@ -147,7 +145,7 @@ func NPMPosturesFromItems(ctx context.Context, client *http.Client, registryBase
 	sort.Slice(postures, func(i, j int) bool {
 		return postures[i].Package < postures[j].Package
 	})
-	return postures, summarizeErrors(errs, 3)
+	return postures, nil
 }
 
 func NPMPackageFromItem(item plan.Item) (string, bool) {
@@ -279,19 +277,82 @@ func NPMDefaultBinaryName(pkg string) string {
 }
 
 func NPMPostureUnavailable(requestedName string, pkg string, version string, err error) NPMPosture {
+	reason, remediation := npmMetadataUnavailableReason(pkg, err)
 	posture := NPMPosture{
-		Provider:   "mise",
-		Kind:       "npm",
-		Name:       requestedName,
-		Package:    pkg,
-		Version:    version,
-		Decision:   "review",
-		Confidence: "low",
-		Reason:     "npm registry metadata unavailable: " + err.Error(),
-		URL:        NPMPackagePageURL(pkg),
+		Provider:    "mise",
+		Kind:        "npm",
+		Name:        requestedName,
+		Package:     pkg,
+		Version:     version,
+		Decision:    "review",
+		Confidence:  "low",
+		Reason:      reason,
+		Remediation: remediation,
+		URL:         NPMPackagePageURL(pkg),
 	}
 	setNPMPostureReason(&posture, securityreason.RegistryMetadataUnavailable, posture.Reason)
 	return posture
+}
+
+func npmMetadataUnavailableReason(pkg string, err error) (string, string) {
+	detail := strings.TrimSpace(err.Error())
+	if NPMRegistryAuthRequired(detail) {
+		return "npm registry authentication required for metadata: " + pkg,
+			"configure npm registry authentication for this private package or review the package manually before allowing"
+	}
+	return "npm registry metadata unavailable: " + detail,
+		"retry when the npm registry is reachable or review manually before allowing"
+}
+
+func NPMRegistryAuthRequired(detail string) bool {
+	lower := strings.ToLower(detail)
+	return strings.Contains(lower, "http 401") ||
+		strings.Contains(lower, "http 403") ||
+		strings.Contains(lower, "e401") ||
+		strings.Contains(lower, "unauthorized") ||
+		strings.Contains(lower, "authentication token")
+}
+
+func NPMPackageFromAuthError(detail string) string {
+	detail = strings.TrimSpace(detail)
+	if detail == "" {
+		return ""
+	}
+	for _, token := range strings.Fields(detail) {
+		token = strings.Trim(token, `"'():,`)
+		if strings.Contains(token, "npm.pkg.github.com/") {
+			if _, after, ok := strings.Cut(token, "npm.pkg.github.com/"); ok {
+				if decoded := decodeNPMErrorPackage(after); decoded != "" {
+					return decoded
+				}
+			}
+		}
+		if strings.HasPrefix(token, "@") && strings.Contains(token, "%2f") {
+			if decoded := decodeNPMErrorPackage(token); decoded != "" {
+				return decoded
+			}
+		}
+		if strings.HasPrefix(token, "@") && strings.Contains(token, "/") {
+			return token
+		}
+	}
+	return ""
+}
+
+func decodeNPMErrorPackage(raw string) string {
+	value := strings.TrimSpace(raw)
+	if value == "" {
+		return ""
+	}
+	value = strings.Split(value, "?")[0]
+	value = strings.Split(value, "#")[0]
+	value = strings.Trim(value, `"'():,`)
+	value = strings.ReplaceAll(value, "%2F", "/")
+	value = strings.ReplaceAll(value, "%2f", "/")
+	if strings.HasPrefix(value, "@") && strings.Contains(value, "/") {
+		return value
+	}
+	return ""
 }
 
 func NPMPackagePageURL(pkg string) string {

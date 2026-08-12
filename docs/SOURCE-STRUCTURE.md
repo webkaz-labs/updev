@@ -23,7 +23,7 @@ Current largest non-`cmd` packages:
 |---------|------------------|--------|
 | `internal/brew` | 16 | ok |
 | `internal/manualinventory` | 14 | ok |
-| `internal/mise` | 13 | ok |
+| `internal/mise` | 17 | ok |
 | `internal/reviewui` | 12 | ok |
 | `internal/registryaudit` | 9 | ok |
 | `internal/securitygate` | 9 | ok |
@@ -32,9 +32,16 @@ Current largest non-`cmd` packages:
 | `internal/manualinventory/platform` | 6 | ok |
 | `internal/nativeaudit` | 6 | ok |
 | `internal/securityadvisory` | 6 | ok |
-| `internal/backend` | 5 | ok |
+| `internal/backend` | 7 | ok |
 | `internal/plan` | 5 | ok |
+| `internal/packageparity` | 4 | ok |
+| `internal/packageexecutor` | 3 | ok |
+| `internal/packageapply` | 2 | ok |
+| `internal/inventoryrun` | 2 | ok |
+| `internal/runner` | 2 | ok |
 | `internal/textui` | 4 | ok |
+| `internal/updateplan` | 2 | ok |
+| `internal/updatereport` | 2 | ok |
 
 ## Placement Rules
 
@@ -188,6 +195,15 @@ Completed P1 foundation slices:
 - Shared text display helpers such as compact age formatting and ordered filter
   summaries live in `internal/textui`; command code should not keep duplicate
   display utilities.
+- Brewfile/mise bootstrap desired-state comparison and canonical
+  formula/cask/tap parity live in `internal/packageparity`; `cmd` only selects
+  the active sources and renders the report entrypoint.
+- Package executor selection lives in `internal/packageexecutor` as a pure
+  desired-source/platform/capability policy. It does not inspect host names,
+  local paths, or run provider commands.
+- Package apply command construction lives in `internal/packageapply`; it
+  creates exact item-scoped argv from executor decisions without collecting
+  safety evidence or running subprocesses.
 - Action badge rendering, stable badge priority, status-aware badge coloring,
   width truncation, and Nerd Font marker detection live in `internal/textui`;
   `reviewui` adapts row actions into badge inputs but does not own badge
@@ -199,7 +215,19 @@ Completed P1 foundation slices:
   route-specific actions and delegate de-duplication by action value.
 - Update provider stdout/stderr summary parsing and de-duplication lives in
   `internal/updatelog`; cmd code passes captured provider logs in and keeps
-  report mutation/rendering local.
+  provider execution-result assembly and rendering local. Provider-neutral
+  report mutation belongs to `internal/updatereport`.
+- Provider-neutral update step/report types, status aggregation, cached outcome
+  normalization, filters, summaries, and section projections live in
+  `internal/updatereport`. Command code keeps policy/config adaptation, cache
+  file I/O, localization, rendering, routes, and streaming execution.
+- Default update steps and strict-safety projection from typed gate findings to
+  item-scoped Homebrew/mise command plans live in `internal/updateplan`.
+  Provider packages keep exact argv construction and target normalization;
+  command code keeps localized skipped-item summaries and execution.
+- Subprocess argv/env/stream requests and capability selection live in
+  `internal/runner`. Inventory collection and cached refreshes require an
+  injected runner; only command/TUI composition roots select `runner.Local`.
 - Shared write-flow state-key, default-expiry, and confirmation-description
   helpers live in `internal/reviewui`; cmd routers keep only action parsing,
   return routing, and write application.
@@ -212,8 +240,11 @@ Completed P1 foundation slices:
 - Homebrew tap trust target parsing, trust-state interpretation, and trust
   command argv builders live in `internal/brew`.
 - Homebrew and mise update command argv builders live in their provider
-  packages. Command code owns findings-to-target selection, report mutation,
-  and TTY routing; it should not rebuild provider command chains inline.
+  packages. `internal/updateplan` selects allowed finding targets and composes
+  those builders into strict update steps; command code owns provider result
+  adaptation, localized evidence, and TTY routing. Provider-neutral report
+  mutation belongs to `internal/updatereport`. Command code should not rebuild
+  provider command chains inline.
 - Curated backend preference rewrite seeds are data-backed registry entries
   with source evidence, so adding a known rewrite path does not require a new
   command-local or tool-name branch.
@@ -287,7 +318,7 @@ scanner parsing, route-state, or badge logic to `internal/cmd`.
 
 | Area | Current pressure | Preferred destination | Done when |
 |------|------------------|-----------------------|-----------|
-| Update/security report assembly | `cmd` still owns much of the stitching between provider findings, update steps, and TTY routes. | Keep final report mutation in `cmd`, but move provider-neutral decision grouping or reason derivation into `securitygate`, `updatereason`, or `securityreason` when it can be tested without TUI imports. | JSON/report fields stay stable, localized text still renders at the boundary, and update dashboard tests keep passing. |
+| Update/security report assembly | The provider-neutral update model and projections are extracted; security-specific finding enrichment and localized route rows remain at the command boundary. | Keep update report mechanics in `updatereport`; move only independently testable security decision grouping or reason derivation into `securitygate`, `updatereason`, or `securityreason`. | JSON/report fields stay stable, localized text renders at the boundary, and update dashboard tests keep passing. |
 | List/detail evidence badges | Inventory, manual, backend, and security views must keep consistent compact markers. | `textui` for badge rendering and width behavior; `plan` or provider packages for evidence classification. | A new badge or evidence class is not implemented separately in multiple command files. |
 | Routed TTY return behavior | `updev`, `last`, and `list` share route-stack expectations but still have command-specific adapters. | `reviewui` for state stack, action consumption, confirmation state, and focus/scroll restoration; `cmd` only maps routes to domain views. | Returning from child views restores the expected parent row/filter without clearing focused actions. |
 | TUI foreground external process | TUI actions may later need to open an editor or explicit agent command and return to the same route. | Future shared `reviewui` wrapper around Bubble Tea `ExecProcess`; provider update/scan/audit execution stays on `runner`. | The release records the boundary, but does not replace provider log-streaming commands with `ExecProcess`. |
@@ -309,7 +340,8 @@ Implementation order:
 
 1. Split `manualinventory`.
 2. Extract shared routed TTY state into `reviewui`.
-3. Extract provider-neutral update/security report assembly.
+3. Extract provider-neutral update report assembly and command/safety planning.
+   **Complete through `internal/updatereport` and `internal/updateplan`.**
 4. Clean up badge/evidence display boundaries.
 5. Audit external CLI/parser ownership and update this ledger.
 
@@ -358,6 +390,9 @@ Completed extraction:
 - `internal/updevconfig` owns updev config defaults, environment overrides,
   TOML parsing, validation helpers, and config path resolution. `cmd` keeps
   compatibility aliases and wrappers only.
+- `internal/packagemetadata` owns the strict versioned package sidecar schema,
+  canonical `provider/kind/name` validation, deterministic loading, and stale
+  desired-ID diagnostics. Executor selection remains outside this package.
 - `internal/syncreport` owns read-only sync report construction, drift
   classification, provider mismatch keys, and sync guidance. `cmd` supplies the
   manual-app matching adapter and final localized text/JSON rendering.
@@ -374,35 +409,49 @@ Completed extraction:
 Future extraction order:
 
 1. **Report assembly owners**
-   - Extract provider-neutral update/security summary assembly before changing
-     downstream TUI routes.
-   - Cached reports, JSON/text summaries, and TUI route rows must consume the
-     same structured summary result.
-   - Reason derivation and evidence grouping must not stay command-local after
-     the extraction.
+   - **AD-U1 is complete.** Cached outcome
+     normalization, filters, summaries, section projections, and status
+     aggregation now share `internal/updatereport`.
+   - Default provider steps, allow/non-allow finding selection, strict hold
+     decisions, and item-scoped command-plan composition live in
+     `internal/updateplan`; `brew` and `mise` remain the exact argv owners.
+   - Provider execution, streamed output, localized skipped-item summaries, and
+     execution-result adaptation remain at the command boundary.
+   - Keep security-specific reason derivation and evidence grouping in their
+   existing owners; do not move localized TUI route rows into the report
+   package.
 
-2. **List/manual/backend view models**
-   - Move row grouping, evidence-to-action projection, compact badge presence,
-     and backend/manual action summaries out of command files.
-   - Keep final Japanese/localized labels at the CLI/TUI boundary.
-   - Owner packages expose stable row/action inputs that can be tested without
-     terminal interaction.
+2. **Execution dependency**
+   - **AD-U2 is complete.** `runner.Request` and `runner.Execute` own optional
+     env/stream capability selection for update and Brewfile apply execution.
+   - `inventoryrun.Collect` and `CollectCached` require an injected
+     `runner.Runner`; update-time inventory reuses the update runner.
+   - CLI/TUI composition roots remain responsible for choosing `runner.Local`.
+     Do not add a process-wide global runner or a speculative provider backend.
 
-3. **Common routed TUI core**
-   - Consolidate shared route stack, Back/Home restoration, parent row/filter
-     restoration, focused-action stability, confirmation state, pending writes,
-     and action consumption in `reviewui` or a small route owner.
-   - The extracted route core must cover `updev`, `updev last`, `updev list`,
-     manual inventory, backend convergence, security details, and policy review.
+3. **Command entrypoint contract and dead facade cleanup**
+   - **AD-U3 is complete.** Outer `cmd.Run` parsing tests cover update, list,
+     last, apply, and every value-taking flag on those surfaces without live
+     provider execution.
+   - Owner-specific tests remain with owner packages; command tests retain
+     parsing, option precedence, top-level routing, and integration contracts.
+   - Zero-reference forwarding aliases/helpers were deleted rather than moved.
+     `scripts/check-staticcheck.sh` now blocks `U1000` together with `SA*`.
+
+4. **Common routed TUI core and export audit**
+   - **AD-U4 is complete.** `reviewui` exports only command-consumed models,
+     constructors, state helpers, and types required by exported signatures.
+     Package-local defaults, filters, renderers, width calculations, and
+     Bubble Tea messages are private.
+   - Existing route state helpers continue to own Back/Home restoration,
+     parent row/filter restoration, focused-action stability, confirmation
+     state, pending writes, and action consumption. No second route abstraction
+     was added because command-specific adapters still own domain route maps.
+   - Regression coverage spans `updev`, `updev last`, `updev list`, manual
+     inventory, backend convergence, security details, and policy review,
+     including expanded-row visibility near the terminal bottom.
    - Preserve the accepted high-density grouped list design; do not turn this
      refactor into a UX redesign.
-
-4. **Test relocation**
-   - Move owner-specific tests with the extracted production owner packages.
-   - Keep only command parsing, CLI option precedence, top-level route dispatch,
-     and integration-style contracts in `internal/cmd`.
-   - Do not reduce command test count by deleting coverage; reduce it by moving
-     tests to the package that owns the behavior.
 
 5. **Guardrail tightening**
    - Tighten `scripts/check-source-structure.sh` only after the production and
@@ -410,6 +459,8 @@ Future extraction order:
    - Record final counts here before tagging.
    - Keep direct subprocess exceptions synced with `ARCHITECTURE.md` and the
      direct-subprocess check.
+   - Keep `SA*` and `U1000` in the blocking Staticcheck task so owner extraction
+     cannot leave command-local compatibility facades behind.
 
 Non-goals for `v0.7.8`:
 

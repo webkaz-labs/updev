@@ -8,7 +8,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 )
 
-func newDetailBrowserModel(title string, rows []detailBrowserRow, state detailBrowserState, color bool) DetailBrowserModel {
+func newDetailBrowserModel(title string, rows []detailBrowserRow, state State, color bool) DetailBrowserModel {
 	return NewDetailBrowserModel(DetailBrowserOptions{
 		Title:   title,
 		Rows:    rows,
@@ -24,7 +24,7 @@ func TestDetailBrowserModelTogglesAndRendersExpandedDetail(t *testing.T) {
 	model := newDetailBrowserModel("details", []detailBrowserRow{
 		{Title: "one", Status: "ok", Summary: "short", Detail: "full detail"},
 		{Title: "two", Status: "held", Summary: "summary", Detail: "second detail", Metadata: []string{"updated: jq; git", "applyability: review-only"}, Actions: []detailBrowserAction{{Value: "demo", Label: "review", Description: "inspect evidence"}}},
-	}, detailBrowserState{}, false)
+	}, State{}, false)
 	model.Move(1)
 	if model.State.Selected != 1 {
 		t.Fatalf("expected selected row 1, got %d", model.State.Selected)
@@ -52,7 +52,7 @@ func TestDetailBrowserModelTogglesAndRendersExpandedDetail(t *testing.T) {
 	if model.State.Action != "demo" {
 		t.Fatalf("expected Enter on focused action to select action, got %#v", model.State)
 	}
-	coloredLines := strings.Join(DetailBrowserExpandedLinesStyled(detailBrowserRow{
+	coloredLines := strings.Join(detailBrowserExpandedLinesStyled(detailBrowserRow{
 		Detail:   "second detail",
 		Metadata: []string{"updated: jq; git"},
 		Actions:  []detailBrowserAction{{Value: "demo", Label: "review", Description: "inspect evidence"}},
@@ -91,7 +91,7 @@ func TestDetailBrowserKeepsExpandedDetailVisibleNearBottom(t *testing.T) {
 		}
 		rows = append(rows, detailBrowserRow{Title: fmt.Sprintf("row-%02d", i), Status: "ok", Detail: detail})
 	}
-	model := newDetailBrowserModel("details", rows, detailBrowserState{}, false)
+	model := newDetailBrowserModel("details", rows, State{}, false)
 	model.Height = 14
 	model.Move(10)
 	model.ToggleSelected()
@@ -113,14 +113,14 @@ func TestDetailBrowserActionKeysReturnFocusedRowAction(t *testing.T) {
 			{Value: "second", Label: "second action"},
 		},
 	}}
-	model := newDetailBrowserModel("details", rows, detailBrowserState{}, false)
+	model := newDetailBrowserModel("details", rows, State{}, false)
 	updated, _ := model.Update(tea.KeyPressMsg(tea.Key{Text: "a", Code: 'a'}))
 	model = updated.(DetailBrowserModel)
 	if model.State.Action != "first" {
 		t.Fatalf("expected a to select first row action, got %#v", model.State)
 	}
 
-	model = newDetailBrowserModel("details", rows, detailBrowserState{}, false)
+	model = newDetailBrowserModel("details", rows, State{}, false)
 	updated, _ = model.Update(tea.KeyPressMsg(tea.Key{Text: "2", Code: '2'}))
 	model = updated.(DetailBrowserModel)
 	if model.State.Action != "second" {
@@ -138,7 +138,7 @@ func TestDetailBrowserStateRestoresFocusedAction(t *testing.T) {
 			{Value: "second", Label: "second action"},
 		},
 	}}
-	model := newDetailBrowserModel("details", rows, detailBrowserState{Expanded: map[int]bool{0: true}}, false)
+	model := newDetailBrowserModel("details", rows, State{Expanded: map[int]bool{0: true}}, false)
 	updated, _ := model.Update(tea.KeyPressMsg(tea.Key{Text: "down", Code: tea.KeyDown}))
 	model = updated.(DetailBrowserModel)
 	updated, _ = model.Update(tea.KeyPressMsg(tea.Key{Text: "down", Code: tea.KeyDown}))
@@ -162,7 +162,7 @@ func TestDetailBrowserFocusedActionHintFitsTerminalWidth(t *testing.T) {
 		Actions: []detailBrowserAction{
 			{Value: "one", Label: "a deliberately long action label that should not overflow the header"},
 		},
-	}}, detailBrowserState{}, false)
+	}}, State{}, false)
 	model.Width = 36
 	view := model.View().Content
 	if !strings.Contains(view, "focused actions:") || !strings.Contains(view, "…") {
@@ -183,7 +183,7 @@ func TestDetailBrowserReservesFocusedActionHintLine(t *testing.T) {
 		Title:   "already aligned",
 		Status:  "ok",
 		Summary: "no action",
-	}}, detailBrowserState{}, false)
+	}}, State{}, false)
 	firstView := model.View().Content
 	model.Move(1)
 	secondView := model.View().Content
@@ -211,7 +211,7 @@ func detailViewLineIndex(text string, needle string) int {
 }
 
 func TestDetailBrowserDoesNotTreatURLsAsKeyValueLines(t *testing.T) {
-	lines := strings.Join(DetailBrowserDetailLines("go言語（組み込みプラグイン）。https://mise.jdx.dev/lang/go.html", 120, false), "\n")
+	lines := strings.Join(detailBrowserDetailLines("go言語（組み込みプラグイン）。https://mise.jdx.dev/lang/go.html", 120, false), "\n")
 	if strings.Contains(lines, "https: //") {
 		t.Fatalf("did not expect URL scheme to be split as a key-value line:\n%s", lines)
 	}
@@ -233,7 +233,8 @@ func TestDetailBrowserCollapsedBadgesSummarizeActionsAndEvidence(t *testing.T) {
 		},
 		Actions: []detailBrowserAction{{Value: "one", Label: "allow"}, {Value: "two", Label: "hold"}},
 	}
-	got := DetailBrowserCollapsedSummary(row)
+	model := newDetailBrowserModel("details", []detailBrowserRow{row}, State{}, false)
+	got := model.collapsedSummary(row)
 	for _, want := range []string{"[actions:2]", "[updated:2]", "[deferred:1]", "[decision:hold]", "[assets:compatible]", "[applyable]", "security review required"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("expected collapsed summary to include %q, got %q", want, got)
@@ -241,10 +242,51 @@ func TestDetailBrowserCollapsedBadgesSummarizeActionsAndEvidence(t *testing.T) {
 	}
 }
 
+func TestDetailBrowserRendersColumnRowsAsTable(t *testing.T) {
+	model := newDetailBrowserModel("security", []detailBrowserRow{{
+		Title:   "brew/brew jq",
+		Status:  "hold",
+		Summary: "OSV affected",
+		Columns: []string{
+			"hold",
+			"brew",
+			"brew",
+			"jq",
+			"1.8.1->1.8.2",
+			"OSV: affected",
+			"5",
+		},
+		ColumnHeaders: []DetailColumn{
+			{Header: "decision", Min: 6, Max: 8},
+			{Header: "provider", Min: 6, Max: 9},
+			{Header: "kind", Min: 4, Max: 10},
+			{Header: "item", Min: 8, Max: 28},
+			{Header: "version", Min: 8, Max: 18},
+			{Header: "reason", Min: 12, Max: 40},
+			{Header: "action", Min: 4, Max: 6},
+		},
+	}}, State{}, false)
+	view := model.View().Content
+	for _, want := range []string{"decision provider kind", "> + hold", "brew", "1.8.1->1.8.2", "OSV: affected"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("expected table detail browser view to contain %q:\n%s", want, view)
+		}
+	}
+	if strings.Contains(view, "[decision:hold]") {
+		t.Fatalf("did not expect badge-style decision in table row:\n%s", view)
+	}
+
+	model.Width = 72
+	narrow := model.View().Content
+	if !strings.Contains(narrow, "action") || !strings.Contains(narrow, "5") || !strings.Contains(narrow, "OSV: affe") {
+		t.Fatalf("expected narrow table to keep action column and truncate reason:\n%s", narrow)
+	}
+}
+
 func TestDetailBrowserMouseClickTogglesOncePerClick(t *testing.T) {
 	model := newDetailBrowserModel("details", []detailBrowserRow{
 		{Title: "one", Status: "ok", Summary: "short", Detail: "full detail"},
-	}, detailBrowserState{}, false)
+	}, State{}, false)
 	model.MouseMode = browserMouseClick
 	click := model.View().OnMouse(tea.MouseClickMsg(tea.Mouse{X: 2, Y: 5, Button: tea.MouseLeft}))
 	if click == nil {
@@ -286,7 +328,7 @@ func TestDetailBrowserFiltersRowsInPlace(t *testing.T) {
 	model := newDetailBrowserModel("details", []detailBrowserRow{
 		{Title: "node", Status: "ok", Summary: "runtime", Detail: "javascript"},
 		{Title: "jq", Status: "held", Summary: "json", Detail: "processor"},
-	}, detailBrowserState{Query: "json"}, false)
+	}, State{Query: "json"}, false)
 	view := model.View().Content
 	if strings.Contains(view, "node") || !strings.Contains(view, "jq") || !strings.Contains(view, `filter="json"`) {
 		t.Fatalf("expected filtered detail browser rows:\n%s", view)

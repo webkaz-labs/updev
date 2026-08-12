@@ -643,6 +643,28 @@ func TestManualPlanDetailRowsAddsBatchEnrichmentAction(t *testing.T) {
 	}
 }
 
+func TestManualPlanDetailRowsUseCompactSummaries(t *testing.T) {
+	row := manualPlanDetailRow(manualPlanItem{
+		Name:              "Motion",
+		Action:            "adopt-mas",
+		Provider:          "manual",
+		SuggestedProvider: "mas",
+		Confidence:        "high",
+		ReasonCode:        "manual_app_mas_available",
+		RemediationCode:   "manual_inventory_override",
+		Detail:            "Mac App Store で管理; 用途: Apple 純正 モーショングラフィックス; source: mac app store receipt",
+	}, "/repo")
+	if row.Summary != "Mac App Store 確認" && row.Summary != "Mac App Store review" {
+		t.Fatalf("expected compact manual plan summary, got %#v", row)
+	}
+	if len(row.Columns) != 7 || row.Columns[0] != "adopt-mas" || row.Columns[1] != "manual" || row.Columns[2] != "Motion" || row.Columns[3] != "mas" {
+		t.Fatalf("expected manual plan detail columns, got %#v", row.Columns)
+	}
+	if !strings.Contains(strings.Join(row.Metadata, " "), "managed_by") {
+		t.Fatalf("expected full next step to remain in metadata, got %#v", row.Metadata)
+	}
+}
+
 func detailRowHasManualAction(row detailBrowserRow, action string) bool {
 	for _, candidate := range row.Actions {
 		parsed, _, ok := parseManualPlanDetailAction(candidate.Value)
@@ -692,7 +714,7 @@ func TestMiseManifestFixDryRunResolvesLatest(t *testing.T) {
 `), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	results := addMiseMinimumReleaseAgeFakeResults(map[string]runner.Result{
+	results := addRequiredMiseFakeResults(map[string]runner.Result{
 		strings.Join([]string{"mise", "latest", "github:owner/tool"}, "\x00"): {Stdout: "1.2.3\n"},
 	})
 	results[strings.Join([]string{"mise", "settings", "ls", "--json-extended", "--cd", root}, "\x00")] = runner.Result{Stdout: `{"minimum_release_age":{"value":"3d","type":"string","source":"/fake/mise/config.toml"}}`}
@@ -1309,10 +1331,11 @@ func TestInventoryReviewReconcilesCachedHomebrewCasks(t *testing.T) {
 		"CFBundleIdentifier":  "com.evernote.Evernote",
 	})
 	saveInventoryCache(inventoryCacheEntry{
-		Version:       inventoryCacheVersion,
-		Root:          root,
-		IncludeVSCode: false,
-		CreatedAt:     time.Now(),
+		Version:               inventoryCacheVersion,
+		Root:                  root,
+		IncludeVSCode:         false,
+		UseMisePackageDesired: true,
+		CreatedAt:             time.Now(),
 		Report: plan.Report{
 			Root: root,
 			Items: []plan.Item{

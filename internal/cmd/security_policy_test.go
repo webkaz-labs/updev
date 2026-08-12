@@ -171,8 +171,8 @@ func TestCollectUpdateSafetyUsesExplicitPolicy(t *testing.T) {
 	t.Setenv("UPDEV_HOMEBREW_API_URL", server.URL)
 	policyUse := loadSecurityPolicyForReportPath(path)
 	fake := &fakeCommandRunner{results: map[string]runner.Result{
-		strings.Join([]string{"env", "HOMEBREW_NO_AUTO_UPDATE=1", "HOMEBREW_NO_INSTALL_FROM_API=1", "brew", "outdated", "--json=v2", "--greedy"}, "\x00"): {Stdout: `{"casks":[{"name":"firefox","installed_versions":["150.0"],"current_version":"151.0"}]}`},
-		strings.Join([]string{"mise", "outdated", "--json", "--cd", root}, "\x00"):                                                                        {Stdout: `{}`},
+		strings.Join([]string{"env", "HOMEBREW_NO_AUTO_UPDATE=1", "brew", "outdated", "--json=v2", "--greedy"}, "\x00"): {Stdout: `{"casks":[{"name":"firefox","installed_versions":["150.0"],"current_version":"151.0"}]}`},
+		strings.Join([]string{"mise", "outdated", "--json", "--cd", root}, "\x00"):                                      {Stdout: `{}`},
 	}}
 	gates := collectUpdateSafetyWithPolicy(context.Background(), fake, updateOptions{root: root, security: "strict"}, policyUse.Policy)
 	if len(gates) != 2 || gates[0].Status != plan.StatusOK || gates[1].Status != plan.StatusOK {

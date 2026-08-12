@@ -83,6 +83,14 @@ func TestLocalizeJapaneseRegistryPostureReason(t *testing.T) {
 	}
 }
 
+func TestLocalizeJapaneseRegistryMetadataAuthRequired(t *testing.T) {
+	got := LocalizeJapanese(RegistryPostureReason(RegistryMetadataUnavailable, "npm", "@webkaz-labs/xskills", "", "npm registry authentication required before mise update: @webkaz-labs/xskills"))
+	want := "npm/@webkaz-labs/xskills: metadata 取得に registry 認証が必要です"
+	if got != want {
+		t.Fatalf("expected %q, got %q", want, got)
+	}
+}
+
 func TestLocalizeJapaneseScannerFindingReason(t *testing.T) {
 	got := LocalizeJapanese(ScannerFindingReason(ScannerWorkflow, "zizmor", "zizmor reported workflow security finding"))
 	want := "zizmor が workflow security finding を報告しました"

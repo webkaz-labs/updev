@@ -1,0 +1,21 @@
+updev update ok
+↑↓/j/k 移動、Enter で選択 summary を開く、i inventory、m manual、b backend、s security、u updates、? help、q 終了
+選択中の操作: a/1=更新詳細を開く  2/6
+
+ルート: <WORK>/source
+モード: dry-run
+セキュリティ: off
+更新サマリー: provider step 2件
+レポート: <WORK>/cache/updev/reports/last-dry-run.json
+
+> 更新
+  名前     状態     skip
+  brew     ok       -
+  mise     ok       -
+
+  inventory ok
+  provider drift はありません
+
+確認アクション
+  操作                     説明
+  backend 整理             drift - homebrew-to-mise=1

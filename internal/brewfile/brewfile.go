@@ -10,6 +10,9 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/webkaz-labs/updev/internal/brew"
+	"github.com/webkaz-labs/updev/internal/mise"
+	"github.com/webkaz-labs/updev/internal/runner"
 	"github.com/webkaz-labs/updev/internal/updevpath"
 )
 
@@ -47,6 +50,20 @@ func Run(ctx context.Context, root string, args []string) int {
 			return 0
 		}
 		return 1
+	case "desired-source":
+		if len(args) == 0 || len(args)%2 != 0 {
+			usage()
+			return 1
+		}
+		sources, err := DesiredSources(ctx, root, args, runner.Local{})
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			return 1
+		}
+		for _, source := range sources {
+			fmt.Println(source)
+		}
+		return 0
 	case "check":
 		mode := "--strict"
 		if len(args) > 0 {
@@ -67,6 +84,70 @@ func Run(ctx context.Context, root string, args []string) int {
 		usage()
 		return 1
 	}
+}
+
+func DesiredSources(ctx context.Context, root string, pairs []string, commandRunner runner.Runner) ([]string, error) {
+	if len(pairs) == 0 || len(pairs)%2 != 0 {
+		return nil, fmt.Errorf("desired source requires kind/name pairs")
+	}
+	targets := make([][2]string, 0, len(pairs)/2)
+	needsMise := false
+	for index := 0; index < len(pairs); index += 2 {
+		kind := pairs[index]
+		if err := validateKind(kind); err != nil {
+			return nil, err
+		}
+		targets = append(targets, [2]string{kind, brew.NormalizeDesiredName(kind, pairs[index+1])})
+		needsMise = needsMise || kind != "vscode"
+	}
+
+	brewfileDesired := desiredEntrySet(root)
+	miseDesired := map[string]bool{}
+	if needsMise {
+		packageSet, taps, err := mise.ReadBootstrapDesiredState(ctx, commandRunner, root)
+		if err != nil {
+			return nil, err
+		}
+		for _, item := range brew.DesiredFromBootstrapPackages(packageSet, taps) {
+			miseDesired[item.Kind+"\x00"+item.Name] = true
+		}
+	}
+
+	sources := make([]string, 0, len(targets))
+	for _, target := range targets {
+		key := target[0] + "\x00" + target[1]
+		isBrewfileDesired := brewfileDesired[key]
+		isMiseDesired := target[0] != "vscode" && miseDesired[key]
+		switch {
+		case isBrewfileDesired && isMiseDesired:
+			sources = append(sources, "both")
+		case isBrewfileDesired:
+			sources = append(sources, "brewfile")
+		case isMiseDesired:
+			sources = append(sources, "mise")
+		default:
+			sources = append(sources, "none")
+		}
+	}
+	return sources, nil
+}
+
+func desiredEntrySet(root string) map[string]bool {
+	entries := map[string]bool{}
+	file, err := os.Open(SourcePath(root))
+	if err != nil {
+		return entries
+	}
+	defer file.Close()
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		match := lineRe.FindStringSubmatch(scanner.Text())
+		if match == nil {
+			continue
+		}
+		entries[match[1]+"\x00"+normalizeName(match[1], match[2])] = true
+	}
+	return entries
 }
 
 func SyncHome(ctx context.Context) error {
@@ -471,6 +552,7 @@ func usage() {
   updev brewfile add <brew|cask|tap|vscode> <name> <category>
   updev brewfile remove <brew|cask|tap|vscode> <name>
   updev brewfile has <brew|cask|tap|vscode> <name>
+  updev brewfile desired-source <kind> <name> [<kind> <name> ...]
   updev brewfile check [--strict|--lenient]
   updev brewfile sync [--strict|--lenient]`)
 }

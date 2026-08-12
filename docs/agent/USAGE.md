@@ -98,6 +98,6 @@ mise run check
 mise run docs-check
 ```
 
-Keep docs source-of-truth rules in `docs/DESIGN.md` in mind. If behavior,
+Keep docs source-of-truth rules in `docs/PRODUCT.md` in mind. If behavior,
 JSON shape, exit codes, security decisions, release notes, or command help
 change, review every documented mirror even when no edit is needed.
