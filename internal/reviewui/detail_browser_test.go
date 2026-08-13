@@ -326,23 +326,30 @@ func TestDetailBrowserMouseClickTogglesOncePerClick(t *testing.T) {
 
 func TestDetailBrowserFiltersRowsInPlace(t *testing.T) {
 	model := newDetailBrowserModel("details", []detailBrowserRow{
-		{Title: "node", Status: "ok", Summary: "runtime", Detail: "javascript"},
-		{Title: "jq", Status: "held", Summary: "json", Detail: "processor"},
-	}, State{Query: "json"}, false)
+		{Title: "node", Status: "ok", Summary: "runtime", Detail: "javascript", Actions: []DetailAction{{Value: "open-node", Label: "open node"}}},
+		{Title: "jq", Status: "held", Summary: "json", Detail: "processor", Actions: []DetailAction{{Value: "open-jq", Label: "open jq"}}},
+	}, State{Query: "json", Expanded: map[int]bool{0: true}, ActionFocus: 1}, false)
 	view := model.View().Content
-	if strings.Contains(view, "node") || !strings.Contains(view, "jq") || !strings.Contains(view, `filter="json"`) {
+	if strings.Contains(view, "node") || !strings.Contains(view, "jq") || !strings.Contains(view, `filter="json"`) || model.State.ActionFocus != 1 {
 		t.Fatalf("expected filtered detail browser rows:\n%s", view)
 	}
 	updated, _ := model.Update(tea.KeyPressMsg(tea.Key{Text: "x", Code: 'x'}))
 	model = updated.(DetailBrowserModel)
-	if model.State.Query != "" || !strings.Contains(model.View().Content, "node") {
+	if model.State.Query != "" || len(model.State.Expanded) != 0 || model.State.ActionFocus != 0 || !strings.Contains(model.View().Content, "node") {
 		t.Fatalf("expected x to clear detail filter: %#v\n%s", model.State, model.View().Content)
+	}
+	updated, _ = model.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyEnter}))
+	model = updated.(DetailBrowserModel)
+	updated, _ = model.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyDown}))
+	model = updated.(DetailBrowserModel)
+	if !model.State.Expanded[0] || model.State.ActionFocus != 1 {
+		t.Fatalf("expected node action focus before applying another filter: %#v", model.State)
 	}
 	updated, _ = model.Update(tea.KeyPressMsg(tea.Key{Text: "/", Code: '/'}))
 	model = updated.(DetailBrowserModel)
 	updated, _ = model.Update(tea.KeyPressMsg(tea.Key{Text: "jq", Code: tea.KeyExtended}))
 	model = updated.(DetailBrowserModel)
-	if model.State.Query != "jq" || strings.Contains(model.View().Content, "node") {
+	if model.State.Query != "jq" || len(model.State.Expanded) != 0 || model.State.ActionFocus != 0 || strings.Contains(model.View().Content, "node") {
 		t.Fatalf("expected detail filter to update while typing: %#v\n%s", model.State, model.View().Content)
 	}
 	if view := model.View().Content; strings.Index(view, "filter: jq") < 0 || strings.Index(view, "filter: jq") > strings.Index(view, "jq") {
