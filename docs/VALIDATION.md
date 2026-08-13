@@ -41,10 +41,12 @@ test "$(go run . version)" = 'updev v0.7.19'
 ```
 
 The semantic TUI lane uses `NO_COLOR=1` plus isolated HOME/XDG/TMPDIR/provider
-fixtures. The visual lane fixes terminal size, locale, theme, and color; captures
-SVG; normalizes volatile values without changing glyph positions; renders with
-pinned resvg; and compares exact PNG output with pinned ODiff. Baseline IDs and
-review criteria are canonical in [DESIGN.md](DESIGN.md).
+fixtures. Linux and macOS run the same journeys and assert OS-neutral route,
+focus, action, and content invariants; canonical exact terminal snapshots are
+compared on macOS. The visual lane fixes terminal size, locale, theme, and
+color; captures SVG; normalizes volatile values without changing glyph
+positions; renders with pinned resvg; and compares exact PNG output with pinned
+ODiff. Baseline IDs and review criteria are canonical in [DESIGN.md](DESIGN.md).
 
 ## Detail Checklists
 

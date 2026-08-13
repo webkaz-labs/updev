@@ -3,6 +3,7 @@ set -euo pipefail
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 root="$(cd "$script_dir/.." && pwd)"
+source "$script_dir/lib/mise-contract-workflow.sh"
 failures=0
 is_canonical=0
 if grep -Eq '^module dotfiles/updev$' "$root/go.mod"; then
@@ -107,6 +108,9 @@ check_domain_index "architecture" "ARCHITECTURE.md"
 check_domain_index "cli" "CLI.md"
 check_domain_index "data-model" "DATA-MODEL.md"
 check_domain_index "validation" "VALIDATION.md"
+if ! mise_contract_error="$(updev_validate_mise_contract_workflow "$root/.github/workflows/ci.yml" 2>&1)"; then
+  fail "$mise_contract_error"
+fi
 if grep -Fq '## Released patch notes' "$root/docs/RELEASE.md"; then
   fail "docs/RELEASE.md must not accumulate released patch-note history"
 fi
@@ -135,11 +139,6 @@ fi
 require_grep 'docs/release-notes/<tag>\.md' "docs/PRODUCT.md"
 
 require_grep 'uses: actions/setup-go@v6' ".github/workflows/ci.yml"
-require_grep 'uses: jdx/mise-action@v3' ".github/workflows/ci.yml"
-require_grep 'mise-version: \["2026\.8\.2", "latest"\]' ".github/workflows/ci.yml"
-require_grep 'install: false' ".github/workflows/ci.yml"
-require_grep 'cache: false' ".github/workflows/ci.yml"
-require_grep 'env: false' ".github/workflows/ci.yml"
 require_grep 'run: scripts/check-mise-contract\.sh' ".github/workflows/ci.yml"
 require_grep 'run: scripts/check-docs\.sh' ".github/workflows/ci.yml"
 require_grep 'run: scripts/check-go-format\.sh' ".github/workflows/ci.yml"

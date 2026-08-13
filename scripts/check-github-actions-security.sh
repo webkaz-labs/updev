@@ -3,6 +3,7 @@ set -euo pipefail
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 root="$(cd "$script_dir/.." && pwd)"
+source "$script_dir/lib/mise-contract-workflow.sh"
 failures=0
 warnings=0
 details="${UPDEV_ACTIONS_SECURITY_DETAILS:-0}"
@@ -45,14 +46,12 @@ require_grep '^  attestations: write$' ".github/workflows/release.yml"
 require_grep 'uses: goreleaser/goreleaser-action@v7' ".github/workflows/release.yml"
 require_grep 'uses: actions/attest@v4' ".github/workflows/release.yml"
 require_grep 'subject-checksums:' ".github/workflows/release.yml"
-require_grep 'mise-version: \["2026\.8\.2", "latest"\]' ".github/workflows/ci.yml"
-require_grep 'install: false' ".github/workflows/ci.yml"
-require_grep 'cache: false' ".github/workflows/ci.yml"
-require_grep 'env: false' ".github/workflows/ci.yml"
+if ! mise_contract_error="$(updev_validate_mise_contract_workflow "$root/.github/workflows/ci.yml" 2>&1)"; then
+  fail "$mise_contract_error"
+fi
 
 require_action_major "actions/checkout" "v6"
 require_action_major "actions/setup-go" "v6"
-require_action_major "jdx/mise-action" "v3"
 require_action_major "goreleaser/goreleaser-action" "v7"
 require_action_major "github/codeql-action/init" "v4"
 require_action_major "github/codeql-action/analyze" "v4"
@@ -94,7 +93,7 @@ while IFS= read -r line; do
       expected_major="v6"
       ;;
     jdx/mise-action)
-      expected_major="v3"
+      expected_major="v4"
       ;;
     goreleaser/goreleaser-action)
       expected_major="v7"
