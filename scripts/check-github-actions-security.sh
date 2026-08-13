@@ -37,12 +37,17 @@ require_action_major() {
 }
 
 require_grep '^  contents: read$' ".github/workflows/ci.yml"
+require_grep '^  contents: read$' ".github/workflows/release.yml"
 require_grep '^  contents: read$' ".github/workflows/codeql.yml"
 require_grep '^      security-events: write$' ".github/workflows/codeql.yml"
 require_grep '^  pull-requests: write$' ".github/workflows/dependency-review.yml"
-require_grep '^  contents: write$' ".github/workflows/release.yml"
-require_grep '^  id-token: write$' ".github/workflows/release.yml"
-require_grep '^  attestations: write$' ".github/workflows/release.yml"
+require_grep '^      contents: write$' ".github/workflows/release.yml"
+require_grep '^      id-token: write$' ".github/workflows/release.yml"
+require_grep '^      attestations: write$' ".github/workflows/release.yml"
+require_grep '^  workflow_call:$' ".github/workflows/ci.yml"
+require_grep '^    uses: \./\.github/workflows/ci\.yml$' ".github/workflows/release.yml"
+require_grep '^    needs: check$' ".github/workflows/release.yml"
+require_grep 'expected="updev \$\{TAG\}"' ".github/workflows/release.yml"
 require_grep 'uses: goreleaser/goreleaser-action@v7' ".github/workflows/release.yml"
 require_grep 'uses: actions/attest@v4' ".github/workflows/release.yml"
 require_grep 'subject-checksums:' ".github/workflows/release.yml"
@@ -58,10 +63,38 @@ require_action_major "github/codeql-action/analyze" "v4"
 require_action_major "actions/dependency-review-action" "v5"
 require_action_major "actions/attest" "v4"
 
+validate_local_workflow_usage() {
+  local usage="$1"
+  case "$usage" in
+    ./*@*)
+      return 1
+      ;;
+    ./*)
+      [[ -f "$root/${usage#./}" ]]
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+if ! validate_local_workflow_usage "./.github/workflows/ci.yml"; then
+  fail "local reusable workflow validation rejected a valid fixture"
+fi
+if validate_local_workflow_usage "./.github/workflows/ci.yml@main"; then
+  fail "local reusable workflow validation accepted an invalid @ref fixture"
+fi
+
 while IFS= read -r line; do
   file="${line%%:*}"
   rest="${line#*:}"
   usage="${rest#*uses: }"
+  if [[ "$usage" == ./* ]]; then
+    if ! validate_local_workflow_usage "$usage"; then
+      fail "$file uses an invalid or missing local reusable workflow: $usage"
+    fi
+    continue
+  fi
   action="${usage%@*}"
   action="${action%% *}"
   ref="${rest##*@}"

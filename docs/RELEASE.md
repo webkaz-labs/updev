@@ -6,13 +6,13 @@ belongs in [release-notes](release-notes/).
 
 ## Current Release
 
-The current implemented release is `updev v0.7.19`. `updev version`,
+The current implemented release is `updev v0.7.20`. `updev version`,
 `updev --version`, and `updev -v` report this command contract.
 
-`v0.7.19` completes the first mise-centered package-authority slice without
-turning mise bootstrap into an ungated daily mutation path. It also closes the
-first full-TUI testing migration slice with an isolated, pinned shell-use
-harness and reviewed terminal/visual baselines.
+`v0.7.20` combines the first bounded mise-centered package-authority slice with
+the architecture-ownership work needed before expanding that authority. The
+`v0.7.19` implementation baseline was not tagged separately; its user-facing
+changes and validation evidence are included in `v0.7.20`.
 
 Current behavior:
 
@@ -23,27 +23,29 @@ Current behavior:
   through an item-scoped executor. Extras remain read-only drift and outdated
   packages remain owned by `updev update`.
 - Active Homebrew desired state merges the selected Brewfile with supported
-  mise bootstrap package declarations. The bounded `brew/formula/btop` pilot
-  is mise-owned while Intel macOS still uses native Homebrew execution.
-- Backend convergence resolves formula and CLI-only cask names through one
-  bounded mise registry snapshot before generic GitHub inference. Ownership
-  migration remains a reviewed, multi-step operation.
-- Chezmoi daily Brewfile hooks are warning-only by default. They never call
-  `brew bundle`; bootstrap remains an explicit, separately warned path.
-- TTY routes preserve item identity and origin state. Provider stdout/stderr
-  remains outside the alternate-screen review surface.
+  mise bootstrap declarations. The bounded `brew/formula/btop` pilot is
+  mise-owned while Intel macOS still uses native Homebrew execution.
+- Provider-neutral update reports and strict command planning are owned by
+  `internal/updatereport` and `internal/updateplan`. Inventory and package apply
+  execution use injected runner seams; only composition roots construct a
+  local runner.
+- Outer command parsing covers update, list, last, and apply without invoking
+  live providers. `reviewui` keeps only command-consumed exports while route,
+  Back/Home, focus, expanded-row visibility, and action-consumption behavior
+  remain regression-tested.
+- Daily Brewfile hooks are warning-only and never call `brew bundle`.
+  Bootstrap remains an explicit, separately warned path.
 - TUI acceptance separates model tests, built-binary semantic PTY journeys,
-  terminal snapshots, and visual regression. Microsoft shell-use, resvg, and
-  ODiff are project-pinned; golden updates are explicit.
-- Oversized CLI, data-model, and validation contracts are organized as concise
-  stable indexes with one-level child domains. Executable validation blocks and
-  docs-check prevent orphaned children; release history stays in tag-specific
-  notes and git history.
+  terminal snapshots, and visual regression. The semantic journey passes on
+  Linux and Intel macOS CI; macOS owns the exact terminal snapshots.
+- Machine-checkable validation blocks reject comment-only or incomplete
+  assertions, and release tags rerun the reusable CI workflow before version,
+  release-note, GoReleaser, and artifact-attestation steps.
 
-Previous baseline: [v0.7.18](release-notes/v0.7.18.md) introduced exact
+Previous tagged baseline: [v0.7.18](release-notes/v0.7.18.md) introduced exact
 candidate advisory classification and concise provider metadata failures.
 
-Release-ready criteria:
+Release evidence:
 
 - [x] `mise -C tools/updev run check`
 - [x] `mise -C tools/updev run audit`
@@ -54,65 +56,51 @@ Release-ready criteria:
 - [x] `mise -C tools/updev run test-tui`
 - [x] `mise -C tools/updev run test-e2e` compatibility gate
 - [x] Complete the bounded
-  [v0.7.19 real-terminal acceptance](validation/daily-and-tty.md#v0719-real-terminal-release-check)
+  [v0.7.20 real-terminal acceptance](validation/daily-and-tty.md#v0720-real-terminal-release-check)
   for summary shortcuts, installed/manual switch, focused Back/Home
   restoration, warning-only hook guidance, and provider logs
 - [x] `brewtmplcheck --lenient` recognizes active mise-owned Homebrew desired
-  items; the migrated `brew/formula/btop` must not appear as false `dump only`
-  drift in the daily hook
+  items without false `dump only` drift
+- [x] Linux and Intel macOS semantic TUI CI proof
 - [x] `git diff --check`
 - [x] `chezmoi apply --dry-run`
-- [x] Release notes exist.
+- [x] [v0.7.20 release notes](release-notes/v0.7.20.md) exist.
 
-## Next Release Target: v0.7.20
+## Next Release Target: v0.7.21
 
-`v0.7.20` is an architecture-ownership patch. It must not
-broaden provider support or add a second package mutation surface.
+`v0.7.21` expands package authority only after the `v0.7.20` ownership seams
+are released. It follows `MM-107` through `MM-110` in the shared
+mise machine-management plan.
 
 Scope, in order:
 
-1. **Complete.** `internal/updatereport` owns provider-neutral update report
-   types, status aggregation, normalization, filters, summaries, and section
-   projections. `internal/updateplan` owns default update steps and strict-safety
-   projection to item-scoped Homebrew/mise command plans while provider packages
-   retain exact argv construction. Parsing, terminal I/O, localization, route
-   dispatch, provider execution, and visible streaming remain in `cmd`.
-2. **Complete.** Inventory collection and cached refreshes accept an injected
-   `runner.Runner`; update-time inventory reuses the update runner. Shared
-   `runner.Request` execution consolidates optional env/streaming capability
-   selection for update and Brewfile apply paths. Only CLI/TUI composition
-   roots construct `runner.Local`.
-3. **Complete.** Representative outer `cmd.Run` parsing tests cover update,
-   list, last, apply, and their value-taking flags without invoking live
-   providers. Forwarding aliases and zero-reference helpers were removed after
-   command/package regression tests passed; the existing Staticcheck gate now
-   blocks `U1000` as well as `SA*` findings.
-4. **Complete.** `reviewui` exports are limited to command-consumed models,
-   constructors, state helpers, and types required by those exported
-   signatures. Package-local defaults, filters, renderers, wheel messages, and
-   width calculations are private. Existing route, Back/Home, focus,
-   expanded-row visibility, and action-consumption regressions remain covered
-   without adding another route abstraction.
-5. **Complete.** Machine-checkable validation blocks remain executable. The
-   extractor tests prove comment-only assertions and incomplete commands are
-   rejected with usage status, while an executable false assertion fails the
-   gate.
-6. **Complete.** The shell-use semantic journey passes on `ubuntu-latest` and
-   Intel `macos-15-intel` in the public repository. Linux asserts the same
-   route/focus/action invariants against its platform-specific inventory, while
-   macOS also owns the exact terminal snapshots. Keep tmux removal as a bounded
-   follow-up that preserves all accepted route/focus/cancellation journeys.
-7. Keep completed macset `off | read | desired` integration stable while this
-   refactor proceeds. The next cross-tool aggregate status task remains blocked
-   on the completed outer updev command contract in step 3 and remains outside
-   this release.
+1. Freeze a deterministic, read-only `MM-107` classification baseline for every
+   active Homebrew formula, cask, tap, mise tool, and bootstrap package identity.
+2. Move reviewed formula cohorts of at most ten exact identities to `[tools]`
+   or `[bootstrap.packages]`, preserving executor and rollback evidence.
+3. Move reviewed cask and tap cohorts to `brew-cask:` declarations and
+   `[bootstrap.brew.taps]`; keep unsupported identities in the Brewfile with a
+   stable deferral reason.
+4. Promote only when every frozen identity and reviewed delta is migrated or
+   explicitly deferred, parity is clean, each identity has one writable
+   authority, and real-Mac apply/update plus four-part rollback pass.
+
+Release-ready criteria:
+
+- [ ] Commit `docs/evidence/package-authority/mm-107-baseline.v1.json` without
+  mutating desired state.
+- [ ] Complete every generated `MM-108-Cnn` and `MM-109-Cnn` cohort row.
+- [ ] Pass package parity, executor capability, wrapper/watcher, JSON/text/TUI,
+  architecture dry-run, and real Intel Mac acceptance gates.
+- [ ] Prove the one-authority promotion gate and canonical four-part rollback.
+- [ ] Run the standard check, audit, docs, validation, TUI, GoReleaser,
+  diff, and chezmoi dry-run release gates.
+- [ ] Add `v0.7.21` release notes.
 
 Non-goals:
 
-- no broad migration of Brewfile packages into mise; the classified,
-  cohort-based authority expansion is the planned `v0.7.21` target in
-  [ROADMAP.md](ROADMAP.md#planned-v0721-package-authority-expansion);
-- no full `mise bootstrap` daily apply path;
-- no new default scanners or provider support promotion;
-- no generic cross-tool framework extraction without two real consumers;
-- no automatic baseline rewrite on visual failure.
+- no broad install/uninstall or full daily `mise bootstrap` apply;
+- no use of `package-metadata.toml` as a writable package manifest;
+- no migration of identities without exact cohort review and rollback evidence;
+- no provider support promotion, new default scanner, or generic shared
+  framework extraction.

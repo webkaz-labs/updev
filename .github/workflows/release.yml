@@ -6,14 +6,22 @@ on:
       - "v*"
 
 permissions:
-  contents: write
-  attestations: write
-  id-token: write
+  contents: read
 
 jobs:
+  check:
+    uses: ./.github/workflows/ci.yml
+    permissions:
+      contents: read
+
   release:
     name: release
+    needs: check
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      attestations: write
+      id-token: write
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -25,6 +33,18 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+
+      - name: Check release version
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          actual="$(go run . version)"
+          expected="updev ${TAG}"
+          if [[ "${actual}" != "${expected}" ]]; then
+            echo "::error::release version mismatch: expected '${expected}', got '${actual}'"
+            exit 1
+          fi
 
       - name: Check release notes
         env:
