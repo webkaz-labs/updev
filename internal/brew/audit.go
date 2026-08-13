@@ -12,6 +12,8 @@ import (
 	"strings"
 	"time"
 
+	"golang.org/x/net/publicsuffix"
+
 	"github.com/webkaz-labs/updev/internal/plan"
 	"github.com/webkaz-labs/updev/internal/securityreason"
 )
@@ -408,7 +410,8 @@ func CaskProvenanceVerdictFor(homepageHost string, urlHost string, version strin
 func caskHostsSameSite(homepageHost string, urlHost string) bool {
 	homepageHost = normalizeCaskHostForComparison(homepageHost)
 	urlHost = normalizeCaskHostForComparison(urlHost)
-	if homepageHost == "" || urlHost == "" || sharedCaskHostSuffix(homepageHost) {
+	publicSuffix, _ := publicsuffix.PublicSuffix(homepageHost)
+	if homepageHost == "" || urlHost == "" || publicSuffix == homepageHost {
 		return false
 	}
 	return urlHost == homepageHost || strings.HasSuffix(urlHost, "."+homepageHost)
@@ -418,15 +421,6 @@ func normalizeCaskHostForComparison(host string) string {
 	host = strings.ToLower(strings.TrimSpace(host))
 	host = strings.TrimPrefix(host, "www.")
 	return strings.TrimSuffix(host, ".")
-}
-
-func sharedCaskHostSuffix(host string) bool {
-	switch host {
-	case "github.io", "pages.dev", "vercel.app", "netlify.app", "cloudfront.net", "appspot.com", "googleapis.com", "amazonaws.com", "azureedge.net", "fastly.net":
-		return true
-	default:
-		return false
-	}
 }
 
 func setPostureReason(posture *Posture, reason securityreason.Reason) {

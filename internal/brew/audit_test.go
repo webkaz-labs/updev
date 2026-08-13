@@ -142,6 +142,29 @@ func TestPosturesFromItemsReportsMetadataRisks(t *testing.T) {
 	}
 }
 
+func TestCaskHostsSameSiteRejectsPublicSuffixHomepage(t *testing.T) {
+	tests := []struct {
+		name     string
+		homepage string
+		download string
+		want     bool
+	}{
+		{name: "exact vendor", homepage: "example.com", download: "example.com", want: true},
+		{name: "vendor subdomain", homepage: "example.com", download: "downloads.example.com", want: true},
+		{name: "unrelated vendor", homepage: "example.com", download: "example.net", want: false},
+		{name: "private suffix", homepage: "herokuapp.com", download: "attacker.herokuapp.com", want: false},
+		{name: "private tenant", homepage: "vendor.herokuapp.com", download: "downloads.vendor.herokuapp.com", want: true},
+		{name: "icann suffix", homepage: "co.uk", download: "attacker.co.uk", want: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := caskHostsSameSite(tt.homepage, tt.download); got != tt.want {
+				t.Fatalf("caskHostsSameSite(%q, %q) = %v, want %v", tt.homepage, tt.download, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestMetadataUnmarshalAcceptsStringOrArrayName(t *testing.T) {
 	for _, input := range []string{`{"name":"jq"}`, `{"name":["jq"]}`} {
 		var metadata Metadata

@@ -243,7 +243,7 @@ func TestDetailBrowserCollapsedBadgesSummarizeActionsAndEvidence(t *testing.T) {
 }
 
 func TestDetailBrowserRendersColumnRowsAsTable(t *testing.T) {
-	model := newDetailBrowserModel("security", []detailBrowserRow{{
+	row := detailBrowserRow{
 		Title:   "brew/brew jq",
 		Status:  "hold",
 		Summary: "OSV affected",
@@ -265,7 +265,8 @@ func TestDetailBrowserRendersColumnRowsAsTable(t *testing.T) {
 			{Header: "reason", Min: 12, Max: 40},
 			{Header: "action", Min: 4, Max: 6},
 		},
-	}}, State{}, false)
+	}
+	model := newDetailBrowserModel("security", []detailBrowserRow{row}, State{}, false)
 	view := model.View().Content
 	for _, want := range []string{"decision provider kind", "> + hold", "brew", "1.8.1->1.8.2", "OSV: affected"} {
 		if !strings.Contains(view, want) {
@@ -280,6 +281,22 @@ func TestDetailBrowserRendersColumnRowsAsTable(t *testing.T) {
 	narrow := model.View().Content
 	if !strings.Contains(narrow, "action") || !strings.Contains(narrow, "5") || !strings.Contains(narrow, "OSV: affe") {
 		t.Fatalf("expected narrow table to keep action column and truncate reason:\n%s", narrow)
+	}
+
+	for _, width := range []int{48, 32} {
+		widths := detailBrowserTableWidths(row.ColumnHeaders, []detailBrowserRow{row}, width)
+		total := 4 + len(widths) - 1
+		for _, columnWidth := range widths {
+			total += columnWidth
+		}
+		if total > width {
+			t.Fatalf("expected detail table width <= %d, got %d from %#v", width, total, widths)
+		}
+		for _, columnWidth := range widths {
+			if columnWidth < 1 {
+				t.Fatalf("expected positive detail table column widths, got %#v", widths)
+			}
+		}
 	}
 }
 
