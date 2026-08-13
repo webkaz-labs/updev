@@ -2,6 +2,7 @@
 go = "1.26.5"
 goreleaser = "2.16.0"
 shellcheck = "0.11.0"
+actionlint = "1.7.12"
 
 [tasks.test]
 description = "Run updev Go tests with cache and wall time"
@@ -79,9 +80,13 @@ run = "scripts/check-agent-quality.sh"
 description = "Run ShellCheck on updev scripts"
 run = "shellcheck -S warning scripts/*.sh scripts/lib/*.sh"
 
+[tasks.actionlint]
+description = "Validate GitHub Actions workflows"
+run = "actionlint .github/workflows/*.yml"
+
 [tasks.lint]
 description = "Run agent-friendly lint checks"
-depends = ["fmt-check", "staticcheck", "golangci-lint", "shellcheck"]
+depends = ["fmt-check", "staticcheck", "golangci-lint", "shellcheck", "actionlint"]
 
 [tasks.mod-verify]
 description = "Verify updev Go modules"

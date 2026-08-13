@@ -40,7 +40,7 @@ type options struct {
 const (
 	usageExitCode = 64
 	toolName      = "updev"
-	toolVersion   = "v0.7.19"
+	toolVersion   = "v0.7.20"
 )
 
 const (

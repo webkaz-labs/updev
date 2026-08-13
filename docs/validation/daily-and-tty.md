@@ -310,7 +310,7 @@ The pinned shell-use lane uses the following reproducible boundary:
 固定するが、action hint、日本語表示、詳細展開、confirmation の読みやすさは
 実際に使用する terminal で判定する。
 
-#### v0.7.19 real-terminal release check
+#### v0.7.20 real-terminal release check
 
 Run this bounded route from the canonical chezmoi source after applying the
 candidate binary. Do not use `go run`; the release check must exercise the same
@@ -337,7 +337,7 @@ release evidence.
 
 Record `TTY route: PASS` only when all of the following hold:
 
-1. `updev version` reports `updev v0.7.19`.
+1. `updev version` reports `updev v0.7.20`.
 2. The dry-run opens dashboard-first. The dashboard remains visible until
    input; it does not auto-open inventory.
 3. Exercise the direct summary shortcuts defined in
@@ -361,7 +361,7 @@ Record `TTY route: PASS` only when all of the following hold:
 8. The rendered Brewfile hook prints `Brewfile changed`, the rendered path,
    and the safe `updev apply brewfile` preview. It must not execute or recommend
    routine `brew bundle` apply. Active mise-owned Homebrew desired items must
-   not appear as `dump only`; specifically, the v0.7.19 `btop` authority pilot
+   not appear as `dump only`; specifically, the v0.7.20 `btop` authority pilot
    must be recognized as desired.
 9. Exit every surface with `q`. The normal prompt and terminal echo are fully
    restored.
@@ -369,10 +369,10 @@ Record `TTY route: PASS` only when all of the following hold:
 Record `provider streaming: PASS` from the next ordinary daily `updev` run:
 brew/mise stdout and stderr must remain visible while each provider runs, and
 the dashboard may open only after both finish. Do not trigger a second mutation
-solely for release acceptance. Keep the v0.7.19 release checkbox open until
+solely for release acceptance. Keep the v0.7.20 release checkbox open until
 both `TTY route` and `provider streaming` are PASS.
 
-The checklist above is the only v0.7.19 manual command sequence. The following
+The checklist above is the only v0.7.20 manual command sequence. The following
 are reusable domain checks when matching rows exist; they do not add another
 release command sequence:
 

@@ -33,23 +33,18 @@ Product boundaries live in [PRODUCT.md](PRODUCT.md), interaction behavior in
 
 ## Near-Term Order
 
-1. Finish the release gates in
-   [RELEASE.md](RELEASE.md#next-release-target-v0720). `AD-U1` through `AD-U4`
-   are complete: update report/planning ownership, injected execution,
-   outer-command contracts, and the bounded `reviewui` export audit now have
-   explicit owners and regression coverage.
-2. Preserve the current one-level documentation ownership model and executable
-   validation index while completing that refactor. Do not create a second
-   writable index or move visual-system rules out of `DESIGN.md`.
-3. Preserve the completed macset `off | read | desired` mise integration while
-   finishing the updev owner extraction. Resume the shared
-   machine-management plan with
-   aggregate status only after the outer updev command contract is stable.
-   Updev and macset remain standalone tools; chezmoi is optional integration.
-4. After `v0.7.20` passes its release gates, execute the planned
+1. Release the completed `v0.7.20` ownership baseline. `AD-U1` through `AD-U4`
+   are complete, including Linux and Intel macOS semantic TUI CI proof.
+2. Execute the planned
    [v0.7.21 package-authority expansion](#planned-v0721-package-authority-expansion).
    Move desired declarations in bounded cohorts; do not create a second
    writable authority or use metadata as a package manifest.
+3. Preserve the completed macset `off | read | desired` mise integration and
+   the one-level documentation ownership model while authority cohorts move.
+   Updev and macset remain standalone tools; chezmoi is optional integration.
+4. Implement cross-tool aggregate status only over the stable public JSON
+   contracts after package-authority promotion; do not move domain logic into
+   the mise task.
 5. Improve provider evidence quality where identity is reliable: source and
    release metadata, advisory precision, cache age, ownership confidence, and
    provider-native audits. Keep broad or opaque evidence in review state.

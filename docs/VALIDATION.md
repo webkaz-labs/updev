@@ -35,9 +35,9 @@ chezmoi apply --dry-run
 ```bash
 test -f docs/PRODUCT.md
 grep -q '^# updev product' docs/PRODUCT.md
-grep -q '^The current implemented release is `updev v0.7.19`' docs/RELEASE.md
+grep -q '^The current implemented release is `updev v0.7.20`' docs/RELEASE.md
 test "$(grep -c '^## Released patch notes' docs/RELEASE.md || true)" -eq 0
-test "$(go run . version)" = 'updev v0.7.19'
+test "$(go run . version)" = 'updev v0.7.20'
 ```
 
 The semantic TUI lane uses `NO_COLOR=1` plus isolated HOME/XDG/TMPDIR/provider
