@@ -97,11 +97,11 @@ Scope, in order:
    extractor tests prove comment-only assertions and incomplete commands are
    rejected with usage status, while an executable false assertion fails the
    gate.
-6. **CI proof pending.** The shell-use semantic journey runs on
-   `ubuntu-latest` and Intel `macos-15-intel`. Keep the tmux compatibility
-   harness until both matrix jobs pass in the public repository; remove it only
-   in a follow-up commit that preserves all accepted
-   route/focus/cancellation journeys.
+6. **Complete.** The shell-use semantic journey passes on `ubuntu-latest` and
+   Intel `macos-15-intel` in the public repository. Linux asserts the same
+   route/focus/action invariants against its platform-specific inventory, while
+   macOS also owns the exact terminal snapshots. Keep tmux removal as a bounded
+   follow-up that preserves all accepted route/focus/cancellation journeys.
 7. Keep completed macset `off | read | desired` integration stable while this
    refactor proceeds. The next cross-tool aggregate status task remains blocked
    on the completed outer updev command contract in step 3 and remains outside
