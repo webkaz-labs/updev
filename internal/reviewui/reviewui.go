@@ -69,6 +69,12 @@ type State struct {
 	Action      string
 }
 
+func resetFilterNavigation(state *State) {
+	state.Selected = 0
+	state.Offset = 0
+	state.Expanded = map[int]bool{}
+}
+
 func EnsureStateCache(states map[string]State) map[string]State {
 	if states == nil {
 		return map[string]State{}

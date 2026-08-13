@@ -219,8 +219,7 @@ func (m *TableBrowserModel) clearFilter() bool {
 	}
 	m.State.Query = ""
 	m.FilterInput = ""
-	m.State.Selected = 0
-	m.State.Offset = 0
+	resetFilterNavigation(&m.State)
 	m.setActionFocus(-1)
 	m.refreshFilteredSections()
 	m.clampSelection()
@@ -256,8 +255,7 @@ func (m *TableBrowserModel) updateFilterInput(msg tea.KeyPressMsg) {
 
 func (m *TableBrowserModel) applyFilterInput() {
 	m.State.Query = strings.TrimSpace(m.FilterInput)
-	m.State.Selected = 0
-	m.State.Offset = 0
+	resetFilterNavigation(&m.State)
 	m.setActionFocus(-1)
 	m.refreshFilteredSections()
 	m.clampSelection()

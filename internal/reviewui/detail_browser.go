@@ -406,8 +406,7 @@ func (m *DetailBrowserModel) clearFilter() bool {
 	}
 	m.State.Query = ""
 	m.FilterInput = ""
-	m.State.Selected = 0
-	m.State.Offset = 0
+	resetFilterNavigation(&m.State)
 	m.setActionFocus(-1)
 	m.refreshFilteredRows()
 	m.clampSelection()
@@ -443,8 +442,7 @@ func (m *DetailBrowserModel) updateFilterInput(msg tea.KeyPressMsg) {
 
 func (m *DetailBrowserModel) applyFilterInput() {
 	m.State.Query = strings.TrimSpace(m.FilterInput)
-	m.State.Selected = 0
-	m.State.Offset = 0
+	resetFilterNavigation(&m.State)
 	m.setActionFocus(-1)
 	m.refreshFilteredRows()
 	m.clampSelection()

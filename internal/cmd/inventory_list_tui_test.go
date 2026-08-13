@@ -1037,27 +1037,33 @@ func TestToolTableBrowserFiltersRowsInPlace(t *testing.T) {
 			Wanted:  "lts",
 			State:   "active",
 			Detail:  "javascript runtime",
+			Actions: []reviewui.Action{{Value: "open-node", Label: "open node"}},
 		}, {
 			Name:    "go",
 			Version: "1.26.3",
 			State:   "active",
 			Detail:  "language runtime",
 		}},
-	}}, detailBrowserState{Query: "javascript"}, false)
+	}}, detailBrowserState{Query: "javascript", Expanded: map[int]bool{0: true}, ActionFocus: 1}, false)
 	view := model.View().Content
 	if !strings.Contains(view, "node") || strings.Contains(view, "go") || !strings.Contains(view, `filter="javascript"`) {
 		t.Fatalf("expected filtered table browser rows:\n%s", view)
 	}
 	updated, _ := model.Update(tea.KeyPressMsg(tea.Key{Text: "x", Code: 'x'}))
 	model = updated.(toolTableBrowserModel)
-	if model.State.Query != "" || !strings.Contains(model.View().Content, "go") {
+	if model.State.Query != "" || len(model.State.Expanded) != 0 || model.State.ActionFocus != 0 || !strings.Contains(model.View().Content, "go") {
 		t.Fatalf("expected x to clear table filter: %#v\n%s", model.State, model.View().Content)
+	}
+	updated, _ = model.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyEnter}))
+	model = updated.(toolTableBrowserModel)
+	if !model.State.Expanded[0] || model.State.ActionFocus != 1 {
+		t.Fatalf("expected node action focus before applying another filter: %#v", model.State)
 	}
 	updated, _ = model.Update(tea.KeyPressMsg(tea.Key{Text: "/", Code: '/'}))
 	model = updated.(toolTableBrowserModel)
 	updated, _ = model.Update(tea.KeyPressMsg(tea.Key{Text: "go", Code: tea.KeyExtended}))
 	model = updated.(toolTableBrowserModel)
-	if model.State.Query != "go" || strings.Contains(model.View().Content, "node") {
+	if model.State.Query != "go" || len(model.State.Expanded) != 0 || model.State.ActionFocus != 0 || strings.Contains(model.View().Content, "node") {
 		t.Fatalf("expected table filter to update while typing: %#v\n%s", model.State, model.View().Content)
 	}
 	if view := model.View().Content; strings.Index(view, "filter: go") < 0 || strings.Index(view, "filter: go") > strings.Index(view, "mise / runtime") {
