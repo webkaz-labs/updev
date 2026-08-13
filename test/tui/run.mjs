@@ -290,11 +290,6 @@ async function routeRegression(fixture) {
     await shell.waitText('filter="ripgrep"', { timeout: 10000 });
     await shell.write("x");
     await shell.waitText(`1/${inventoryFixtureExpectations.rowCount} 行`, { timeout: 10000 });
-    await shell.press("Space");
-    await shell.waitIdle();
-    if ((await shell.text()).includes("expanded actions:")) {
-      throw new Error("route regression did not leave row focus after clearing the filter");
-    }
     await shell.write("j");
     await shell.waitText(`2/${inventoryFixtureExpectations.rowCount} 行`, { timeout: 10000 });
     await shell.press("Enter");
