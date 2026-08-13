@@ -18,6 +18,9 @@ const artifactRoot = join(testRoot, "artifacts", mode);
 const terminalBaselineRoot = join(testRoot, "baselines", "terminal");
 const visualBaselineRoot = join(testRoot, "baselines", "visual");
 const odiff = join(testRoot, "node_modules", ".bin", process.platform === "win32" ? "odiff.cmd" : "odiff");
+const inventoryFixtureExpectations = process.platform === "darwin"
+  ? { rowCount: 5, readyText: "firefox", secondRowIdentity: "brew / brew / ripgrep" }
+  : { rowCount: 2, readyText: "node", secondRowIdentity: "mise / tool / node" };
 
 function run(command, args, options = {}) {
   const result = spawnSync(command, args, {
@@ -231,12 +234,12 @@ async function inventoryScenario(fixture, color, expanded) {
   rmSync(join(fixture.cache, "updev", "reports", "last-update.json"), { force: true });
   await withShell(fixture, name, ["list", "--root", fixture.source, "--interactive", "--refresh"], { cols: 120, rows: 36 }, color, async (shell) => {
     await shell.waitText("updev installed inventory", { timeout: 30000 });
-    await shell.waitText("firefox", { timeout: 30000 });
+    await shell.waitText(inventoryFixtureExpectations.readyText, { timeout: 30000 });
     await shell.waitIdle();
     if (expanded) {
-      for (let index = 0; index < 4; index += 1) {
+      for (let index = 0; index < inventoryFixtureExpectations.rowCount - 1; index += 1) {
         await shell.write("j");
-        await shell.waitText(`${index + 2}/5 行`, { timeout: 10000 });
+        await shell.waitText(`${index + 2}/${inventoryFixtureExpectations.rowCount} 行`, { timeout: 10000 });
       }
       await shell.press("Enter");
       await shell.waitText("mise / tool / node", { timeout: 10000 });
@@ -244,7 +247,7 @@ async function inventoryScenario(fixture, color, expanded) {
     }
     if (color) await captureVisual(shell, name);
     else if (expanded) await assertSemanticState(shell, name, ["updev installed inventory", "管理: mise / tool / node", "詳細"]);
-    else await assertSemanticState(shell, name, ["updev installed inventory", "firefox", "mise / tool / runtime"]);
+    else await assertSemanticState(shell, name, ["updev installed inventory", inventoryFixtureExpectations.readyText, "mise / tool / runtime"]);
     await shell.press("q");
     await shell.waitExit();
   });
@@ -286,16 +289,16 @@ async function routeRegression(fixture) {
     await shell.write("b");
     await shell.waitText('filter="ripgrep"', { timeout: 10000 });
     await shell.write("x");
-    await shell.waitText("1/5 行", { timeout: 10000 });
+    await shell.waitText(`1/${inventoryFixtureExpectations.rowCount} 行`, { timeout: 10000 });
     await shell.press("Space");
     await shell.waitIdle();
     if ((await shell.text()).includes("expanded actions:")) {
       throw new Error("route regression did not leave row focus after clearing the filter");
     }
     await shell.write("j");
-    await shell.waitText("2/5 行", { timeout: 10000 });
+    await shell.waitText(`2/${inventoryFixtureExpectations.rowCount} 行`, { timeout: 10000 });
     await shell.press("Enter");
-    await shell.waitText("brew / brew / ripgrep", { timeout: 10000 });
+    await shell.waitText(inventoryFixtureExpectations.secondRowIdentity, { timeout: 10000 });
     await assertVisible(shell, "詳細");
     await shell.press("Ctrl+C");
     await shell.waitExit();
