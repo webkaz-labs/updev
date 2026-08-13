@@ -920,23 +920,50 @@ func detailBrowserTableWidths(headers []DetailColumn, rows []detailBrowserRow, w
 	if total <= width {
 		return widths
 	}
-	shrink := len(widths) - 1
-	if len(widths) > 1 {
-		shrink = len(widths) - 2
+	overflow := total - width
+	order := detailBrowserColumnShrinkOrder(len(widths))
+	overflow = shrinkDetailBrowserColumns(widths, headers, order, overflow, false)
+	if overflow > 0 {
+		shrinkDetailBrowserColumns(widths, headers, order, overflow, true)
 	}
-	minWidth := headers[shrink].Min
-	if minWidth <= 0 {
-		minWidth = textui.DisplayWidth(headers[shrink].Header)
-	}
-	if minWidth < 8 {
-		minWidth = 8
-	}
-	reduced := widths[shrink] - (total - width)
-	if reduced < minWidth {
-		reduced = minWidth
-	}
-	widths[shrink] = reduced
 	return widths
+}
+
+func detailBrowserColumnShrinkOrder(count int) []int {
+	order := make([]int, 0, count)
+	if count > 1 {
+		order = append(order, count-2)
+	}
+	for index := count - 1; index >= 0; index-- {
+		if count > 1 && index == count-2 {
+			continue
+		}
+		order = append(order, index)
+	}
+	return order
+}
+
+func shrinkDetailBrowserColumns(widths []int, headers []DetailColumn, order []int, overflow int, belowDeclaredMinimum bool) int {
+	for _, index := range order {
+		if overflow <= 0 {
+			break
+		}
+		minimum := headers[index].Min
+		if minimum <= 0 {
+			minimum = textui.DisplayWidth(headers[index].Header)
+		}
+		if belowDeclaredMinimum {
+			minimum = 1
+		}
+		available := widths[index] - minimum
+		if available <= 0 {
+			continue
+		}
+		reduction := min(available, overflow)
+		widths[index] -= reduction
+		overflow -= reduction
+	}
+	return overflow
 }
 
 func detailBrowserTableHeaderLine(headers []DetailColumn, widths []int, color bool) string {
