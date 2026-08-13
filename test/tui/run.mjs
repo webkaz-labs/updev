@@ -124,6 +124,18 @@ function assertSnapshot(name, actual) {
   }
 }
 
+async function assertSemanticState(shell, name, requiredTexts) {
+  const screen = await shell.text();
+  for (const requiredText of requiredTexts) {
+    if (!screen.includes(requiredText)) {
+      throw new Error(`expected semantic state ${name} to include ${JSON.stringify(requiredText)}\n${screen}`);
+    }
+  }
+  if (process.platform === "darwin") {
+    assertSnapshot(name, screen);
+  }
+}
+
 async function assertVisible(shell, text) {
   const screen = await shell.text();
   if (!screen.includes(text)) {
@@ -203,7 +215,7 @@ async function dashboardScenario(fixture, color) {
     if (color) {
       await captureVisual(shell, name);
     } else {
-      assertSnapshot(name, await shell.text());
+      await assertSemanticState(shell, name, ["updev update", "更新サマリー:", "確認アクション"]);
       await shell.resize(160, 48);
       await shell.waitIdle();
       await assertVisible(shell, "更新サマリー:");
@@ -231,7 +243,8 @@ async function inventoryScenario(fixture, color, expanded) {
       await assertVisible(shell, "管理: mise / tool / node");
     }
     if (color) await captureVisual(shell, name);
-    else assertSnapshot(name, await shell.text());
+    else if (expanded) await assertSemanticState(shell, name, ["updev installed inventory", "管理: mise / tool / node", "詳細"]);
+    else await assertSemanticState(shell, name, ["updev installed inventory", "firefox", "mise / tool / runtime"]);
     await shell.press("q");
     await shell.waitExit();
   });
@@ -252,7 +265,8 @@ async function securityScenario(fixture, color, confirmation) {
       await assertVisible(shell, "security policy 操作");
     }
     if (color) await captureVisual(shell, name);
-    else assertSnapshot(name, await shell.text());
+    else if (confirmation) await assertSemanticState(shell, name, ["security policy 操作", "brew/brew jq", "期限:"]);
+    else await assertSemanticState(shell, name, ["updev security details", "根拠", "decision: hold"]);
     await shell.press("q");
     await shell.waitExit();
   });

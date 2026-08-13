@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -209,7 +210,7 @@ func (recording *brewfileApplyStreamingRunner) RunStreaming(ctx context.Context,
 	return recording.fakeCommandRunner.Run(ctx, name, args...)
 }
 
-func TestBuildBrewfileApplyReportConsumesExecutorPlan(t *testing.T) {
+func TestBuildBrewfileApplyReportConsumesRuntimeExecutorPlan(t *testing.T) {
 	root := t.TempDir()
 	configHome := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", configHome)
@@ -239,13 +240,22 @@ func TestBuildBrewfileApplyReportConsumesExecutorPlan(t *testing.T) {
 	report := buildBrewfileApplyReport(context.Background(), applyOptions{
 		target: "brewfile", format: "json", root: root, dryRun: true, safeOnly: true,
 	}, fake, securityPolicyLoadResult{})
-	if report.Status != plan.StatusDrift || len(report.Candidates) != 1 {
-		t.Fatalf("expected one safe missing candidate, got %#v", report)
+	if len(report.Candidates) != 1 {
+		t.Fatalf("expected one missing candidate, got %#v", report)
 	}
 	candidate := report.Candidates[0]
-	wantCommand := []string{"env", "HOMEBREW_NO_AUTO_UPDATE=1", "brew", "tap", "homebrew/core"}
-	if candidate.Identity != "brew/tap/homebrew/core" || candidate.Executor != packageexecutor.ExecutorNative || candidate.Decision != "allow" || !reflect.DeepEqual(candidate.Command, wantCommand) {
-		t.Fatalf("unexpected executor-aware candidate: %#v", candidate)
+	if candidate.Identity != "brew/tap/homebrew/core" {
+		t.Fatalf("unexpected executor-aware candidate identity: %#v", candidate)
+	}
+	if runtime.GOOS == "darwin" {
+		wantCommand := []string{"env", "HOMEBREW_NO_AUTO_UPDATE=1", "brew", "tap", "homebrew/core"}
+		if report.Status != plan.StatusDrift || candidate.Executor != packageexecutor.ExecutorNative || candidate.Decision != "allow" || !reflect.DeepEqual(candidate.Command, wantCommand) {
+			t.Fatalf("expected an item-scoped native Homebrew candidate on macOS: %#v", report)
+		}
+		return
+	}
+	if report.Status != plan.StatusHeld || candidate.Executor != packageexecutor.ExecutorUnsupported || candidate.Decision != "block" || candidate.ReasonCode != "native-provider-unavailable" || len(candidate.Command) != 0 {
+		t.Fatalf("expected unsupported native Homebrew candidate outside macOS: %#v", report)
 	}
 }
 

@@ -232,8 +232,10 @@ updev list --interactive
   isolated HOME/XDG/TMPDIR、semantic journey、terminal snapshot、visual diff、
   clean exit と terminal restoration を一括管理する。
 - public CI は shell-use semantic journey を `ubuntu-latest` と Intel
-  `macos-15-intel` の matrix で実行する。tmux compatibility suite の削除は、
-  両 job が同一 commit で green になった後の follow-up commit とする。
+  `macos-15-intel` の matrix で実行する。両 OS で route、focus、action、主要な
+  content の invariant を検証し、provider/platform 固有 row を含む完全な terminal
+  snapshot は canonical な macOS job だけで比較する。tmux compatibility suite の
+  削除は、両 job が同一 commit で green になった後の follow-up commit とする。
 - 互換 PTY suite は `mise -C tools/updev run test-e2e`、dashboard-only の短縮確認は
   `mise -C tools/updev run test-e2e-smoke` を使う。互換 suite は shell-use parity が
   macOS/Linux CI と実端末で確認できるまで維持するが、新しい primary coverage は
@@ -294,8 +296,8 @@ The pinned shell-use lane uses the following reproducible boundary:
 - `80x24` covers compact confirmation and routed interaction, while the
   dashboard semantic journey resizes to `160x48` and reasserts its summary and
   action regions;
-- terminal baselines live under `test/tui/baselines/terminal/`, visual
-  baselines under `test/tui/baselines/visual/`, and failure evidence under
+- canonical macOS terminal baselines live under `test/tui/baselines/terminal/`,
+  visual baselines under `test/tui/baselines/visual/`, and failure evidence under
   `test/tui/artifacts/<semantic|visual>/` as the actual snapshot/SVG/PNG and
   visual diff when applicable;
 - a material visual change requires explicit

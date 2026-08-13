@@ -128,11 +128,14 @@ owned by [UX.md](UX.md) and its child documents.
 | `security-detail-ja` | mixed hold/review table and expanded evidence | `120x36` | status distinction and readable evidence |
 | `mutation-confirm-ja` | item-scoped confirmation | `80x24` | target/effect visible; cancel focused |
 
-Each ID maps to a terminal snapshot and a PNG visual baseline under
-`test/tui/baselines/`. The project-local wrapper uses pinned Microsoft
-`shell-use` for semantic state and SVG capture, pinned `resvg` for PNG render,
-and pinned `ODiff` for exact comparison. The tmux suite remains only as a
-bounded migration compatibility gate.
+Each ID maps to a canonical macOS terminal snapshot and a PNG visual baseline
+under `test/tui/baselines/`. The same shell-use journeys run on Linux and
+macOS and assert OS-neutral route, focus, action, and content invariants. Exact
+terminal snapshots remain macOS-only because provider availability and rows are
+platform-dependent. The project-local wrapper uses pinned Microsoft `shell-use`
+for semantic state and SVG capture, pinned `resvg` for PNG render, and pinned
+`ODiff` for exact comparison. The tmux suite remains only as a bounded migration
+compatibility gate.
 
 Layout-size mismatch fails. Pixel comparison defaults to exact. Any tolerance
 or ignored region is baseline-specific, measured, documented in
